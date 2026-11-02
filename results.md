@@ -81,6 +81,24 @@ three PRs all three bots reviewed (#478, #479, #482), with 11 distinct real Medi
 - These PRs are a held-out set for v1.4.0. Replaying them is the next measurement.
 - Report: [2026-11-02-field](2026-11-02-field/README.md).
 
+## A/B: the data-path questions on the field run's misses (2026-11-03)
+
+Batch-level A/B on the five batches that held the field run's 10 missed real Medium+ bugs: engine
+`main` (A) against [wachiman#88](https://github.com/niway-dev/wachiman/pull/88) (B), Opus 5.5,
+two runs per arm. Run on the owner's Claude Code login; $11.11 is the provider's reported cost.
+
+| | A: without the questions | B: with the questions |
+| --- | --- | --- |
+| Distinct bugs found at least once (of 10) | 2 | **7** |
+| Bug-runs found / partly (of 20) | 2 / 1 | **12 / 4** |
+| #479's High bug | 0 of 2 | **2 of 2** |
+| Invalid findings | 0 | 0 |
+| Cost / turns per batch | $0.59 / 7.7 | **$0.52 / 5.9** |
+
+- **In-sample only:** the questions were written from these 10 bugs. Held-out bugs decide whether
+  they generalise.
+- Report: [2026-11-03-data-path-questions-ab](2026-11-03-data-path-questions-ab/README.md).
+
 ## What each experiment showed
 
 ### v1.3.0 baseline (2026-11-01, [#55](https://github.com/niway-dev/wachiman/pull/55))
