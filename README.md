@@ -41,7 +41,9 @@ for the exact commands; `bun test` checks the parsers against real snapshots.
 
 ## Privacy
 
-Everything here comes from public repositories. Wachiman also runs on private repositories; their
+Everything here comes from public repositories. Quoted third-party text (Pullfrog and
+CodeRabbit reviews, kaipu-record code excerpts) belongs to its authors and is reproduced for
+research and comparison. Wachiman also runs on private repositories; their
 reviews are not stored here, only aggregate counts in [dataset/README.md](dataset/README.md#privacy).
 
 ## History
