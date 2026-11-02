@@ -2,7 +2,7 @@
 
 - **Status:** run and scored 2026-11-02. 20 provider calls, $11.11 in total.
 - **Question:** does [PR #88](https://github.com/niway-dev/wachiman/pull/88)
-  (`feat/data-path-questions`, ADR 0016 on that branch) make Wachiman find the real Medium+ bugs
+  (`feat/data-path-questions`, ADR 0016) make Wachiman find the real Medium+ bugs
   it missed in the [2026-11-02 field run](../2026-11-02-field/README.md),
   without adding false findings? PR #88 adds five questions to a batch's prompt, and only when
   the batch's added lines show the matching pattern.
@@ -131,8 +131,8 @@ Notes on the "other" findings:
 ## Method
 
 1. **Ground truth.** The 10 bugs of the field run's "Wachiman's misses, by cause" table, with the
-   head, file and line from the per-PR audits ([`prs/pr-478.md`](../2026-11-02-field/prs/pr-478.md)
-   … [`pr-483.md`](../2026-11-02-field/prs/pr-483.md) in the field run folder). The head is the first one the bots reviewed, which is where
+   head, file and line from the per-PR audits (`prs/pr-478.md` … `pr-483.md` on
+   `docs/field-run-kaipu-workspaces`). The head is the first one the bots reviewed, which is where
    Wachiman's full review missed them. Bug #2 was first reported at `649c902`. It is present at
    `07a47af` too: the unplugged branch of `upgradeDefaultColor` (`registry.ts:405-428`) sets
    `pendingIdentity` without reading the folder.
@@ -223,22 +223,3 @@ Raw files per run: `prompt.txt`, `evidence.json`, `info.json` (questions, engine
 5. **Next measurement:** run arms A and B on held-out pull requests, ideally full-PR replays in
    kaipu-bench repositories, with a fixed cost margin agreed before the run, as ADR 0016's reopen
    condition proposes.
-
-## Re-run
-
-The harness imports engine code, and this repository does not contain it. It takes the engine as a
-directory: `ab.ts` loads `src/engine.ts`, `src/evidence.ts`, `src/contracts.ts`,
-`src/providers/claude-code.ts` and (arm B) `src/questions/index.ts` from the `--engine` checkout it
-is given, and `harness/run.sh` reads that path from `ENGINE_A` and `ENGINE_B`. Nothing here is
-installed from a package.
-
-1. Clone [niway-dev/wachiman](https://github.com/niway-dev/wachiman) twice as detached worktrees,
-   one per arm: arm A at `47933f0` (main when the A/B ran), arm B at `5348cd6` (the head of PR #88
-   at the time). Run `bun install` in each.
-2. Export `ENGINE_A` and `ENGINE_B` as those paths, `KAIPU_CLONE` as a kaipu-record clone and
-   `HEADS` as the folder holding one detached worktree per head (see the header of
-   [`harness/run.sh`](harness/run.sh)).
-3. `harness/run.sh <batch-id> <A|B> <repeat> --dry-run` checks the setup for free. Without
-   `--dry-run` it makes a paid call.
-
-The harness has no tests of its own; `bun test` in this repository covers only `scripts/`.
