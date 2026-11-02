@@ -69,4 +69,10 @@ land between those two numbers. v1.5.0 also stops re-reviewing code merged in fr
 
 ## Amendments
 
-None.
+- **2026-11-02, after the release.** The "Registered" date above is wrong: the file was registered
+  on 2026-11-02 (America/Lima), at about 23:30 UTC, before #84 merged at 23:37 UTC. The order is
+  what matters, and the commit times show it. The A/B report's folder name, `2026-11-03-…`, has the
+  same error; it stays, so links keep working.
+- **First v1.5.0 run** (kaipu-record#488, a workflow and ADR change): engine `refs/tags/v1.5.0` @
+  `31f422b5`, `Data-path questions for part 1 of 1: none`, 5 turns, $0.16. P3 behaved as predicted
+  on a non-data PR. This is one run, not a result.
