@@ -83,7 +83,7 @@ The catalogue attributes the drag-copies bug (hard link across volumes) to PR #2
 that introduced it, `749df1bc`, is **not** in #269's diff: it reached `main` through PR #286
 (`feat/NIW2-218-background-export`), merged later. The blind judge noticed that #269 never touches
 `drag-copies.ts`. So #269 is a control PR here: it has no catalogued bug, and no reviewer claimed
-one. The catalogue row is wrong and should be corrected to #286. Four PRs remain in the test.
+one. The catalogue row was corrected to #286 on 2026-11-02, and the research note on the misses is in niway-dev/wachiman#97. Four PRs remain in the test.
 
 ### The catalogued bugs
 
