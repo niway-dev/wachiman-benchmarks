@@ -1,0 +1,79 @@
+Reviewed since c573b8e: apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts, apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts, apps/kaipu-record/src/main/workspaces/registry.ts, apps/kaipu-record/src/main/workspaces/relocate.test.ts, apps/kaipu-record/src/main/workspaces/relocate.ts, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx, packages/i18n/messages/en.json, packages/i18n/messages/es.json.
+evidence: 24 symbol(s) found, 24 call site(s), 15061 bytes, 502 ms, truncated
+Data-path questions for part 1 of 1: overlapping-calls, stale-write-back
+{"is_error":false,"terminal_reason":"success","turns":18,"cost_usd":0.1658788,"duration_ms":221726}
+--- review at 64db30b ---
+👮 **Wachiman** · review of the changes since `c573b8e`, at `64db30b`: all 10 files reviewed.
+
+3 finding(s): 1 to fix, 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Outside the diff
+
+- 🟡📝 **Consider · docs: checkRelocate doc says only identity-carrying folders qualify, which the new pendingInit branch contradicts (confidence high)** (`apps/kaipu-record/src/main/workspaces/registry.ts:821`): The doc comment above `checkRelocate` says "Only a folder whose `.kaipu/workspace/identity.json` carries this workspace's id qualifies." The new branch at registry.ts:843-848 accepts a folder with `.kaipu/` and no identity when `entry.pendingInit` is set, and the test at registry-relocate.test.ts:200-219 pins that behaviour. Update the comment to say a pending workspace may also take an identity-less folder that holds Kaipu items, which the next probe then stamps with its id.
+
+### Summary
+
+Reviewed the 10 files of part 1 (registry, relocate, the dialog and context, the tests, and the i18n keys). The new code follows through to the UI: the same-folder early return, the deferred color upgrade, the pendingInit relocate, and the uncertain-result messages all trace correctly. Three findings: a stale JSDoc on checkRelocate (consider, docs), a question about whether pending workspaces should accept identity-less folders that hold another library's items (consider, low), and an unlocked read-then-write race between availability() and edit() on identity.json (fix, low, posted as a question). Nine open threads on these files were checked: seven are addressed by the current code and one is still open (pendingInit with an unknown identity id). The i18n files were checked by key lookup and the "Move to" removal, not read in full; they contain no findings. No files were skipped.
+
+<details><summary>What the change connects to (7 closed, 2 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- relocate of a pendingInit workspace to a folder with .kaipu/ and no identity.json is accepted (`apps/kaipu-record/src/main/workspaces/registry.ts:843-848`) — Should an identity-less folder be accepted only when it is the pending entry's own old path, or when no other entry claims it? Is a silent failed identity write after the probe acceptable? Files that would answer it: `apps/kaipu-record/src/main/workspaces/registry.ts:711-722`, `apps/kaipu-record/src/main/workspaces/registry.ts:835-838`, `apps/kaipu-record/src/main/workspaces/index.ts:114-118`.
+- Two overlapping calls on the same workspace: an availability probe (with a pending upgrade) and an edit (`apps/kaipu-record/src/main/workspaces/registry.ts:596-612 and apps/kaipu-record/src/main/workspaces/registry.ts:657-684`) — Is there a reason the folder write in availability() and edit() is not under a per-entry lock, the way the registry persist is? Could an edit's identity write be reordered after a probe's stale write? Files that would answer it: `apps/kaipu-record/src/main/workspaces/atomic-write.ts`, `apps/kaipu-record/src/main/library/atomic-write.ts`.
+
+**Closed, with the lines they rest on**
+- Change folder… in the edit dialog calls the relocate IPC directly (`apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:139-153`) — On success the dialog stays open and shows a 'Done' toast from onRelocated. The path in FolderPath updates because relocateFolder calls broadcastState (index.ts:345). On refusal the inline alert uses relocateRefusalMessage. A cancelled picker shows nothing. If it fails: If the IPC rejects, the alert says the result is unknown. This also covers a rejection before any folder change (for example showOpenDialog throwing), where the wording is more uncertain than it need… Evidence: `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:139-153`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:244-245`, `apps/kaipu-record/src/main/workspaces/index.ts:312-350`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:172-191`, `apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:10-14`.
+- relocateWorkspace returns early when the picked folder is the one the workspace already points at (`apps/kaipu-record/src/main/workspaces/relocate.ts:39-43`) — No 'unsaved changes' question, no route remount, no dropped capture. The dialog still shows its 'Done' toast from onRelocated. If it fails: If the identity file was deleted by hand, the early return skips the write, but relocateFolder calls reg.availability afterwards (index.ts:342), which rewrites the file. Nothing is lost. Evidence: `apps/kaipu-record/src/main/workspaces/relocate.ts:37-44`, `apps/kaipu-record/src/main/workspaces/switch-transaction.ts:101-133`, `apps/kaipu-record/src/main/workspaces/index.ts:340-342`, `apps/kaipu-record/src/main/workspaces/relocate.test.ts:152-162`.
+- availability() probe writes only the color of a pending one-time upgrade (`apps/kaipu-record/src/main/workspaces/registry.ts:681-690`) — When the folder is plugged in again, its color changes to Kaipu's, and the registry cache already shows that. If another Mac renamed or recoloured the folder, the upgrade is dropped silently and the entry adopts the folder's values (registry.ts:694-707). If it fails: A failed write keeps pendingColorUpgrade set and the next probe retries (registry.ts:686-688). Nothing is shown to the user, and the folder keeps its old color until a probe succeeds. Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:202-204`, `apps/kaipu-record/src/main/workspaces/registry.ts:657-690`, `apps/kaipu-record/src/main/workspaces/registry.ts:693-708`, `apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts:153-176`, `apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts:178-204`.
+- create and edit dialog catch a rejected IPC call and show an uncertain message (`apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:116-134`) — An alert role with the 'can't tell whether' text (createUncertain or editUncertain, en.json:2609 and 2616) appears in the dialog. The dialog does not close. If it fails: The catch also wraps the onCreated and onSaved callbacks, so an exception there is shown as 'uncertain' too, although the change did happen. That is only a wording issue, and such exceptions are not… Evidence: `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:112-135`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:336-362`, `packages/i18n/messages/en.json:2609`, `packages/i18n/messages/en.json:2616`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx:193-206`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx:436-447`.
+- context changeFolder catches a rejected relocate IPC and shows a toast (`apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:174-181`) — A toast reading 'Something went wrong and Kaipu can't tell whether the folder was changed.' appears. Callers are not-connected-notice.tsx:32 and settings-pages.tsx:261, which both call changeFolder with void, so the toast is the only feedback. If it fails: The toast is shown and nothing stays stuck. Only the context's own refusal path (relocateRefusalMessage) can return null, and it is guarded by `if (message)`. Evidence: `apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:172-191`, `apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:14-22`, `packages/i18n/messages/en.json:2632`.
+- edit rollback when the registry cannot be stored (`apps/kaipu-record/src/main/workspaces/registry.ts:633-641`) — The refused rename leaves no trace in the folder. The dialog shows editNotWritable or editFailed (workspace-dialog.tsx:354, 360). If it fails: removeIdentity swallows its own errors (identity.ts:166-170), so a failure to remove leaves the new file on disk. The 'absent' branch is only reachable by a race, because the probe at line 591 rewrit… Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:591-597`, `apps/kaipu-record/src/main/workspaces/registry.ts:633-641`, `apps/kaipu-record/src/main/workspaces/identity.ts:166-170`, `apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts:573-592`.
+- pendingIdentity probe writes the cached name, color and initials over the folder's identity.json (`apps/kaipu-record/src/main/workspaces/registry.ts:663-680`) — If another Mac renamed the folder while this Mac was away and this Mac also edited it offline, the other Mac's rename is replaced when the folder returns. The test at registry-create-edit.test.ts:506-516 covers this direction. Only the other Mac's change is lost, and it is docum… If it fails: The write failing leaves the entry pending (registry.ts:677). Nothing is lost on this side. Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:49-53`, `apps/kaipu-record/src/main/workspaces/registry.ts:663-680`, `apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts:518-549`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 10 | 249 | 5 | reviewed | 18 | $0.17 |
+
+</details>
+
+<sub>Claude Haiku 5.5 via Claude Code 2.1.316 · effort high · $0.17</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=64db30b0dec2590302f85ea9b51057026094bac4 -->
+--- apps/kaipu-record/src/main/workspaces/registry.ts:848 ---
+👮 **Wachiman** · 🟡❓ **Consider · question: A pending workspace now takes any identity-less folder with Kaipu items: is that intended for folders that belong to another library? (confidence low)**
+
+Before this change an identity-less folder with `.kaipu/` was refused as `has-items-no-identity` (registry.ts:848 else-branch). Now `entry.pendingInit ? { ok: true }` accepts it for any pending entry. The probe then writes this entry's id into that folder (registry.ts:724-735), so whatever items it holds appear under this workspace. The guard that was there before ("the items are not in it") is bypassed for any folder that happens to hold Kaipu items without an identity file, not only the folder the workspace used to live in. Is it intended to accept a folder that was never this workspace's, for example a copy or another library's folder? If so, a note in the comment is enough; if not, consider requiring the folder to have been this entry's own path or to be unregistered.
+
+<!-- wachi:finding -->
+--- apps/kaipu-record/src/main/workspaces/registry.ts:684 ---
+👮 **Wachiman** · 🟠❓ **Fix · question: Deferred color upgrade writes identity.json without a per-folder lock, so an overlapping edit can be overwritten and lost (confidence low)**
+
+The `pendingColorUpgrade` branch at registry.ts:681-690 reads identity.json in `availability` (line 657), then writes `{...identity, color}` (line 684) with no lock around the read-check-write. `edit` does the same thing: it probes (line 591), reads `previous` (line 596), and writes `next` (line 612). Only the registry `update`/`persist` calls are serialized (UPDATE_LOCK, LOCK). `availability` is called from many places (for example `requireCaptureWorkspace` at apps/kaipu-record/src/main/workspaces/index.ts:114), so a probe can start before an edit's write and land after it. If the probe's write lands last, identity.json keeps the old color while the registry keeps the edited one. The next probe then sees the stale folder value and adopts it (registry.ts:694-707), so the edit's color is dropped silently. The window is narrow (it needs a pending upgrade and an overlapping probe), so the confidence is low. The same shape already exists for the `pendingIdentity` branch (registry.ts:663-680). Is there a reason the folder write does not go through a per-entry lock?
+
+<!-- wachi:finding -->
+--- reply to 4438597058: Looks addressed ---
+Addressed: the edit rollback now also removes the identity it wrote when the folder had none before (registry.ts:636-640). The test at registry-create-edit.test.ts:573-592 covers the real path (probe restores the file, registry write fails, old name stays).
+--- reply to 4438597064: Looks addressed ---
+Addressed: edit re-runs the name check inside the locked update (registry.ts:619-621), so the NameTakenError path undoes the identity write. The concurrent-edit test is at registry-create-edit.test.ts:594-612.
+--- reply to 4438597067: Looks addressed ---
+Addressed: refusalMessage gets the editing flag and maps not-writable and default to editNotWritable and editFailed (workspace-dialog.tsx:353-360), and the test asserts the exact edit text at workspace-dialog.test.tsx:449-458.
+--- reply to 4438597070: Looks addressed ---
+Addressed: the late answer resolves inside await act(async …) (workspace-dialog.test.tsx:163-167), so removing the alive guard would render the stale "Wo" path and fail the assertion.
+--- reply to 4439290166: Still open ---
+Partly addressed: a pending workspace now accepts a moved folder that has Kaipu items and no identity (registry.ts:843-848), which is the case the finding described. Still open: when the moved folder has an identity with an id this Mac does not know, checkRelocate still refuses it as "different" (registry.ts:835-838), while availability adopts that id for a pending entry (registry.ts:711-721). The same rule is needed there.
+--- reply to 4439290177: Looks addressed ---
+Addressed: relocateWorkspace returns the unchanged entry when the picked folder is the one already registered, before any window is asked (relocate.ts:39-43). The test at relocate.test.ts:152-162 checks that the log is empty and the generation is unchanged.
+--- reply to 4439290180: Looks addressed ---
+Addressed: the "To move items … use “Move to”" sentence is removed from both en.json:2623 and es.json:2623, and workspace-dialog.test.tsx:294 now asserts the alert does not contain "Move to".
+--- reply to 4439290186: Looks addressed ---
+Addressed: the dialog's changeFolder now catches a rejected call and shows relocateUncertain inline (workspace-dialog.tsx:147-150), and the context's changeFolder shows it as a toast (workspaces-context.tsx:177-180). I used relocateUncertain rather than relocateFailed because a rejection can come after main applied the new folder.
+--- reply to 4439290193: Looks addressed ---
+Addressed: the test now resolves a relocate, checks Save is still disabled, then changes the color and checks Save is enabled (workspace-dialog.test.tsx:343-355).

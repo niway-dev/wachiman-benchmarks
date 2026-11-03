@@ -1,0 +1,47 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 1 file(s): apps/kaipu-record/src/main/workspaces/index.ts.
+32 of the 33 file(s) changed since 4ed1580 are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 4ed1580: apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 3 symbol(s) found, 6 call site(s), 5629 bytes, 231 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":13,"cost_usd":0.27302909999999997,"duration_ms":45424}
+--- review at 0253fd7 ---
+👮 **Wachiman** · review of the changes since `4ed1580`, at `0253fd7`: all 1 files reviewed.
+
+1 finding(s): 1 to fix; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The change to `workspaces/index.ts` adds provider detection and an availability probe to the relocate handler, and returns the workspace view. It has one problem. When the active workspace is relocated, the new folder's provider is detected only after `relocateActive` has committed and broadcast. A Google Drive folder recognised only by its xattr (outside `~/Library/CloudStorage`) is therefore listed as plain on the first re-list. No later `library:changed` corrects that. Add and create both detect before their switch. None of the open threads touch this file, so there are no thread replies.
+
+<details><summary>What the change connects to (0 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- "Change folder…" now re-detects the sync provider of the new folder, probes availability (bounded), and returns the full WorkspaceView in the relocate result (`apps/kaipu-record/src/main/workspaces/index.ts:753-764`) — Whether detectSync can reject (rather than resolve null) on a stalled xattr read, which would make line 755 throw after the registry already changed. Files that would answer it: `apps/kaipu-record/src/main/workspaces/synced-folder.ts`, `apps/kaipu-record/src/main/workspaces/relocate.test.ts`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 1 | 5 | 5 | reviewed | 13 | $0.27 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.316 · effort high · $0.27</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=0253fd77510fb5e9efb5c084ed30185907c4ba8c -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:755 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Relocating the active workspace detects the new folder's provider after the commit, so the first re-list treats an xattr-only Drive folder as plain (confidence medium)**
+
+`addWorkspace` (line 578) and `createWorkspace` (line 630) call `syncStates.refresh` before `runSwitch`, so the switch commits with the provider already known. `relocateFolder` calls it only at line 755, after `relocateWorkspace` has returned. For the active workspace, `relocateActive` (`switch-transaction.ts:135-136`) has already run `afterCommit` by then, which sends `library:changed` and `workspaces:changed`. Between `registry.relocate` (`registry.ts:884`) and the refresh, `SyncStates.of` (`sync-state.ts:26-29`) has no entry for the new path. It falls back to `syncProviderOfPath`, which only knows the `~/Library/CloudStorage/…` and iCloud paths. A Google Drive folder recognised only by its `com.google.drivefs.item-id#S` xattr, outside `~/Library/CloudStorage`, answers null.
+
+The renderer's re-list reads `activeEvictionProbe()` and `activeScratch()` (`library/index.ts:74`, `library/index.ts:420-421`), and `media-protocol.ts:126` reads `activeEvictionProbe()` too. All of them return null for that folder. Evicted items are listed as ordinary files and get thumbnail URLs. `kaipu-media://` opens them without the 409 gate, which downloads them. That is the hazard decision 15 forbids. After the refresh, only `broadcastState` runs (line 759). Nothing sends `library:changed` again, so the already-built list stays without eviction marks until something else re-lists. The detection at line 755 can take up to 2 s per step, which is the window in which the renderer's re-list lands.
+
+The registry stores the picked path unchanged (`registry.ts:882`), so the provider can be detected before the transaction. Call `await syncStates.refresh({ id, path: chosen })` right before `relocateWorkspace` at line 751. `of()` matches on id and path, so the commit already sees the right provider. Keep the refresh at line 755 for the `unchanged` case and for a path the registry normalised. If the relocate is refused, the pre-detected entry does not match the registered path and `of()` ignores it.
+
+<!-- wachi:finding -->

@@ -1,0 +1,50 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 1 file(s): apps/kaipu-record/src/main/workspaces/index.ts.
+32 of the 33 file(s) changed since 4ed1580 are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 4ed1580: apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 3 symbol(s) found, 6 call site(s), 5629 bytes, 149 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":16,"cost_usd":0.028590160000000003,"duration_ms":78263}
+--- review at 0253fd7 ---
+👮 **Wachiman** · review of the changes since `4ed1580`, at `0253fd7`: all 1 files reviewed.
+
+1 finding(s): 1 to consider; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+Reviewed the one changed file in this part, apps/kaipu-record/src/main/workspaces/index.ts (+5 −0, relocateFolder). The diff adds a sync detection after a folder change and returns the workspace view. The relocation itself is unchanged. One finding: for the active workspace, the detection runs after the transaction has already committed and broadcast, unlike addWorkspace and createWorkspace, which detect before their switch. That leaves a window of up to about 4 s, for a Drive folder detected only by its xattr, in which captures and Library requests see the folder as not synced. The fix is to detect the picked path before relocateWorkspace. The return payload matches its siblings and I found no defect there. No open threads on this part's files need replies: the open threads are on other files in the pull request.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Change folder… confirmed (relocate an existing workspace to a picked folder), with the new detection and the new `workspace` payload (`apps/kaipu-record/src/main/workspaces/index.ts:751-764`) — The switcher, the Settings row and the Library re-list during the gap use the path rule. For a Drive folder under CloudStorage or iCloud the path rule is already right. For an xattr-only Drive folder the provider shows as missing until the final broadcast at index.ts:759, and th… If it fails: syncStates.refresh does not throw: detectSync is wrapped in withTimeout and returns null on failure (synced-folder.ts:74-92). availabilityOf is bounded (index.ts:176-193). So no rejection after the c… Evidence: `apps/kaipu-record/src/main/workspaces/index.ts:751-764`, `apps/kaipu-record/src/main/workspaces/index.ts:577-612`, `apps/kaipu-record/src/main/workspaces/index.ts:628-647`, `apps/kaipu-record/src/main/workspaces/index.ts:524-530`, `apps/kaipu-record/src/main/workspaces/relocate.ts:46-48`, `apps/kaipu-record/src/main/workspaces/switch-transaction.ts:135-137`, `apps/kaipu-record/src/main/workspaces/sync-state.ts:26-29`, `apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-92`, `apps/kaipu-record/src/main/library/index.ts:71-75`, `apps/kaipu-record/src/main/workspaces/index.ts:393-399`.
+- The relocate result payload now carries `workspace` (a WorkspaceView) on success, and the renderer toast reads `result.workspace.name` (`apps/kaipu-record/src/main/workspaces/index.ts:760-763`) — The renderer's toast (workspaces-context.tsx:208-212) reads only the name and skips it when `unchanged` is set. The count and device are not shown from this payload, and the list is re-read by the broadcast at index.ts:759. If it fails: None found. The payload is built from `current`, which is the registry's entry after the relocation, or the outcome's entry if the registry no longer has the id. That fallback is the same one the oth… Evidence: `apps/kaipu-record/src/main/workspaces/index.ts:753-764`, `apps/kaipu-record/src/main/workspaces/index.ts:603-612`, `apps/kaipu-record/src/main/workspaces/index.ts:663-673`, `apps/kaipu-record/src/main/workspaces/workspace-view.ts:11-17`, `apps/kaipu-record/src/shared/types/workspaces.ts:183-189`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:208-212`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 1 | 5 | 5 | reviewed | 16 | $0.03 |
+
+</details>
+
+<sub>Claude Haiku 5.5 via Claude Code 2.1.316 · effort high · $0.03</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=0253fd77510fb5e9efb5c084ed30185907c4ba8c -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:755 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Relocating the active workspace broadcasts before its new sync provider is detected (confidence high)**
+
+`relocateFolder` calls `relocateWorkspace` (line 751), which for the active workspace runs `relocateActive` (relocate.ts:48). That commits the gate and calls `afterCommit` (switch-transaction.ts:135-137), and `afterCommit` broadcasts `workspacesChanged` and `library:changed` (index.ts:524-530). Only after that returns does line 755 run `syncStates.refresh(current)`. So the re-list in those broadcasts sees the new folder through the path rule alone (`SyncStates.of`, sync-state.ts:26-29), not the detection.
+
+The siblings do it the other way round. `addWorkspace` refreshes at index.ts:578 and `createWorkspace` at index.ts:630, both before `runSwitch` commits.
+
+For a folder under `~/Library/CloudStorage` or iCloud the path rule is right and nothing is lost. For a Drive folder outside those roots, detected only by the xattr (synced-folder.ts:85-91), the path rule answers null until the detection finishes. That detection can take up to about 4 s, since `realpath` and the xattr check are each bounded at 2 s (synced-folder.ts:80, 86-90). In that gap the gate is open, so `currentVault()` builds a `LibraryVault` with a null eviction probe (library/index.ts:74), and `syncedStagingFor` returns null (index.ts:393-399), so a take started then is staged in `.kaipu/tmp/` inside the synced folder. That is the case decision 15 keeps out of synced folders. The switcher also shows no provider until the final broadcast at line 759 corrects it.
+
+Fix: detect the picked path before the transaction, as `addWorkspace` does, e.g. `await syncStates.refresh({ id, path: chosen })` after the picker and before `relocateWorkspace`. `SyncStates.of` only trusts a detection whose path matches the entry's current path (sync-state.ts:28), so a refused relocation leaves nothing wrong behind.
+
+<!-- wachi:finding -->

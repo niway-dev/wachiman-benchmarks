@@ -1,0 +1,56 @@
+Reviewed since c573b8e: apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts, apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts, apps/kaipu-record/src/main/workspaces/registry.ts, apps/kaipu-record/src/main/workspaces/relocate.test.ts, apps/kaipu-record/src/main/workspaces/relocate.ts, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx, packages/i18n/messages/en.json, packages/i18n/messages/es.json.
+evidence: 24 symbol(s) found, 24 call site(s), 15061 bytes, 521 ms, truncated
+Data-path questions for part 1 of 1: overlapping-calls, stale-write-back
+{"is_error":false,"terminal_reason":"success","turns":9,"cost_usd":0.29917209999999994,"duration_ms":56841}
+--- review at 64db30b ---
+👮 **Wachiman** · review of the changes since `c573b8e`, at `64db30b`: all 10 files reviewed.
+
+1 finding(s): 1 to consider; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The change holds up. The deferred color upgrade now has its own `pendingColorUpgrade` marker, so it yields to a folder that changed while it was away. Same-folder relocation returns early. A `pendingInit` workspace can be repointed at a folder with Kaipu items and no identity. Rejected create, edit and relocate calls now show an 'uncertain' message in en and es. The tests assert what their names say. I found one consider-level issue: an offline rename clears the deferred upgrade and later writes the cached brand color over the folder's file, which could overwrite another Mac's recolor. Four threads are addressed: the `pendingInit` relocate, the same-folder relocate, the 'Move to' text, and the rejected relocate. The test-name thread is addressed too. One thread, on relocating the active workspace dropping the pending capture, is still open and lives outside this part's files.
+
+<details><summary>What the change connects to (4 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Deferred brand-color upgrade is written to identity.json only if the folder still holds the old Default and rose (`apps/kaipu-record/src/main/workspaces/registry.ts:681`) — The Default workspace keeps whatever name and color the folder holds. The brand color appears only when nobody changed the folder. If it fails: If writeIdentity throws, the marker stays and the next probe retries. Probes are not serialized, so a probe that read the file before an edit's write can write the old name back. This is the same win… Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:681-690`, `apps/kaipu-record/src/main/workspaces/registry.ts:691-708`, `apps/kaipu-record/src/main/workspaces/registry.ts:625-631`, `apps/kaipu-record/src/main/workspaces/registry.ts:429-458`.
+- Change folder… on the folder the workspace already points at returns early, with no transaction (`apps/kaipu-record/src/main/workspaces/relocate.ts:42`) — The user sees the 'folder changed' toast with nothing remounting and no unsaved-changes prompt. If it fails: If checkRelocate or availability throws, the IPC call rejects. The renderer now catches this and shows relocateUncertain, in the dialog or as a toast. Evidence: `apps/kaipu-record/src/main/workspaces/relocate.ts:37-46`, `apps/kaipu-record/src/main/workspaces/index.ts:340-349`, `apps/kaipu-record/src/main/workspaces/registry.ts:842`.
+- checkRelocate accepts a Kaipu-items folder with no identity.json for a pendingInit workspace (`apps/kaipu-record/src/main/workspaces/registry.ts:848`) — The user can recover a Default workspace that was registered while its drive was unplugged. If it fails: Any folder with a .kaipu directory and no identity is accepted for a pendingInit entry. The user's pick is the only evidence it is the right folder. Other workspaces keep the stricter rule. A folder… Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:843-850`, `apps/kaipu-record/src/main/workspaces/registry.ts:726-746`, `apps/kaipu-record/src/main/workspaces/index.ts:342`.
+- Rejected create, edit and relocate IPC calls now show an 'uncertain' message (`apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:130`) — The user is told to check the Workspaces list or the folder before retrying, instead of seeing 'failed'. The Save and Create buttons come back enabled. If it fails: checkLocation's `.then` at line 95 still has no catch. That is existing code and out of scope. Because the dialog stays open after an uncertain create, a retry can hit name-taken if the first call di… Evidence: `apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:112-153`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:172-191`, `packages/i18n/messages/en.json:2609`, `packages/i18n/messages/en.json:2616`, `packages/i18n/messages/en.json:2632`, `packages/i18n/messages/es.json:2632`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 10 | 249 | 5 | reviewed | 9 | $0.30 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.316 · effort high · $0.30</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=64db30b0dec2590302f85ea9b51057026094bac4 -->
+--- apps/kaipu-record/src/main/workspaces/registry.ts:629 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: An unrelated offline edit turns the deferred color upgrade into a write of the folder's color (confidence medium)**
+
+`edit` deletes `pendingColorUpgrade` and sets `pendingIdentity` (lines 629-631) even when the user changed only the name. On reconnect, the `pendingIdentity` branch (lines 663-672) writes name, color and initials from the cache over the folder's file. The cached color is the app-supplied brand color, not one the user chose. So if another Mac recolored the folder while this one was away and the user then renames it here, that recolor is overwritten without a choice from anyone. The new test at `registry-create-edit.test.ts:206` pins the rename-wins case but not the color. Consider clearing `pendingColorUpgrade` only when the patch includes a color. When the patch has only a name, keep it, and have the pending-identity write skip the color unless `isOldDefault`.
+
+<!-- wachi:finding -->
+--- reply to 4439290166: Looks addressed ---
+The main case is fixed. `checkRelocate` now accepts a folder with `.kaipu/` items and no identity for a `pendingInit` entry (registry.ts:843-850), and the probe after the move writes the identity under the registered id. A test covers it. The second half of the comment is not done: a moved folder that holds another, unregistered id is still refused as `different` for a `pendingInit` entry, while `availability` would adopt that id. That was only a suggested extension, so I'm not holding this open on it.
+--- reply to 4439290170: Still open ---
+Not changed in this part. `relocateActive` still drops pending captures on a real relocation. Only the same-folder case now skips the transaction. Reply if you want to keep dropping the capture.
+--- reply to 4439290177: Looks addressed ---
+Fixed. `relocateWorkspace` returns early when the picked folder is the current one (relocate.ts:42-43). No window is asked to prepare, the generation is not bumped and captures are kept. The caller's probe still runs. `relocate.test.ts` covers it.
+--- reply to 4439290180: Looks addressed ---
+Fixed. The 'Move to' sentence is gone from `relocateNotWorkspace` in en.json and es.json, and the dialog test now asserts the text does not mention it.
+--- reply to 4439290186: Looks addressed ---
+Fixed. The dialog's `changeFolder` and the context's `changeFolder` both catch a rejection. The dialog shows `relocateUncertain` in the folder-error alert and the context shows a toast. The message says the result is unknown rather than 'failed', which fits a rejection after main may have applied the change.
+--- reply to 4439290193: Looks addressed ---
+Fixed. The test now resolves a relocate, checks that Save stays disabled, then changes the color and checks that Save becomes enabled.
