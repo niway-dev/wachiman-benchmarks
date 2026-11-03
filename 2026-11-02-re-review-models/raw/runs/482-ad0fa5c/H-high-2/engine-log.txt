@@ -1,0 +1,50 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 2 file(s): apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md, apps/kaipu-record/src/main/workspaces/index.ts.
+31 of the 33 file(s) changed since 543053c are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 543053c: apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md, apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 1 symbol(s) found, 6 call site(s), 5103 bytes, 111 ms, complete
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":16,"cost_usd":0.02936754,"duration_ms":96012}
+--- review at ad0fa5c ---
+👮 **Wachiman** · review of the changes since `543053c`, at `ad0fa5c`: all 2 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+Part 1 covers two files. The index.ts change moves `notifyOverridesChanged()` from `persistActive` into `afterCommit`, so the explicit settings broadcast now follows the gate commit. The spec doc change moves three IPC rows that sat above the table header into the table after `settings:set-override`. The channel names and the payloads I checked match `ipc.ts` and the handlers. Two consider-level findings: a pre-commit broadcast still comes from `refresh` inside `persistActive`, and relocating the active folder now notifies without re-reading the folder's settings file. No open review threads touch these two files, so there are no thread replies. I did not build or run anything.
+
+<details><summary>What the change connects to (0 closed, 2 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- Switch to another workspace broadcasts the new effective settings (notifyOverridesChanged moved into afterCommit) (`apps/kaipu-record/src/main/workspaces/index.ts:404-410`) — Can any settings listener called from notifyOverridesChanged throw? If one can, moving the call ahead of broadcastState changes what a window sees after a successful switch. Files that would answer it: `apps/kaipu-record/src/main/index.ts:943-945`, `apps/kaipu-record/src/main/screenshots/screenshot-ipc.ts:87-91`, `apps/kaipu-record/src/main/recording/recording-hub.ts:200-204`.
+- Change folder of the active workspace reaches afterCommit, which now calls notifyOverridesChanged (`apps/kaipu-record/src/main/workspaces/index.ts:580-619`) — Should relocating the active workspace refresh its folder overrides before the commit, as a switch does? ADR 0034 lists switch, add and capture start as the read triggers, not relocation. Files that would answer it: `apps/kaipu-record/src/main/workspaces/workspace-settings.ts:169-185`, `apps/kaipu-record/src/main/workspaces/registry.ts`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 2 | 10 | 5 | reviewed | 16 | $0.03 |
+
+</details>
+
+<sub>Claude Haiku 5.5 via Claude Code 2.1.316 · effort high · $0.03</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=ad0fa5cce6f52591fc6df554ab4ee5e0fbb63e58 -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:427 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Switch still broadcasts the target's settings before the commit (confidence medium)**
+
+The diff moves `notifyOverridesChanged()` from `persistActive` into `afterCommit`, so the explicit broadcast now runs after `gate.commit`. But `persistActive` still calls `workspaceSettings?.refresh(target)` (index.ts:427) after `reg.setActive(target)`. `refresh` calls `deps.changed()`, which is `notifyOverridesChanged`, whenever the target's overrides differ from its cached value (workspace-settings.ts:159-160). That happens while the gate is still closed and the stamp still names the old workspace (switch-transaction.ts:70-80). So `settings:changed` with the new workspace's effective settings can still go out before the commit, and the comment at index.ts:405 ("reach every window ... ") only holds for the explicit call. If the ordering is what the move is for, `refresh` needs a way to skip its notification when it runs inside the switch. If the pre-commit broadcast is acceptable, the comment at index.ts:405 should not imply the broadcast waits for the commit. The exposure is a few milliseconds with no user action possible (the gate is closed), so this is a judgement call.
+
+<!-- wachi:finding -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:406 ---
+👮 **Wachiman** · 🟡❓ **Consider · question: Relocating the active folder notifies, but the folder's settings file is not re-read (confidence medium)**
+
+`afterCommit` is also the commit callback of `relocateActive` (switch-transaction.ts:135-136, via relocate.ts:48). The new `notifyOverridesChanged()` therefore runs after "Change folder…" on the active workspace. `relocateFolder` (index.ts:580-619) never calls `workspaceSettings.refresh`, and the cache is keyed by workspace id (workspace-settings.ts:58, 145-162), so the notification recomputes the effective settings from the old folder's cached `settings.json`. The new folder's file is read only on the next settings scoped read, switch, or capture start. The ADR's list of read triggers (decisions/0034 line 166: switch, add, capture start) omits relocation. Is that intended? Relocation is accepted only for a folder with the same identity (spec line 1302), so the file is usually the same one, which limits the impact. Should relocation refresh the workspace settings before commit, as `persistActive` does for a switch?
+
+<!-- wachi:finding -->

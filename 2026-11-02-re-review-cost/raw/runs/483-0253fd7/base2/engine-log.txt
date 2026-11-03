@@ -1,0 +1,55 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 1 file(s): apps/kaipu-record/src/main/workspaces/index.ts.
+32 of the 33 file(s) changed since 4ed1580 are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 4ed1580: apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 3 symbol(s) found, 6 call site(s), 5629 bytes, 142 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":12,"cost_usd":0.5208436000000001,"duration_ms":71113}
+--- review at 0253fd7 ---
+👮 **Wachiman** · review of the changes since `4ed1580`, at `0253fd7`: all 1 files reviewed.
+
+1 finding(s): 1 to consider; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The only change in this round is in `relocateFolder` (`apps/kaipu-record/src/main/workspaces/index.ts`). After a relocation, it now detects the sync provider of the new folder, runs a bounded availability probe, and returns the workspace view. That matches what add and create do, and none of the new calls can reject.
+
+I'm raising one point, as "consider" at medium confidence, at line 755. For the active workspace, the relocation commits and sends `library:changed` before the sync detection runs. Add and create do it the other way round. In between, a Google Drive folder that is recognised only by its xattr reads as not synced. The Library list built at that moment has no eviction info, and nothing re-lists it after detection finishes.
+
+None of the open threads are on this file, so there are no thread replies.
+
+<details><summary>What the change connects to (1 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- relocateFolder now re-detects the sync provider of the relocated folder, probes availability bounded, and returns the workspace view (`apps/kaipu-record/src/main/workspaces/index.ts:753-762`) — The returned `workspace` view carries the detected provider and availability, and broadcastState (line 759) updates the switcher and Settings row through listState, which uses syncStates.of(current) (index.ts:467-468). The Library itself is not re-listed after the refresh. If it fails: syncStates.refresh never rejects: detectSync wraps realpath and the xattr probe in withTimeout, which catches rejections and falls back (synced-folder.ts:46-56, 75-92). availabilityOf is bounded at 5… Evidence: `apps/kaipu-record/src/main/workspaces/index.ts:577-612`, `apps/kaipu-record/src/main/workspaces/index.ts:628-647`, `apps/kaipu-record/src/main/workspaces/index.ts:516-531`, `apps/kaipu-record/src/main/workspaces/index.ts:751-765`, `apps/kaipu-record/src/main/workspaces/relocate.ts:28-49`, `apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141`, `apps/kaipu-record/src/main/workspaces/sync-state.ts:19-30`, `apps/kaipu-record/src/main/workspaces/synced-folder.ts:46-56`, `apps/kaipu-record/src/main/workspaces/synced-folder.ts:75-92`, `apps/kaipu-record/src/main/workspaces/index.ts:176-193`, `apps/kaipu-record/src/main/workspaces/index.ts:367-376`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 1 | 5 | 5 | reviewed | 12 | $0.52 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.316 · effort high · $0.52</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=0253fd77510fb5e9efb5c084ed30185907c4ba8c -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:755 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Active relocation commits and re-lists the Library before the new folder's sync state is detected (confidence medium)**
+
+For the active workspace, `relocateWorkspace` goes through `relocateActive`. That calls `afterCommit` (`switch-transaction.ts:136`), which reopens the gate and sends `library:changed` (`index.ts:524-530`). The new `syncStates.refresh(current)` runs only after that, at line 755. Until it finishes, `syncStates.of(active)` has no cached result for the new path, so it falls back to the path rule (`sync-state.ts:26-30`). The path rule does not recognise a Drive folder that only the xattr identifies (`synced-folder.ts:83-91`). For up to about 4 s (the 2 s realpath bound plus the 2 s xattr bound), `activeEvictionProbe()` and `syncedStagingFor()` treat that folder as unsynced.
+
+The Library list built from that commit's broadcast has no eviction info. Nothing lists it again afterwards: after the refresh, line 759 sends only `broadcastState()`, not `broadcastLibraryChanged()`. So evicted items keep a thumbnail URL and stay draggable and movable until something else re-lists the Library. That is the case decision 15 is meant to stop.
+
+Two fixes:
+- Detect the chosen folder before the transaction commits (refresh with the resolved `chosen` path before `relocateWorkspace`).
+- Or call `host?.broadcastLibraryChanged()` after the refresh when the provider differs from what the path rule said.
+
+For a non-active workspace the order is harmless, because nothing lists it in between.
+
+<!-- wachi:finding -->

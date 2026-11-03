@@ -1,0 +1,75 @@
+diff --git a/src/engine.ts b/src/engine.ts
+index b6e1bc0..322761e 100644
+--- a/src/engine.ts
++++ b/src/engine.ts
+@@ -1971,7 +1971,23 @@ export function review(deps: Deps, repo: string, pr: number, words: string[]) {
+     // About 40k tokens at 3.5 characters a token.
+     maxChars: config.batchChars,
+   });
+-  const threads = last ? openThreads(gh, repo, pr) : [];
++  // PROTOTYPE (exp/re-review-levers, local only): WACHI_X_THREADS=delta keeps, on a re-review, only
++  // the open threads on a file of this review, those Wachiman never answered, and those it last
++  // answered "Still open". A "Looks addressed" thread on a file the push did not touch is dropped.
++  let threads = last ? openThreads(gh, repo, pr) : [];
++  if (since && process.env.WACHI_X_THREADS === "delta") {
++    const rawThreads = fetchThreads(gh, repo, pr);
++    const byId = new Map(rawThreads.map((t) => [t.comments.nodes[0]?.databaseId, t]));
++    const inReview = new Set(kept.map((f) => f.filename));
++    const before = threads.length;
++    threads = threads.filter((t) => {
++      if (inReview.has(t.path)) return true;
++      const replies = (byId.get(t.comment_id)?.comments.nodes ?? []).slice(1).filter(isWachiReply);
++      const lastReply = replies.at(-1);
++      return !lastReply || lastReply.body.includes("**Still open**");
++    });
++    deps.log(`PROTOTYPE threads=delta: ${threads.length} of ${before} open thread(s) sent.`);
++  }
+   const threadsByBatch = assignThreads(threads, batches);
+   const everyFile = kept.map((f) => `- ${f.filename} +${f.additions} −${f.deletions}`).join("\n");
+   const context = {
+@@ -2390,6 +2406,9 @@ export function buildBatchPrompt(
+   questions: readonly DataPathQuestion[] = selectQuestions(files),
+ ) {
+   const list = files.map((f) => `- ${f.filename} +${f.additions} −${f.deletions}`).join("\n");
++  // PROTOTYPE: WACHI_X_FLOW=off drops the flow questions, the contracts and the call-site evidence
++  // from a re-review's prompt.
++  const flowOff = !!ctx.since && process.env.WACHI_X_FLOW === "off";
+   const scope = ctx.since
+     ? ctx.rebased
+       ? `only the files whose changed lines differ from what was reviewed at commit ${ctx.since}, the last reviewed one (the branch was rebased since; a file's diff below is still its whole diff against the base)`
+@@ -2413,16 +2432,23 @@ Report every path (findings, files_reviewed, files_skipped) relative to the repo
+ in the list above.
+ 
+ Review every file of this part, including tests, stylesheets, documentation and messages: a
+-test that asserts the wrong thing or a doc that says something false is a finding. Before you
++test that asserts the wrong thing or a doc that says something false is a finding. ${
++    ctx.since && process.env.WACHI_X_READ === "hunks"
++      ? `This is a re-review: earlier rounds reviewed the rest of these files. Read the new hunks and the
++code they reach: the enclosing function, what the new lines call, and the callers of what they
++change. Before you report a finding, read enough of the file to rule out a line that disproves it;
++read a whole file only when a finding depends on code you have not read.`
++      : `Before you
+ report a finding on a file, read that file in full: the line that disproves a finding is often
+-outside the diff's hunks. Read files of other parts or callers in the repository to confirm a
++outside the diff's hunks.`
++  } Read files of other parts or callers in the repository to confirm a
+ finding that crosses them. Report findings only on this
+ part's files. You do not manage a budget: the harness that runs you enforces its own limits, so
+ never shorten your reading to save effort. A file you read and found nothing worth flagging in
+ goes in files_reviewed.
+ files_skipped is only for a file whose diff below says GitHub sent none: reason "binary" for a
+ binary file, "no_diff_and_unreadable" when you could not read it in the repository either.
+-${evidence ? `\n${EVIDENCE_PARAGRAPH}\n${evidence}\n` : ""}${
++${evidence && !flowOff ? `\n${EVIDENCE_PARAGRAPH}\n${evidence}\n` : ""}${
+   hasThreads
+     ? `
+ Open review threads from earlier rounds on this part's files, with the owner's replies, are in
+@@ -2432,7 +2458,7 @@ open thread.
+ `
+     : ""
+ }
+-${FLOW_QUESTIONS}${renderDataPathQuestions(questions)}
++${flowOff ? "This is a re-review of a push: leave `contracts` empty." : FLOW_QUESTIONS}${renderDataPathQuestions(questions)}
+ 
+ ${RULES}${instructions}
+ 

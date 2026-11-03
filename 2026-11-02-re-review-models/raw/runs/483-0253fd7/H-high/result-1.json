@@ -1,0 +1,239 @@
+{
+  "structuredOutput": {
+    "files_reviewed": [
+      "apps/kaipu-record/src/main/workspaces/index.ts"
+    ],
+    "files_skipped": [],
+    "findings": [
+      {
+        "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+        "line": 755,
+        "severity": "fix",
+        "topic": "bug",
+        "confidence": "medium",
+        "title": "Relocated folder's sync provider is detected only after the gate has committed",
+        "body": "`relocateFolder` calls `relocateWorkspace` (index.ts:751), which for the active workspace runs `relocateActive` (relocate.ts:48, switch-transaction.ts:121-136). That transaction calls `gate.commit(id)` and `afterCommit` (switch-transaction.ts:136), and releases `inFlight`, before this handler reaches `syncStates.refresh(current)` at line 755.\n\nIn that window `syncStates.of()` still answers from the path rule (sync-state.ts:26-29), and the new path is not in `known`. A Google Drive folder outside `~/Library/CloudStorage` is recognised only by its xattr (synced-folder.ts:83-91), so the path rule returns null and the folder is treated as plain. A capture started in the window goes through `create()` (recording-writer.ts:136-139, 181): `stagingFor` returns `.kaipu/tmp`, and `byRename` is false, so finalize uses `placeNew`, which hard-links (recording-writer.ts:113). That is the hard-link-into-Drive case decision 15 rules out. The window lasts as long as the xattr detection (up to 2 s, synced-folder.ts:22, 86-90). The sibling paths avoid this: `addWorkspace` (index.ts:577-578) and `createWorkspace` (index.ts:628-630) refresh before `runSwitch`. The `afterCommit` broadcast (index.ts:528) also runs before the refresh, so the switcher's first listing carries the stale null until the broadcast at line 759.\n\nSuggested fix: detect the new folder before `gate.commit`, the way `addWorkspace` and `createWorkspace` do before `runSwitch`. For example, wrap `registry.relocate` in the deps that `relocateFolder` passes to `relocateWorkspace` (index.ts:728), so the relocated entry is refreshed inside `apply` before `relocateActive` commits. Keep the post-commit refresh only if the pre-commit one is absent for the non-active path."
+      },
+      {
+        "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+        "line": 762,
+        "severity": "consider",
+        "topic": "tests",
+        "confidence": "high",
+        "title": "No main-process test covers the relocate result or the new sync refresh",
+        "body": "The new `workspace` field on the `ok: true` result (line 762) and the new `syncStates.refresh` (line 755) are not exercised by any test. There is no `index.test.ts` under `main/workspaces/` (the test files there cover relocate.ts, registry and switch-transaction only). The field is also what the type requires: `WorkspaceRelocateResult` `ok: true` has `workspace: WorkspaceView` (shared/types/workspaces.ts:183-189). The renderer reads `result.workspace.name` in `onRelocated` (renderer/src/features/workspaces/workspaces-context.tsx:208-211). Before this diff the success result had no `workspace`, so this line fixes a real contract break, and nothing pins it. A test could assert that a successful relocate returns the relocated folder's `workspace.path`, `state` and `sync`. Adding it needs an electron mock, which this part does not have."
+      }
+    ],
+    "contracts": [
+      {
+        "action": "Change folder… (workspaces:relocate): the relocated workspace is re-detected for its sync provider, probed, and its workspace view is returned",
+        "location": "apps/kaipu-record/src/main/workspaces/index.ts:751-764",
+        "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:577-611 (addWorkspace: refresh, availabilityOf, then toWorkspaceView); apps/kaipu-record/src/main/workspaces/index.ts:628-647 (createWorkspace)",
+        "before_after": "addWorkspace and createWorkspace detect the folder before the switch (refresh at 578 and 630, before runSwitch). relocateFolder detects after relocateWorkspace has committed the gate (relocate.ts:48 → switch-transaction.ts:136 afterCommit and gate.commit). The new code then does availabilityOf and returns the view, which the siblings also do. Before this diff the ok result had no `workspace` field, although the type requires it (shared/types/workspaces.ts:183-189).",
+        "visible_effect": "The renderer's changeFolder reads result.workspace.name for the 'folder changed' toast (workspaces-context.tsx:208-211). That is now defined. The switcher shows the provider after the final broadcastState at line 759; the afterCommit broadcast (index.ts:528) can show the stale path-rule answer until then.",
+        "failure_mode": "Between gate commit and refresh, a capture started on an xattr-only Drive folder takes staging from the path rule (recording-writer.ts:139, 181) and places by link (recording-writer.ts:113). Silent hard link into the synced folder. The window is only as long as detection (up to 2 s). If refresh or availabilityOf throws, the IPC rejects after the folder was already changed, and the renderer shows relocateUncertain (workspaces-context.tsx:222-223). detectSync never throws (synced-folder.ts:74-91).",
+        "status": "open",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/index.ts:751-764",
+          "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:121-141",
+          "apps/kaipu-record/src/main/workspaces/relocate.ts:42-48",
+          "apps/kaipu-record/src/main/workspaces/sync-state.ts:26-30",
+          "apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-91",
+          "apps/kaipu-record/src/main/recording/recording-writer.ts:136-139",
+          "apps/kaipu-record/src/main/recording/recording-writer.ts:181",
+          "apps/kaipu-record/src/main/recording/recording-writer.ts:113",
+          "apps/kaipu-record/src/shared/types/workspaces.ts:183-189",
+          "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:208-211"
+        ],
+        "open_question": "Confirm that a record start can reach RecordingWriter.create (through the record path and requireCaptureWorkspace) between the gate commit and the refresh at line 755. I read the lock release and the staging decision, but not the record hotkey path in main/recording/recording-hub.ts.",
+        "candidates": [
+          "apps/kaipu-record/src/main/recording/recording-hub.ts",
+          "apps/kaipu-record/src/main/index.ts"
+        ]
+      }
+    ],
+    "thread_replies": [],
+    "summary": "Part 1 (index.ts, +5 −0) adds a sync-state refresh, an availability probe and a `workspace` field to the relocate handler. The `workspace` field fixes a missing required field on the success result. But the refresh runs after the gate has committed, unlike the addWorkspace and createWorkspace siblings that refresh before the switch. That leaves a short window where a capture on an xattr-only Drive folder could be placed by hard link. Open threads don't touch this file, so there are no thread replies."
+  },
+  "text": "{\"files_reviewed\":[\"apps/kaipu-record/src/main/workspaces/index.ts\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":755,\"severity\":\"fix\",\"topic\":\"bug\",\"confidence\":\"medium\",\"title\":\"Relocated folder's sync provider is detected only after the gate has committed\",\"body\":\"`relocateFolder` calls `relocateWorkspace` (index.ts:751), which for the active workspace runs `relocateActive` (relocate.ts:48, switch-transaction.ts:121-136). That transaction calls `gate.commit(id)` and `afterCommit` (switch-transaction.ts:136), and releases `inFlight`, before this handler reaches `syncStates.refresh(current)` at line 755.\\n\\nIn that window `syncStates.of()` still answers from the path rule (sync-state.ts:26-29), and the new path is not in `known`. A Google Drive folder outside `~/Library/CloudStorage` is recognised only by its xattr (synced-folder.ts:83-91), so the path rule returns null and the folder is treated as plain. A capture started in the window goes through `create()` (recording-writer.ts:136-139, 181): `stagingFor` returns `.kaipu/tmp`, and `byRename` is false, so finalize uses `placeNew`, which hard-links (recording-writer.ts:113). That is the hard-link-into-Drive case decision 15 rules out. The window lasts as long as the xattr detection (up to 2 s, synced-folder.ts:22, 86-90). The sibling paths avoid this: `addWorkspace` (index.ts:577-578) and `createWorkspace` (index.ts:628-630) refresh before `runSwitch`. The `afterCommit` broadcast (index.ts:528) also runs before the refresh, so the switcher's first listing carries the stale null until the broadcast at line 759.\\n\\nSuggested fix: detect the new folder before `gate.commit`, the way `addWorkspace` and `createWorkspace` do before `runSwitch`. For example, wrap `registry.relocate` in the deps that `relocateFolder` passes to `relocateWorkspace` (index.ts:728), so the relocated entry is refreshed inside `apply` before `relocateActive` commits. Keep the post-commit refresh only if the pre-commit one is absent for the non-active path.\"},{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":762,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"No main-process test covers the relocate result or the new sync refresh\",\"body\":\"The new `workspace` field on the `ok: true` result (line 762) and the new `syncStates.refresh` (line 755) are not exercised by any test. There is no `index.test.ts` under `main/workspaces/` (the test files there cover relocate.ts, registry and switch-transaction only). The field is also what the type requires: `WorkspaceRelocateResult` `ok: true` has `workspace: WorkspaceView` (shared/types/workspaces.ts:183-189). The renderer reads `result.workspace.name` in `onRelocated` (renderer/src/features/workspaces/workspaces-context.tsx:208-211). Before this diff the success result had no `workspace`, so this line fixes a real contract break, and nothing pins it. A test could assert that a successful relocate returns the relocated folder's `workspace.path`, `state` and `sync`. Adding it needs an electron mock, which this part does not have.\"}],\"contracts\":[{\"action\":\"Change folder… (workspaces:relocate): the relocated workspace is re-detected for its sync provider, probed, and its workspace view is returned\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:751-764\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:577-611 (addWorkspace: refresh, availabilityOf, then toWorkspaceView); apps/kaipu-record/src/main/workspaces/index.ts:628-647 (createWorkspace)\",\"before_after\":\"addWorkspace and createWorkspace detect the folder before the switch (refresh at 578 and 630, before runSwitch). relocateFolder detects after relocateWorkspace has committed the gate (relocate.ts:48 → switch-transaction.ts:136 afterCommit and gate.commit). The new code then does availabilityOf and returns the view, which the siblings also do. Before this diff the ok result had no `workspace` field, although the type requires it (shared/types/workspaces.ts:183-189).\",\"visible_effect\":\"The renderer's changeFolder reads result.workspace.name for the 'folder changed' toast (workspaces-context.tsx:208-211). That is now defined. The switcher shows the provider after the final broadcastState at line 759; the afterCommit broadcast (index.ts:528) can show the stale path-rule answer until then.\",\"failure_mode\":\"Between gate commit and refresh, a capture started on an xattr-only Drive folder takes staging from the path rule (recording-writer.ts:139, 181) and places by link (recording-writer.ts:113). Silent hard link into the synced folder. The window is only as long as detection (up to 2 s). If refresh or availabilityOf throws, the IPC rejects after the folder was already changed, and the renderer shows relocateUncertain (workspaces-context.tsx:222-223). detectSync never throws (synced-folder.ts:74-91).\",\"status\":\"open\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:751-764\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:121-141\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:42-48\",\"apps/kaipu-record/src/main/workspaces/sync-state.ts:26-30\",\"apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-91\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:136-139\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:181\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:113\",\"apps/kaipu-record/src/shared/types/workspaces.ts:183-189\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:208-211\"],\"open_question\":\"Confirm that a record start can reach RecordingWriter.create (through the record path and requireCaptureWorkspace) between the gate commit and the refresh at line 755. I read the lock release and the staging decision, but not the record hotkey path in main/recording/recording-hub.ts.\",\"candidates\":[\"apps/kaipu-record/src/main/recording/recording-hub.ts\",\"apps/kaipu-record/src/main/index.ts\"]}],\"thread_replies\":[],\"summary\":\"Part 1 (index.ts, +5 −0) adds a sync-state refresh, an availability probe and a `workspace` field to the relocate handler. The `workspace` field fixes a missing required field on the success result. But the refresh runs after the gate has committed, unlike the addWorkspace and createWorkspace siblings that refresh before the switch. That leaves a short window where a capture on an xattr-only Drive folder could be placed by hard link. Open threads don't touch this file, so there are no thread replies.\"}",
+  "costUsd": 0.029375990000000005,
+  "turns": 22,
+  "durationMs": 92092,
+  "terminalReason": "success",
+  "isError": false,
+  "raw": {
+    "duration_api_ms": 91801,
+    "stop_reason": "tool_use",
+    "session_id": "e5ad11c6-1e18-47f9-819f-50f8fa873753",
+    "total_cost_usd": 0.029375990000000005,
+    "usage": {
+      "input_tokens": 22,
+      "cache_creation_input_tokens": 71566,
+      "cache_read_input_tokens": 556559,
+      "output_tokens": 18990,
+      "output_tokens_details": {
+        "thinking_tokens": 11082
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 71566,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 2689,
+          "cache_read_input_tokens": 71443,
+          "cache_creation_input_tokens": 5908,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 5908
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-haiku-5-5": {
+        "inputTokens": 22,
+        "outputTokens": 18990,
+        "cacheReadInputTokens": 556559,
+        "cacheCreationInputTokens": 71566,
+        "webSearchRequests": 0,
+        "costUSD": 0.029375990000000005,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 11082,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 71566,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 22,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"files_reviewed\":[\"apps/kaipu-record/src/main/workspaces/index.ts\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":755,\"severity\":\"fix\",\"topic\":\"bug\",\"confidence\":\"medium\",\"title\":\"Relocated folder's sync provider is detected only after the gate has committed\",\"body\":\"`relocateFolder` calls `relocateWorkspace` (index.ts:751), which for the active workspace runs `relocateActive` (relocate.ts:48, switch-transaction.ts:121-136). That transaction calls `gate.commit(id)` and `afterCommit` (switch-transaction.ts:136), and releases `inFlight`, before this handler reaches `syncStates.refresh(current)` at line 755.\\n\\nIn that window `syncStates.of()` still answers from the path rule (sync-state.ts:26-29), and the new path is not in `known`. A Google Drive folder outside `~/Library/CloudStorage` is recognised only by its xattr (synced-folder.ts:83-91), so the path rule returns null and the folder is treated as plain. A capture started in the window goes through `create()` (recording-writer.ts:136-139, 181): `stagingFor` returns `.kaipu/tmp`, and `byRename` is false, so finalize uses `placeNew`, which hard-links (recording-writer.ts:113). That is the hard-link-into-Drive case decision 15 rules out. The window lasts as long as the xattr detection (up to 2 s, synced-folder.ts:22, 86-90). The sibling paths avoid this: `addWorkspace` (index.ts:577-578) and `createWorkspace` (index.ts:628-630) refresh before `runSwitch`. The `afterCommit` broadcast (index.ts:528) also runs before the refresh, so the switcher's first listing carries the stale null until the broadcast at line 759.\\n\\nSuggested fix: detect the new folder before `gate.commit`, the way `addWorkspace` and `createWorkspace` do before `runSwitch`. For example, wrap `registry.relocate` in the deps that `relocateFolder` passes to `relocateWorkspace` (index.ts:728), so the relocated entry is refreshed inside `apply` before `relocateActive` commits. Keep the post-commit refresh only if the pre-commit one is absent for the non-active path.\"},{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":762,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"No main-process test covers the relocate result or the new sync refresh\",\"body\":\"The new `workspace` field on the `ok: true` result (line 762) and the new `syncStates.refresh` (line 755) are not exercised by any test. There is no `index.test.ts` under `main/workspaces/` (the test files there cover relocate.ts, registry and switch-transaction only). The field is also what the type requires: `WorkspaceRelocateResult` `ok: true` has `workspace: WorkspaceView` (shared/types/workspaces.ts:183-189). The renderer reads `result.workspace.name` in `onRelocated` (renderer/src/features/workspaces/workspaces-context.tsx:208-211). Before this diff the success result had no `workspace`, so this line fixes a real contract break, and nothing pins it. A test could assert that a successful relocate returns the relocated folder's `workspace.path`, `state` and `sync`. Adding it needs an electron mock, which this part does not have.\"}],\"contracts\":[{\"action\":\"Change folder… (workspaces:relocate): the relocated workspace is re-detected for its sync provider, probed, and its workspace view is returned\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:751-764\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:577-611 (addWorkspace: refresh, availabilityOf, then toWorkspaceView); apps/kaipu-record/src/main/workspaces/index.ts:628-647 (createWorkspace)\",\"before_after\":\"addWorkspace and createWorkspace detect the folder before the switch (refresh at 578 and 630, before runSwitch). relocateFolder detects after relocateWorkspace has committed the gate (relocate.ts:48 → switch-transaction.ts:136 afterCommit and gate.commit). The new code then does availabilityOf and returns the view, which the siblings also do. Before this diff the ok result had no `workspace` field, although the type requires it (shared/types/workspaces.ts:183-189).\",\"visible_effect\":\"The renderer's changeFolder reads result.workspace.name for the 'folder changed' toast (workspaces-context.tsx:208-211). That is now defined. The switcher shows the provider after the final broadcastState at line 759; the afterCommit broadcast (index.ts:528) can show the stale path-rule answer until then.\",\"failure_mode\":\"Between gate commit and refresh, a capture started on an xattr-only Drive folder takes staging from the path rule (recording-writer.ts:139, 181) and places by link (recording-writer.ts:113). Silent hard link into the synced folder. The window is only as long as detection (up to 2 s). If refresh or availabilityOf throws, the IPC rejects after the folder was already changed, and the renderer shows relocateUncertain (workspaces-context.tsx:222-223). detectSync never throws (synced-folder.ts:74-91).\",\"status\":\"open\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:751-764\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:121-141\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:42-48\",\"apps/kaipu-record/src/main/workspaces/sync-state.ts:26-30\",\"apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-91\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:136-139\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:181\",\"apps/kaipu-record/src/main/recording/recording-writer.ts:113\",\"apps/kaipu-record/src/shared/types/workspaces.ts:183-189\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:208-211\"],\"open_question\":\"Confirm that a record start can reach RecordingWriter.create (through the record path and requireCaptureWorkspace) between the gate commit and the refresh at line 755. I read the lock release and the staging decision, but not the record hotkey path in main/recording/recording-hub.ts.\",\"candidates\":[\"apps/kaipu-record/src/main/recording/recording-hub.ts\",\"apps/kaipu-record/src/main/index.ts\"]}],\"thread_replies\":[],\"summary\":\"Part 1 (index.ts, +5 −0) adds a sync-state refresh, an availability probe and a `workspace` field to the relocate handler. The `workspace` field fixes a missing required field on the success result. But the refresh runs after the gate has committed, unlike the addWorkspace and createWorkspace siblings that refresh before the switch. That leaves a short window where a capture on an xattr-only Drive folder could be placed by hard link. Open threads don't touch this file, so there are no thread replies.\"}",
+    "structured_output": {
+      "files_reviewed": [
+        "apps/kaipu-record/src/main/workspaces/index.ts"
+      ],
+      "files_skipped": [],
+      "findings": [
+        {
+          "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+          "line": 755,
+          "severity": "fix",
+          "topic": "bug",
+          "confidence": "medium",
+          "title": "Relocated folder's sync provider is detected only after the gate has committed",
+          "body": "`relocateFolder` calls `relocateWorkspace` (index.ts:751), which for the active workspace runs `relocateActive` (relocate.ts:48, switch-transaction.ts:121-136). That transaction calls `gate.commit(id)` and `afterCommit` (switch-transaction.ts:136), and releases `inFlight`, before this handler reaches `syncStates.refresh(current)` at line 755.\n\nIn that window `syncStates.of()` still answers from the path rule (sync-state.ts:26-29), and the new path is not in `known`. A Google Drive folder outside `~/Library/CloudStorage` is recognised only by its xattr (synced-folder.ts:83-91), so the path rule returns null and the folder is treated as plain. A capture started in the window goes through `create()` (recording-writer.ts:136-139, 181): `stagingFor` returns `.kaipu/tmp`, and `byRename` is false, so finalize uses `placeNew`, which hard-links (recording-writer.ts:113). That is the hard-link-into-Drive case decision 15 rules out. The window lasts as long as the xattr detection (up to 2 s, synced-folder.ts:22, 86-90). The sibling paths avoid this: `addWorkspace` (index.ts:577-578) and `createWorkspace` (index.ts:628-630) refresh before `runSwitch`. The `afterCommit` broadcast (index.ts:528) also runs before the refresh, so the switcher's first listing carries the stale null until the broadcast at line 759.\n\nSuggested fix: detect the new folder before `gate.commit`, the way `addWorkspace` and `createWorkspace` do before `runSwitch`. For example, wrap `registry.relocate` in the deps that `relocateFolder` passes to `relocateWorkspace` (index.ts:728), so the relocated entry is refreshed inside `apply` before `relocateActive` commits. Keep the post-commit refresh only if the pre-commit one is absent for the non-active path."
+        },
+        {
+          "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+          "line": 762,
+          "severity": "consider",
+          "topic": "tests",
+          "confidence": "high",
+          "title": "No main-process test covers the relocate result or the new sync refresh",
+          "body": "The new `workspace` field on the `ok: true` result (line 762) and the new `syncStates.refresh` (line 755) are not exercised by any test. There is no `index.test.ts` under `main/workspaces/` (the test files there cover relocate.ts, registry and switch-transaction only). The field is also what the type requires: `WorkspaceRelocateResult` `ok: true` has `workspace: WorkspaceView` (shared/types/workspaces.ts:183-189). The renderer reads `result.workspace.name` in `onRelocated` (renderer/src/features/workspaces/workspaces-context.tsx:208-211). Before this diff the success result had no `workspace`, so this line fixes a real contract break, and nothing pins it. A test could assert that a successful relocate returns the relocated folder's `workspace.path`, `state` and `sync`. Adding it needs an electron mock, which this part does not have."
+        }
+      ],
+      "contracts": [
+        {
+          "action": "Change folder… (workspaces:relocate): the relocated workspace is re-detected for its sync provider, probed, and its workspace view is returned",
+          "location": "apps/kaipu-record/src/main/workspaces/index.ts:751-764",
+          "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:577-611 (addWorkspace: refresh, availabilityOf, then toWorkspaceView); apps/kaipu-record/src/main/workspaces/index.ts:628-647 (createWorkspace)",
+          "before_after": "addWorkspace and createWorkspace detect the folder before the switch (refresh at 578 and 630, before runSwitch). relocateFolder detects after relocateWorkspace has committed the gate (relocate.ts:48 → switch-transaction.ts:136 afterCommit and gate.commit). The new code then does availabilityOf and returns the view, which the siblings also do. Before this diff the ok result had no `workspace` field, although the type requires it (shared/types/workspaces.ts:183-189).",
+          "visible_effect": "The renderer's changeFolder reads result.workspace.name for the 'folder changed' toast (workspaces-context.tsx:208-211). That is now defined. The switcher shows the provider after the final broadcastState at line 759; the afterCommit broadcast (index.ts:528) can show the stale path-rule answer until then.",
+          "failure_mode": "Between gate commit and refresh, a capture started on an xattr-only Drive folder takes staging from the path rule (recording-writer.ts:139, 181) and places by link (recording-writer.ts:113). Silent hard link into the synced folder. The window is only as long as detection (up to 2 s). If refresh or availabilityOf throws, the IPC rejects after the folder was already changed, and the renderer shows relocateUncertain (workspaces-context.tsx:222-223). detectSync never throws (synced-folder.ts:74-91).",
+          "status": "open",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/index.ts:751-764",
+            "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:121-141",
+            "apps/kaipu-record/src/main/workspaces/relocate.ts:42-48",
+            "apps/kaipu-record/src/main/workspaces/sync-state.ts:26-30",
+            "apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-91",
+            "apps/kaipu-record/src/main/recording/recording-writer.ts:136-139",
+            "apps/kaipu-record/src/main/recording/recording-writer.ts:181",
+            "apps/kaipu-record/src/main/recording/recording-writer.ts:113",
+            "apps/kaipu-record/src/shared/types/workspaces.ts:183-189",
+            "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:208-211"
+          ],
+          "open_question": "Confirm that a record start can reach RecordingWriter.create (through the record path and requireCaptureWorkspace) between the gate commit and the refresh at line 755. I read the lock release and the staging decision, but not the record hotkey path in main/recording/recording-hub.ts.",
+          "candidates": [
+            "apps/kaipu-record/src/main/recording/recording-hub.ts",
+            "apps/kaipu-record/src/main/index.ts"
+          ]
+        }
+      ],
+      "thread_replies": [],
+      "summary": "Part 1 (index.ts, +5 −0) adds a sync-state refresh, an availability probe and a `workspace` field to the relocate handler. The `workspace` field fixes a missing required field on the success result. But the refresh runs after the gate has committed, unlike the addWorkspace and createWorkspace siblings that refresh before the switch. That leaves a short window where a capture on an xattr-only Drive folder could be placed by hard link. Open threads don't touch this file, so there are no thread replies."
+    },
+    "ttft_ms": 3027,
+    "type": "result",
+    "duration_ms": 92092,
+    "uuid": "f1ede025-b350-4e4d-becd-eaa2396cff6f",
+    "ttft_stream_ms": 2728,
+    "time_to_request_ms": 91,
+    "first_content_frame_ms": 2728,
+    "queued_turn_count": 0,
+    "result_index": 0,
+    "model_usage_since_last_result": {
+      "claude-haiku-5-5": {
+        "inputTokens": 22,
+        "outputTokens": 18990,
+        "cacheReadInputTokens": 556559,
+        "cacheCreationInputTokens": 71566,
+        "webSearchRequests": 0,
+        "costUSD": 0.029375990000000005,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 11082,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 71566,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  }
+}
