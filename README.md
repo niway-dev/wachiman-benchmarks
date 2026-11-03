@@ -26,6 +26,7 @@ This repository holds data and reports only. The reviewer's code, specs and deci
 | [`2026-11-02/`](2026-11-02/README.md) | Wachiman v1.4.0 on Opus, three runs, checked against the code. |
 | [`2026-11-02-e1-sonnet/`](2026-11-02-e1-sonnet/README.md) | Wachiman v1.4.0 on Sonnet (experiment E1). |
 | [`2026-11-02-field/`](2026-11-02-field/README.md) | Field run on the real kaipu-record workspaces PRs. |
+| [`2026-11-02-re-review-cost/`](2026-11-02-re-review-cost/README.md) | Where a re-review's turns and cost go (six rebuilt v1.5.0 re-reviews, full tool traces), and three levers measured against it. |
 | [`replay/`](replay/README.md) | How a pull request is replayed into the `kaipu-bench-*` repositories. |
 | [`mining/`](mining) | Throwaway scripts that produced the bug catalogue (kept for provenance). |
 | [`dataset/`](dataset/README.md) | The structured dataset and its raw GitHub API snapshots. |
