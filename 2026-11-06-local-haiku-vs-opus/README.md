@@ -12,11 +12,62 @@
   base `replay/pr-<n>/base`, head `replay/pr-<n>/head`. Four held-out PRs with one catalogued bug
   each and one control ([2026-11-02-heldout](../2026-11-02-heldout/README.md)), and the five
   exhibition PRs with their 14 real Medium+ bugs ([2026-11-01](../2026-11-01/README.md)).
-- **Runs:** one per arm per PR, 20 in total.
+- **Runs:** one per arm per PR, 20 reviews in total (see [What ran](#what-ran)).
 - **Scoring:** by reading each finding against the answer key, by the agent that ran the
   benchmark, not blind. ✅ found with the same mechanism; ~ the same symptom or code with a
   different or weaker mechanism; ✗ not found. Findings outside the answer key are listed but **not
   audited**.
+
+## What ran
+
+**20 reviews:** 10 PRs × 2 models, one review each. Each review is one `agent-review local` run;
+the engine splits a large diff into batches and makes one model call per batch, so a review is
+1 to 6 calls.
+
+### The code reviewed
+
+| PR | Set | Files | Lines added | Lines removed | Batches (calls per review) |
+| --- | --- | --- | --- | --- | --- |
+| #184 | held-out | 7 | 238 | 24 | 1 |
+| #255 | held-out | 5 | 319 | 13 | 1 |
+| #269 | held-out (control) | 12 | 1,198 | 26 | 2 |
+| #276 | held-out | 19 | 641 | 357 | 1 |
+| #402 | held-out | 26 | 1,820 | 504 | 3 |
+| #463 | exhibition | 23 | 1,413 | 44 | 2 |
+| #464 | exhibition | 31 | 1,139 | 123 | 2 |
+| #465 | exhibition | 14 | 1,056 | 559 | 2 |
+| #466 | exhibition | 28 | 1,283 | 12 | 2 |
+| #467 | exhibition | 47 | 2,676 | 2,177 | 6 |
+| **Total, per model** | | **212** | **11,783** | **3,839** | **22** |
+
+Each model reviewed the same 212 files and about 15,600 changed lines, in 22 calls.
+
+### Timeline (local time, UTC−5, 2026-11-06)
+
+| Step | Start | End | Wall clock |
+| --- | --- | --- | --- |
+| Pilot: #184, Haiku then Opus, one at a time | 00:51 | 01:00 | about 9 min |
+| Main run: the other 9 PRs, all 9 in parallel; within each PR Haiku first, then Opus | 01:14 | 01:47 | **about 34 min** |
+
+The 9 PRs ran side by side, so the main run took 34 minutes of real time. The slowest PR set the
+end: #467's Haiku review alone took 27 minutes (6 batches, one after the other), then Opus 6.
+
+**Model time is not wall clock.** "Model time" in the tables below adds up every call's duration.
+Haiku's 102 minutes and Opus's 24 minutes are the time each model would need if the 22 calls ran
+one after another. Per review, Haiku took 2.5 to 27 minutes and Opus 1 to 6 minutes.
+
+### Spend: expected and actual
+
+| | Expected before the run | Actual (API-equivalent estimate) |
+| --- | --- | --- |
+| Pilot #184, Haiku | — | $0.04 |
+| Pilot #184, Opus | $0.30–0.50 | $0.49 |
+| Main run, 9 PRs × 2 models | $10–15 | **$16.95** (Haiku $5.86, Opus $11.09) |
+| **Total** | | **$17.48** |
+| Paid in API credit | $0 | **$0**: every call used the claude.ai subscription |
+
+The main run came in about $2–7 over the estimate given before it started. No review reached its
+$3 cap: the most expensive was #467 with Opus, at $2.91.
 
 ## Summary
 
@@ -27,7 +78,7 @@
 | Findings posted, all ten PRs | 119 (63 docs, tests, cleanup or rules) | 41 (19 docs, tests, cleanup or rules) |
 | Duplicate findings noticed | at least 6 (#464 ×1, #466 ×1, #467 ×4) | 1 (#467) |
 | Estimated cost, ten PRs | **$5.90** | $11.58 |
-| Model time, summed over calls | 6,106 s (102 min) | 1,415 s (24 min) |
+| Model time, summed over calls (not wall clock; see Timeline) | 6,106 s (102 min) | 1,415 s (24 min) |
 | Turns | 689 | 188 |
 
 What this shows, with one run per arm:
