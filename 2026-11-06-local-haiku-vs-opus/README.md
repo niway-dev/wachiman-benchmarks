@@ -46,6 +46,40 @@ What this shows, with one run per arm:
 Limits: one run per arm (a model does not review the same PR the same way twice), non-blind
 scoring, and the extra Haiku findings are unaudited.
 
+## Reference: the other reviewers, and the target
+
+The target for the next versions is to find everything Pullfrog and CodeRabbit found on these
+PRs, then more. Bugs that **no** reviewer found are not a tuning target: shaping prompts or
+detectors around one of them would fit Wachiman to this codebase, not make it a better reviewer.
+
+Pullfrog and CodeRabbit columns come from [results.md](../results.md) (exhibition, 2 runs each) and
+the [held-out report](../2026-11-02-heldout/README.md) (CodeRabbit, 1 run; Pullfrog did not run).
+"Wachiman" here is either arm of this run.
+
+| PR | Bug | Pullfrog | CodeRabbit | Wachiman v1.8.0 (Haiku / Opus) | Status |
+| --- | --- | --- | --- | --- | --- |
+| #463 | A queued camera-on reopens the camera after a newer off | ~ | 1/2 | ✗ / ✗ | **gap** |
+| #463 | The take's first relay feed is ignored | 0/2 | 1/2 | ✗ / ✗ | **gap** |
+| #463 | Random gap ids break Share's reuse | 1/2 | 0/2 | ✗ / ✗ | **gap** |
+| #276 | Check-then-act between the ticket check and `release()` | did not run | match | ✗ / ✗ | **gap** (v1.4.0 Opus found it 1/3) |
+| #463 | A superseded camera-on closes the gap too early | 2/2 | 0/2 | ✅ / ✗ | matched |
+| #464 | Ready card skips `markCopySeen` | 0/2 | 2/2 | ✅ / ✅ | matched |
+| #465 | A failed probe leaves the cards at "…" | 1/2 | 0/2 | ✅ / ✗ | matched |
+| #466 | `show()` / a failed load loses the card | 0/2 | 1/2 | ✅ / ✅ | matched |
+| #467 | A Library drop navigates the window to the file | 2/2 | 0/2 | ✅ / ✅ | matched |
+| #467 | Editor exports labelled as destination copies | 1/2 | 0/2 | ✅ / ✗ | matched |
+| #255 | The policy cache turns the Dock restore into a no-op | did not run | match | ✅ / ✅ | matched |
+| #402 | The spare overlay's first state is lost before the listener | did not run | match | ✅ / ✗ | matched |
+| #465 | The Drag handle skips `markCopySeen` | 0/2 | 0/2 | ✗ / ✅ | **beyond** |
+| #466 | Back re-floats the card | 0/2 | 0/2 | ✅ / ~ | **beyond** |
+| #467 | A finished Email copy is listed as "Slack · Discord" | ~ | 0/2 | ✅ / ✗ | **beyond** |
+| #463 | The face is recorded in no file | 0/2 | 0/2 | ~ / ~ | nobody, fully |
+| #467 | Export never re-lists the Library | 0/2 | 0/2 | ✗ / ✗ | nobody: not a target |
+| #184 | Pointer capture on a re-rendered `<tspan>` breaks double-click | did not run | ~ (a different defect) | ✗ / ✗ | nobody: not a target |
+
+Four gaps remain, three of them in #463's camera toggle and its queue, and one check-then-act race.
+Those four are the next version's targets.
+
 ---
 
 ## Held-out PRs
