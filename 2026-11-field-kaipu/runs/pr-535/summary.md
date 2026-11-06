@@ -2,7 +2,7 @@
 
 - **Title:** feat(recorder): ship native cursor capture on by default, flag kept as a kill switch
 - **Run:** 2026-11-06T19:03:58Z, locally on the claude.ai subscription (no API key). Costs are API-equivalent estimates.
-- **Engine:** Wachiman v1, `agent-review local`, Haiku 5.5 effort high.
+- **Engine:** Wachiman v1.8.0, `agent-review local`, Haiku 5.5 effort high.
 - **Commit reviewed:** the first commit CodeRabbit reviewed
 - **Code:** 6 files, +68/−16.
 - **CodeRabbit:** 1 inline comment(s) and 1 review(s) on this PR so far (1 inline at the reviewed commit).

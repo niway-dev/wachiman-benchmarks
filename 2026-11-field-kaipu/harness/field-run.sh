@@ -4,6 +4,7 @@
 #
 #   field-run.sh            every PR opened since FIELD_SINCE that has no run yet
 #   field-run.sh 541 543    only these PRs (re-runs them if a run exists)
+#   FIELD_NO_PUSH=1         commit the results but do not push
 #
 # Runs on the claude.ai subscription: refuses to start with ANTHROPIC_API_KEY set. Nothing is
 # posted to kaipu-record. State lives in ~/.wachiman-field (see the README next to this script).
@@ -78,7 +79,7 @@ for pr in $prs; do
   rm -rf $run; mkdir -p $run
   stat=$(git -C $wt diff --shortstat $base...HEAD)
   files=$(print -r -- $stat | grep -oE '[0-9]+ file' | grep -oE '[0-9]+'); added=$(print -r -- $stat | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+'); removed=$(print -r -- $stat | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+')
-  engineVer=$(git -C $ENGINE describe --tags --always)
+  engineVer=$(git -C $ENGINE tag --points-at HEAD | sort -V | tail -1)
   python3 -I -c 'import json,sys; a=sys.argv; json.dump({"pr":int(a[1]),"title":a[2],"sha":a[3],"base":a[4],"commitReason":a[5],"files":int(a[6] or 0),"added":int(a[7] or 0),"removed":int(a[8] or 0),"engine":a[9],"ranAt":a[10]},open(a[11],"w"),indent=2)' \
     $pr "$title" $sha $base "$reason" "$files" "$added" "$removed" "$engineVer" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" $run/meta.json
 
@@ -99,6 +100,8 @@ for pr in $prs; do
   python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1])); r=json.load(open(sys.argv[2])); json.dump({"atCommit":sum(1 for x in c if x.get("original_commit_id")==sys.argv[3]),"comments":c,"reviews":r},open(sys.argv[4],"w"),indent=2)' \
     $run/cr-comments.json $run/cr-reviews.json $sha $run/coderabbit.json && rm -f $run/cr-comments.json $run/cr-reviews.json
 
+  # Logs go to a public repository: keep the home directory out of them.
+  for f in $run/*.log; do sed -i '' "s#$HOME#~#g" $f; done
   python3 -I $HARNESS/report.py $FIELD $pr
   git -C $KAIPU worktree remove --force $wt 2>/dev/null
   ran=$((ran + 1))
@@ -106,9 +109,9 @@ done
 
 if (( ran )); then
   git -C $BENCH add 2026-11-field-kaipu
-  git -C $BENCH commit -q -m "field: $ran kaipu-record PR(s) reviewed on $(date +%Y-%m-%d)" \
-    && git -C $BENCH push -q origin field/2026-11-kaipu \
-    && log "pushed $ran run(s)"
+  git -C $BENCH commit -q -m "field: $ran kaipu-record PR(s) reviewed on $(date +%Y-%m-%d)"
+  if [[ ${FIELD_NO_PUSH:-} == 1 ]]; then log "committed $ran run(s), not pushed (FIELD_NO_PUSH=1)"
+  else git -C $BENCH push -q origin field/2026-11-kaipu && log "pushed $ran run(s)"; fi
 else
   log "nothing new"
 fi
