@@ -28,6 +28,15 @@ Haiku runs once per PR; only the verification step is doubled.
 - **Schedule.** launchd, daily at 23:00 local time ([`harness/dev.niway.wachi-field.plist`](harness/dev.niway.wachi-field.plist)).
   A run missed while the laptop sleeps starts when it wakes.
 
+- **Notification.** macOS shows a notification with a sound when the run starts and when it ends,
+  with how many PRs were reviewed, any failures, and the night's estimate.
+
+## To watch
+
+- **Small PRs may cost more with a verifier than Opus alone.** On #535 (84 changed lines) Haiku took
+  35 turns: Haiku plus the Opus verifier was $0.58, against $0.51 for the live Opus review of the same
+  commit; Haiku plus Sonnet was $0.41. One PR; check the trend by size at month end.
+
 ## Month-end analysis (planned, not done)
 
 - Against CodeRabbit: what it found that we did not (a gap), and what we found that it did not.

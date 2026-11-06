@@ -29,13 +29,16 @@ export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
 unset ANTHROPIC_API_KEY
 
 log() { print -r -- "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+# A macOS notification with sound, so the owner knows the nightly run started and how it ended.
+notify() { /usr/bin/osascript -e "display notification \"$2\" with title \"Wachiman field run\" subtitle \"$1\" sound name \"Glass\"" 2>/dev/null; }
 
 mkdir -p $FIELD/runs $FIELD_HOME/logs
 # One run at a time: a second start while one is running exits.
 if ! mkdir $FIELD_HOME/.lock 2>/dev/null; then log "another run is in progress"; exit 0; fi
 trap 'rmdir $FIELD_HOME/.lock' EXIT
 
-git -C $KAIPU fetch -q origin '+refs/heads/*:refs/remotes/origin/*' '+refs/pull/*/head:refs/remotes/pr/*' || { log "fetch failed"; exit 1; }
+notify "Started" "Reviewing new kaipu-record PRs on the subscription"
+git -C $KAIPU fetch -q origin '+refs/heads/*:refs/remotes/origin/*' '+refs/pull/*/head:refs/remotes/pr/*' || { log "fetch failed"; notify "Failed" "git fetch of kaipu-record failed; see ~/.wachiman-field/logs"; exit 1; }
 git -C $BENCH pull -q --rebase origin field/2026-11-kaipu 2>/dev/null
 
 if (( $# )); then
@@ -45,6 +48,8 @@ else
 fi
 
 ran=0
+failed=()
+done_prs=()
 for pr in $prs; do
   run=$FIELD/runs/pr-$pr
   if (( ! $# )) && [[ -f $run/summary.json ]]; then continue; fi
@@ -88,7 +93,7 @@ for pr in $prs; do
     bun --no-env-file --config=$ENGINE/bunfig.toml $ENGINE/src/cli.ts local \
     --repo-dir $wt --base $base --max-depth 500 --format json --output $run/haiku.json > $run/haiku.log 2>&1
   code=$?
-  if (( code != 0 )) || [[ ! -s $run/haiku.json ]]; then log "#$pr: Haiku review failed (exit $code); see $run/haiku.log"; continue; fi
+  if (( code != 0 )) || [[ ! -s $run/haiku.json ]]; then log "#$pr: Haiku review failed (exit $code); see $run/haiku.log"; failed+=($pr); continue; fi
 
   # 2. Filter with code, then 3. one verifier call per model.
   python3 -I $HARNESS/verify.py $run $wt $base $VERIFIERS > $run/verify.log 2>&1
@@ -104,7 +109,7 @@ for pr in $prs; do
   for f in $run/*.log; do sed -i '' "s#$HOME#~#g" $f; done
   python3 -I $HARNESS/report.py $FIELD $pr
   git -C $KAIPU worktree remove --force $wt 2>/dev/null
-  ran=$((ran + 1))
+  ran=$((ran + 1)); done_prs+=($pr)
 done
 
 if (( ran )); then
@@ -115,3 +120,13 @@ if (( ran )); then
 else
   log "nothing new"
 fi
+spent=$(python3 -I -c 'import json,sys,os
+t=0.0
+for d in sys.argv[2:]:
+    p=os.path.join(sys.argv[1],"runs","pr-"+d,"summary.json")
+    if os.path.exists(p):
+        s=json.load(open(p)); t+=(s.get("haiku") or 0)+sum(v or 0 for v in s.get("verify",{}).values())
+print(f"${t:.2f}")' $FIELD $done_prs)
+if (( ${#failed} )); then notify "Done with failures" "$ran reviewed, ${#failed} failed (#${(j:, #:)failed}); estimate $spent"
+elif (( ran )); then notify "Done" "$ran PR(s) reviewed and pushed; estimate $spent, API credit \$0"
+else notify "Done" "No new kaipu-record PR tonight"; fi
