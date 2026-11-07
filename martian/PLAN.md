@@ -4,7 +4,7 @@ A working document, started 2026-11-07. The pull request that ships the replicat
 runs of all 50 PRs) deletes it.
 
 **Status (2026-11-07):** the pilot and the first blind run of all 50 PRs are done; results and the
-deviations actually applied are in [README.md](README.md), which supersedes the deviation table below.
+deviations actually applied are in [the run's report](runs/2026-11-07-v1.9.0-opus-5-5/README.md), which supersedes the deviation table below.
 Replicates, the Action path and the arms are not started.
 
 ## Goal

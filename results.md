@@ -15,7 +15,7 @@ no claim the reports do not.
 ## Martian's Code Review Bench (2026-11-07, public PRs)
 
 One blind run of Wachiman 1.9.0 · Opus 5.5 on Martian's 50 public PRs, every row judged the same way
-([report](2026-11-07-martian/README.md)):
+([report](martian/runs/2026-11-07-v1.9.0-opus-5-5/README.md); every run: [martian/history.md](martian/history.md)):
 
 | Tool | High+Critical found | Recall | Precision | F1 |
 | --- | --- | --- | --- | --- |

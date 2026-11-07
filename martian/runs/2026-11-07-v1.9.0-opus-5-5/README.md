@@ -9,7 +9,9 @@
   [Calibration](#calibration-our-judge-route-is-stricter).
 - **Blind:** nobody read the golden comments' contents before or during the run. The harness reads
   only their structure and severity.
-- **Plan and rules:** [PLAN.md](PLAN.md). **Raw data:** [data/](data/). **Scripts:** [scripts/](scripts/).
+- **Plan and rules:** [PLAN.md](../../PLAN.md). **Raw data:** [data/](data/) (the re-judged reference tools and the
+  calibration are in [reference/](../../reference/README.md)). **Scripts:** [scripts/](../../scripts/).
+  **Metrics:** [metrics.json](metrics.json). **All runs:** [history.md](../../history.md).
 
 ## In one minute
 
@@ -190,14 +192,15 @@ the reference tools instead of comparing Wachiman with Martian's stored scores.
 ## Reproduce
 
 1. Clone Martian's benchmark; copy `offline/` to a working directory.
-2. `scripts/fetch.sh` for each repository (lists in `data/shas/`), then `scripts/flatten.sh` where
+2. `scripts/fetch.sh` for each repository (lists in `reference/shas/`), then `scripts/flatten.sh` where
    the merge base is not reached.
 3. `scripts/seq.sh` runs the reviews (`wachiman local … --format json --profile isolated:personal`).
 4. Start `scripts/judge_shim.py`; set `MARTIAN_API_KEY` to any value, `MARTIAN_BASE_URL` to the shim,
    `MARTIAN_MODEL=anthropic/claude-opus-4-5-20251101`.
 5. `scripts/to_martian.py`, then Martian's `step2_5_dedup_candidates --tool wachiman` and
    `step3_judge_comments --tool wachiman`.
-6. `scripts/score.py` over the evaluation files in `data/evaluations/`.
+6. `scripts/score.py` over `data/evaluations/wachiman.json` and the files in `reference/evaluations/`;
+   `scripts/metrics.py` for the quality and cost row. From now on, `scripts/run-weekly.sh` does steps 3 to 6.
 
 ## Next
 
