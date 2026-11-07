@@ -1,0 +1,177 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-67876-flat` of 67876-flat against f3b740199ef0b8057c2c68a377fd3b4d42346deb (merge-base f3b7401)",
+    "repository": {
+      "name": "67876-flat"
+    },
+    "base": {
+      "sha": "f3b740199ef0b8057c2c68a377fd3b4d42346deb",
+      "ref": "f3b740199ef0b8057c2c68a377fd3b4d42346deb"
+    },
+    "head": {
+      "sha": "b807cdbdfdb7d0fa3ff3f0402fe8744ff4700adf",
+      "ref": "pr-67876-flat"
+    },
+    "title": "pr-67876-flat",
+    "description": "GitHub OAuth Security Enhancement",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/github/integration.py",
+      "src/sentry/web/frontend/pipeline_advancer.py",
+      "tests/sentry/integrations/github/test_integration.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/github/integration.py",
+      "src/sentry/web/frontend/pipeline_advancer.py",
+      "tests/sentry/integrations/github/test_integration.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 402,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "high",
+      "title": "OAuth `state` is the pipeline signature, a public constant, so it gives no CSRF protection",
+      "body": "`pipeline.signature` is `md5_text(*pipe_ids)`, built from the view class names (src/sentry/pipeline/base.py:132-133). It is the same for every user and every session, and the tests hardcode it (`9cae5e88803f35ed7970fc131e6e65d3`). That means the check at line 412 cannot tell a real GitHub callback from a forged one. An attacker can get any victim who has a GitHub pipeline open to load `/extensions/github/setup/?code=<attacker code>&state=9cae5e…`. The victim's pipeline then records the attacker's GitHub login as `github_authenticated_user`. The sibling `OAuth2AuthorizeView.dispatch` uses `secrets.token_hex()`, stores it with `pipeline.bind_state(\"state\", state)` and compares against `pipeline.fetch_state(\"state\")` (src/sentry/identity/oauth2.py:245-252, 325). Do the same here: generate a random token, bind it, and compare against the bound value.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 503,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`integration.metadata[\"sender\"]` raises KeyError for integrations created through the pipeline",
+      "body": "`build_integration` sets `metadata[\"sender\"]` only when `state.get(\"sender\")` is set (lines 376-377). Only the webhook `installation.created` handler passes a sender (src/sentry/integrations/github/webhook.py:202-207). If the pipeline creates the Integration (the `Integration.DoesNotExist` → `next_step()` path at line 481-482), its metadata has no `sender`. Later, if the OrganizationIntegration is removed and someone reinstalls, this line raises `KeyError`. The user sees a 500 in the install popup instead of the error page. Use `integration.metadata.get(\"sender\", {}).get(\"login\")` and decide what a missing sender should mean.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 423,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Token exchange and `get_user_info` failures are unhandled and show a 500",
+      "body": "`safe_urlopen` is outside the `try`. `get_user_info` calls `resp.raise_for_status()` (src/sentry/identity/github/provider.py:16) and is not wrapped at all (line 434). If GitHub times out, returns an SSL or connection error, or rejects the token on `/user`, the exception propagates and the popup shows a 500 instead of `github-integration-failed.html`. The opener is never notified through `postMessage`. The sibling `OAuth2CallbackView.exchange_token` wraps `safe_urlopen` and catches `SSLError`/`ConnectionError` (src/sentry/identity/oauth2.py:286-308). Move `safe_urlopen` into the `try`, catch exceptions around `get_user_info`, and return `error(...)` in both cases.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 482,
+      "severity": "consider",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "No user check when the Integration row does not exist yet",
+      "body": "The new check compares the OAuth user with the installer. It runs only when an Integration row already exists and has no OrganizationIntegration. If the `installation` webhook has not been processed yet, or the Integration row was removed, `Integration.DoesNotExist` goes straight to `next_step()`. Any Sentry user who supplies that `installation_id` can then link it, as before this PR. To close this, check with the user's OAuth token that the installation is accessible to them (for example, GitHub's `GET /user/installations`) on this path too.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/integrations/github/test_integration.py",
+      "line": 392,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "`test_installation_not_found` now tests a state mismatch, not a 404 installation",
+      "body": "The callback uses `state=ddd023d87a913d5226e2a882c4c4cc05`, but the pipeline signature is `9cae5e88803f35ed7970fc131e6e65d3`. So the request fails at the state check (integration.py:412-413), which renders \"Invalid installation request.\". It never reaches `build_integration`, where the stubbed 404 would raise \"The GitHub installation could not be found.\" (integration.py:355-356). The 404 path has lost its coverage. Use the valid state and assert the original message again. Add a separate test for a wrong state.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "New first pipeline step `OAuthLoginView` redirects to GitHub OAuth authorize, then exchanges the code and binds `github_authenticated_user`",
+      "location": "src/sentry/integrations/github/integration.py:389-439",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:401-439",
+        "src/sentry/identity/oauth2.py:245-252",
+        "src/sentry/identity/oauth2.py:282-308",
+        "src/sentry/identity/oauth2.py:325",
+        "src/sentry/pipeline/base.py:132-133",
+        "src/sentry/identity/github/provider.py:7-17"
+      ],
+      "equivalent_path": "OAuth2AuthorizeView.dispatch / OAuth2CallbackView.dispatch + exchange_token in src/sentry/identity/oauth2.py",
+      "before_after": "The sibling creates a random state with secrets.token_hex() and binds it before redirecting. On the callback it compares against fetch_state('state') and wraps safe_urlopen in try/except for SSL and connection errors. The new view uses the constant pipeline.signature as state, binds nothing, and calls safe_urlopen and get_user_info outside any try.",
+      "visible_effect": "On success the pipeline advances to GitHubInstallation in the same request. A state mismatch, missing access_token or missing login renders github-integration-failed.html with \"Invalid installation request.\" through window.opener.postMessage.",
+      "failure_mode": "A network error or HTTPError from safe_urlopen or get_user_info raises out of the view and the popup shows a 500. The opener gets no postMessage and the pipeline stays at step 0. Because the state is a constant, a forged callback is accepted.",
+      "evidence_checked": true
+    },
+    {
+      "action": "GitHubInstallation reads installation_id from GET or from pipeline state, and checks the OAuth user against integration.metadata['sender']['login']",
+      "location": "src/sentry/integrations/github/integration.py:447-507",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:376-377",
+        "src/sentry/integrations/github/integration.py:481-482",
+        "src/sentry/integrations/github/integration.py:501-505",
+        "src/sentry/integrations/github/webhook.py:202-207"
+      ],
+      "equivalent_path": "Webhook installation.created path that stores sender (src/sentry/integrations/github/webhook.py:201-209)",
+      "before_after": "Only the webhook path stores metadata.sender. build_integration adds it only when state has a sender, so integrations created by the pipeline have none.",
+      "visible_effect": "A user mismatch shows the generic \"Invalid installation request.\" error page.",
+      "failure_mode": "Missing sender raises KeyError (500). When the Integration row does not exist, the user check is skipped.",
+      "evidence_checked": true
+    },
+    {
+      "action": "pipeline_advancer: FORWARD_INSTALL_FOR list replaced by provider_id == 'github'",
+      "location": "src/sentry/web/frontend/pipeline_advancer.py:40-48",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/web/frontend/pipeline_advancer.py:29-64"
+      ],
+      "before_after": "Behaviour is the same. The OAuth callback reaches this view with a pipeline and no setup_action=install, so it falls through to pipeline.current_step().",
+      "visible_effect": "None",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a GitHub OAuth step before the app-installation step, so that only the GitHub user who installed the app can link an existing installation to a Sentry org. Four things need fixing: (1) the OAuth `state` is the pipeline signature, which is the same constant for every user, so the state check does not stop CSRF; (2) line 503 raises a KeyError for integrations whose metadata has no `sender`; (3) token-exchange and `/user` failures are not handled and show a 500 instead of the error page; (4) `test_installation_not_found` now tests a state mismatch, so the 404 path has no coverage. There is also a suggestion, which the author may decline: no user check runs when the Integration row does not exist yet.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 297,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 15,
+      "costUsd": 0.4338422
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f3b740199ef0b8057c2c68a377fd3b4d42346deb"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4338422,
+    "usage": {
+      "input": 16,
+      "output": 8408,
+      "cacheRead": 194211,
+      "cacheWrite": 28347
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 15,
+    "durationMs": 95535,
+    "stop": "complete",
+    "notices": []
+  }
+}
