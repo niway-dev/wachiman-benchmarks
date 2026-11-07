@@ -1,0 +1,141 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-107534-flat` of 107534-flat against d9a8253640464014aa3662c91131278990cfb828 (merge-base d9a8253)",
+    "repository": {
+      "name": "107534-flat"
+    },
+    "base": {
+      "sha": "d9a8253640464014aa3662c91131278990cfb828",
+      "ref": "d9a8253640464014aa3662c91131278990cfb828"
+    },
+    "head": {
+      "sha": "42e1895430aaa5b1ddc86ed6032dda5e762e0717",
+      "ref": "pr-107534-flat"
+    },
+    "title": "pr-107534-flat",
+    "description": "Advanced Query Processing Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts"
+    ],
+    "reviewed": [
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+      "line": 299,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Templating and ad-hoc filters now run two or three times per sub-request, so parsed-label filters get duplicated",
+      "body": "`runSplitQuery` now calls `applyTemplateVariables(query, scopedVars, request.filters)`. Each sub-request then goes through `datasource.runQuery` → `super.query`, and `DataSourceWithBackend` calls `applyTemplateVariables(q, request.scopedVars, request.filters)` again (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185). `filters` is still on the sub-request because it is built as `{ ...request, targets }` (querySplitting.ts:174). The shard path adds a third pass: `runShardSplitQuery` interpolates at shardQuerySplitting.ts:52, then hands each shard group to `runSplitQuery` (shardQuerySplitting.ts:154,163), which interpolates again. The updated test confirms this: `toHaveBeenCalledTimes(5)` for a single query.\n\n`addAdHocFilters` is not idempotent for queries that have a parser. `addFilterAsLabelFilter` (modifyQuery.ts:511-541) appends ` | key=`value`` on every call, while only the stream-selector path de-duplicates (modifyQuery.ts:494). With an ad-hoc filter `level=error`, `{app=\"x\"} | logfmt` reaches Loki as `... | logfmt | level=`error` | level=`error`` on the split path, and with three copies when sharded. The results stay the same, but the query text grows, Query inspector shows it, and every shard and chunk request pays for it. A second `templateSrv.replace` pass also re-expands any variable value that itself contains `$name` text.\n\nOne option is to pass the un-interpolated targets on to the sub-requests and use the interpolated copy only for the decisions made here (`querySupportsSplitting`, `isLogsQuery`, `calculateStep`, shard selector). Another is to clear `filters` on sub-requests whose targets are already interpolated.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "line": 76,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Test asserts `$__auto` gets interpolated, which production deliberately does not do",
+      "body": "`applyTemplateVariables` strips `__auto` (and `__range*`) out of `scopedVars` so that the backend interpolates them (datasource.ts:1111-1125). In production `[$__auto]` reaches the backend unchanged. This test's `replace` mock ignores `scopedVars` and rewrites `$__auto` to `5m` anyway, so it asserts `count_over_time({a=\"b\"}[5m])`, an outcome the real code never produces. That suggests splitting depends on `$__auto` being resolved on the frontend, which it doesn't. A user variable such as `$range` would test the same thing without the misleading signal. The same applies to shardQuerySplitting.test.ts:85-98.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "runSplitQuery interpolates targets (expr, step, legendFormat, ad-hoc filters) before partitioning and splitting",
+      "location": "public/app/plugins/datasource/loki/querySplitting.ts:296-299",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/querySplitting.ts:174",
+        "public/app/plugins/datasource/loki/querySplitting.ts:180",
+        "public/app/plugins/datasource/loki/querySplitting.ts:327-329",
+        "public/app/plugins/datasource/loki/datasource.ts:350-357",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:494",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:511-541"
+      ],
+      "equivalent_path": "DataSourceWithBackend.query applies applyTemplateVariables per query right before sending to the backend; runLiveQueryThroughBackend and the streaming path in LokiDatasource.query also call applyTemplateVariables before use",
+      "before_after": "Before: splitting decisions (querySupportsSplitting, isLogsQuery, calculateStep with query.step) used raw, un-interpolated targets, and the only interpolation was in DataSourceWithBackend. After: decisions use the interpolated targets, and the interpolated targets are also what get sent, so DataSourceWithBackend interpolates and applies ad-hoc filters a second time on each sub-request.",
+      "visible_effect": "Variables in step and expr now affect step grouping and the log/metric classification. The query sent to Loki can carry duplicated parsed-label ad-hoc filters, which Query inspector shows.",
+      "failure_mode": "Synchronous; applyTemplateVariables doesn't throw for normal input. Re-applying is semantically idempotent for filters but grows the query text.",
+      "evidence_checked": true
+    },
+    {
+      "action": "runShardSplitQuery replaces interpolateVariablesInQueries(targets, scopedVars) with per-query applyTemplateVariables(query, scopedVars, filters)",
+      "location": "public/app/plugins/datasource/loki/shardQuerySplitting.ts:49-52",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:154",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:163",
+        "public/app/plugins/datasource/loki/datasource.ts:429-447",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:161-185",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts:112"
+      ],
+      "equivalent_path": "interpolateVariablesInQueries (datasource.ts:429-447), which the old code used without filters and which also set datasource: getRef()",
+      "before_after": "Before: expr only, no ad-hoc filters, and the datasource ref was set. After: expr, step and legendFormat are interpolated, ad-hoc filters are applied (so the shard selector reflects them), and no datasource ref is set. DataSourceWithBackend falls back to the instance datasource when q.datasource is absent. Each shard group then goes through runSplitQuery, which interpolates again, and through DataSourceWithBackend, which interpolates a third time.",
+      "visible_effect": "Shard selection uses the filtered stream selector. Parsed-label ad-hoc filters show up as many as three times in the query sent to Loki.",
+      "failure_mode": "Synchronous; no new async call.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR moves interpolation earlier, before the splitting and sharding decisions. `runSplitQuery` and `runShardSplitQuery` now resolve each target with `applyTemplateVariables`, which also applies ad-hoc filters, so variables in `step` and `expr` count when steps are calculated and queries are classified. I found no blocking defect. The interpolated targets are also what get sent to Loki, so each sub-request is interpolated two times on the split path and three times when sharded. `DataSourceWithBackend` and the nested `runSplitQuery` call both apply it again. Parsed-label ad-hoc filters therefore appear more than once in the query sent to Loki. Results are unchanged, but the query text and work per request grow. The new tests also assert that `$__auto` gets interpolated, which production deliberately leaves to the backend. The PR body ('Advanced Query Processing Architecture') doesn't describe the change.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 63,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.604508
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d9a8253640464014aa3662c91131278990cfb828"
+  },
+  "execution": {
+    "costUsdEstimate": 0.604508,
+    "usage": {
+      "input": 20,
+      "output": 9627,
+      "cacheRead": 286440,
+      "cacheWrite": 44325
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 112579,
+    "stop": "complete",
+    "notices": []
+  }
+}

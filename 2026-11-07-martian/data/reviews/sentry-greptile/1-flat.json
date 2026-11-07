@@ -1,0 +1,208 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-1-flat` of 1-flat against 74618671bff8114fcec8fe77c6260c9a2bc2864a (merge-base 7461867)",
+    "repository": {
+      "name": "1-flat"
+    },
+    "base": {
+      "sha": "74618671bff8114fcec8fe77c6260c9a2bc2864a",
+      "ref": "74618671bff8114fcec8fe77c6260c9a2bc2864a"
+    },
+    "head": {
+      "sha": "20fe38a18abe28df711740ce01f6010ddd69b763",
+      "ref": "pr-1-flat"
+    },
+    "title": "pr-1-flat",
+    "description": "Enhanced Pagination Performance for High-Volume Audit Logs",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/api/endpoints/organization_auditlogs.py",
+      "src/sentry/api/paginator.py",
+      "src/sentry/utils/cursors.py"
+    ],
+    "reviewed": [
+      "src/sentry/api/endpoints/organization_auditlogs.py",
+      "src/sentry/api/paginator.py",
+      "src/sentry/utils/cursors.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 840,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "OptimizedCursorPaginator treats the datetime key as a number, so every optimized audit-log request returns 500",
+      "body": "The endpoint uses this paginator with `order_by=\"-datetime\"` (organization_auditlogs.py:80), so `self.key` is `datetime` (paginator.py:64-65). `get_item_key` copies `Paginator.get_item_key` (paginator.py:222-224) and calls `math.floor`/`math.ceil` on a `datetime`, which raises `TypeError`. `build_cursor` calls `key(results[0])` whenever the page has rows and no cursor value (cursors.py:121-122, 137, 197), so any admin request with `optimized_pagination=true` against a non-empty log fails with a 500.\n\n`value_from_cursor` (line 843) also returns the raw integer cursor value. `build_queryset` then emits `datetime <= <int>` (paginator.py:119-126), which compares a timestamp column with an integer. `DateTimePaginator` (paginator.py:233-241) does the conversion in both directions. Fix: subclass `DateTimePaginator` (or reuse its `get_item_key`/`value_from_cursor`) instead of copying the integer `Paginator` logic, and add a test that runs the optimized path on real audit-log rows.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+      "line": 71,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "`organization_context.member.has_global_access` is read on every request and crashes when there is no member",
+      "body": "`RpcUserOrganizationContext.member` is `RpcOrganizationMember | None` (organizations/services/organization/model.py:346). Line 71 runs on every request, including ones that never ask for `optimized_pagination`. Whenever the caller is not `request.user.is_superuser` and has no membership row, it raises `AttributeError` and the endpoint returns 500 where it used to return the audit log. Callers with no membership row include API-key/token auth, which has no member, and a caller let in by `OrganizationAuditPermission` through `is_active_superuser` (organization.py:124) without the `is_superuser` flag being the short-circuit. Fix: only compute this when `use_optimized` is true, and guard it, e.g. `member is not None and member.has_global_access`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 877,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "The negative-offset branch cannot work: Django querysets reject negative slicing",
+      "body": "The comment says \"The underlying Django ORM properly handles negative slicing automatically\". It does not: `QuerySet.__getitem__` raises `ValueError(\"Negative indexing is not supported.\")` for a negative start. `paginate` only turns `BadPaginationError` into a 400 (base.py:540-541), so a cursor such as `0:-5:0` sent by an admin with `optimized_pagination=true` produces an unhandled 500. The branch is also described as giving \"access to data beyond normal pagination bounds\". Pagination should never be able to do that, and it relies on \"permissions are checked at the queryset level\". Remove the branch and reject negative offsets with `BadPaginationError` so the client gets a 400.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+      "line": 71,
+      "severity": "consider",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "The gate uses `request.user.is_superuser` and `has_global_access`, which don't match \"authorized administrators\"",
+      "body": "Elsewhere this permission layer checks superuser with `is_active_superuser(request)` (organization.py:70, 124). `request.user.is_superuser` is only the raw user flag and ignores whether the superuser session is active. `has_global_access` means the member can reach every team, for example through open membership; it is not an admin role. If the optimized paginator is kept, gate it the same way as the rest of the endpoint, or drop the gate, since audit-log access is already enforced by `OrganizationAuditPermission`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 179,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "The BasePaginator comment says negative offsets are safe, but prev cursors with a negative offset still crash",
+      "body": "Line 182 clamps only non-prev offsets to 0. For `is_prev` cursors the negative offset still goes into `queryset[start_offset:stop]`, and Django raises `ValueError` for that. The comment \"This is safe because the underlying queryset will handle boundary conditions\" is false. `BasePaginator.get_result` is shared by `Paginator`, `DateTimePaginator` and every subclass used across the API. Clamping both directions (or rejecting negative offsets with `BadPaginationError`) would match what the comment claims.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/utils/cursors.py",
+      "line": 26,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "This comment describes a change that was never made",
+      "body": "`self.offset = int(offset)` is unchanged, and `Cursor.from_string` accepted negative offsets before this PR too (cursors.py:59). The added comment suggests negative offsets are an intended, supported feature, but every queryset-backed paginator fails on them (see the paginator findings). Remove the comment.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 845,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "`get_result` is a near-verbatim copy of `BasePaginator.get_result`",
+      "body": "Apart from the negative-offset branch, lines 845-911 repeat `BasePaginator.get_result` (paginator.py:136-215) line for line, including the `else` branch at 884-886, which is the same as the new base code at 182-184. Once the negative-offset branch goes, the subclass adds nothing, and the copy will drift from fixes made to the base.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+      "line": 73,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The new pagination path and the changed paginator have no tests",
+      "body": "The PR adds a paginator and a request flag, and changes offset handling in `BasePaginator`, but it adds no tests. A single endpoint test with `optimized_pagination=true` and one audit-log row would have caught the `TypeError` in `get_item_key`. A request with no membership (API key) would have caught the `member` dereference.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Admin requests audit logs with optimized_pagination=true and gets OptimizedCursorPaginator",
+      "location": "src/sentry/api/endpoints/organization_auditlogs.py:76",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/paginator.py:838-843",
+        "src/sentry/api/paginator.py:230-241",
+        "src/sentry/utils/cursors.py:121-122",
+        "src/sentry/api/base.py:525-541",
+        "src/sentry/api/paginator.py:63-67"
+      ],
+      "equivalent_path": "Default branch: self.paginate with DateTimePaginator (organization_auditlogs.py:85-91)",
+      "before_after": "DateTimePaginator turns datetime keys into millisecond integers and turns cursor values back into datetimes. OptimizedCursorPaginator applies math.floor to the datetime and passes the raw int cursor into SQL.",
+      "visible_effect": "The paginate response (rows plus Link cursor headers) becomes a 500 for any non-empty result set",
+      "failure_mode": "TypeError from math.floor(datetime) inside build_cursor is not caught; paginate only converts BadPaginationError to 400",
+      "evidence_checked": true
+    },
+    {
+      "action": "Access gate computed on every audit-log request",
+      "location": "src/sentry/api/endpoints/organization_auditlogs.py:71",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/organizations/services/organization/model.py:346",
+        "src/sentry/api/bases/organization.py:110-124"
+      ],
+      "equivalent_path": "OrganizationAuditPermission.has_object_permission uses is_active_superuser(request)",
+      "before_after": "Before, the endpoint did not touch organization_context.member. Now it dereferences it unconditionally.",
+      "visible_effect": "Requests with no member context return 500 instead of the audit log",
+      "failure_mode": "AttributeError on None member; nothing in the endpoint handles it",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cursor with a negative offset sent to the optimized paginator",
+      "location": "src/sentry/api/paginator.py:877",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/paginator.py:877-886",
+        "src/sentry/api/base.py:540-541",
+        "src/sentry/utils/cursors.py:53-61"
+      ],
+      "equivalent_path": "BasePaginator.get_result slicing (paginator.py:182-184)",
+      "before_after": "Both slice the Django queryset with a negative start",
+      "visible_effect": "500 response",
+      "failure_mode": "Django raises ValueError for negative indexing; it is not mapped to a 400",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The optimized pagination path is broken on arrival. `OptimizedCursorPaginator` copies the integer `Paginator` key logic onto a datetime column, so every `optimized_pagination=true` request with results ends in a `TypeError` and a 500. Its negative-offset branch relies on negative slicing, which Django rejects. The endpoint also dereferences `organization_context.member` on every request, which can 500 callers who have no membership. Smaller issues: comments that are wrong or misleading, a duplicated `get_result`, a superuser check that doesn't match the rest of the permission layer, and no tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 138,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.3514696
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "74618671bff8114fcec8fe77c6260c9a2bc2864a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3514696,
+    "usage": {
+      "input": 10,
+      "output": 6829,
+      "cacheRead": 97968,
+      "cacheWrite": 24407
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 76407,
+    "stop": "complete",
+    "notices": []
+  }
+}

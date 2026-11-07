@@ -4,7 +4,7 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-02, after the held-out set (field run added).
+- **Last updated:** 2026-11-07, Martian Code Review Bench run added.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
   checked against the code by reading, not by running the app.
@@ -12,7 +12,23 @@ no claim the reports do not.
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 
-## Headline
+## Martian's Code Review Bench (2026-11-07, public PRs)
+
+One blind run of Wachiman 1.9.0 · Opus 5.5 on Martian's 50 public PRs, every row judged the same way
+([report](2026-11-07-martian/README.md)):
+
+| Tool | High+Critical found | Recall | Precision | F1 |
+| --- | --- | --- | --- | --- |
+| qodo-extended-v2 | 44/66 | 56.1% | 63.0% | 59.3% |
+| augment | 46/66 | 59.0% | 57.0% | 58.0% |
+| **wachiman** | **47/66** | **63.6%** | 38.7% | 48.1% |
+| claude-code | 29/66 | 44.5% | 45.8% | 45.2% |
+
+Highest recall, lowest precision of the four. On the site's metric (Core, F2) Wachiman scores 55.7 with
+our stricter judge; corrected for the judge offset that is an estimated 4th or 5th of 22. One run only;
+Pullfrog is not in Martian's dataset.
+
+## Headline (kaipu-record, five PRs)
 
 | | Wachiman 1.3.0 · Opus | Wachiman 1.4.0 · Opus | Wachiman 1.4.0 · Sonnet | Pullfrog | CodeRabbit |
 | --- | --- | --- | --- | --- | --- |
