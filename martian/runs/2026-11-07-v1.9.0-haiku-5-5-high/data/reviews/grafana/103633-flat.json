@@ -1,0 +1,247 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of grafana-103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "grafana-103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 116,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Denial cache key omits identity type, so anonymous and renderer subjects share denials",
+      "body": "`permDenialKey` is built from `checkReq.UserUID` but not from `checkReq.IdentityType` (service.go:116, cache.go:30-32). Anonymous and render subjects both resolve to UID \"0\" (pkg/services/user/identity.go:296 returns `TypeAnonymous, \"0\"`; identity.go:298 returns `TypeRenderService, \"0\"`). The denial check at service.go:117 runs before any identity-type logic, so a denial written for `anonymous:0` on a dashboard is returned for `render:0` on the same dashboard for the TTL. The renderer is granted `*` for `dashboards:read` (service.go:446-448), so this turns a correct allow into a silent deny for rendering. The key is also ambiguous because `_` is both the field separator and allowed inside UIDs: name \"a_\" with parent \"b\" and name \"a\" with parent \"_b\" produce the same key. Suggested fix: include the identity type in `userPermDenialCacheKey` and use an unambiguous encoding (length-prefixed fields or JSON of the tuple).",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 154,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Denial entries are unbounded in key space and written for every denied request",
+      "body": "Before this change a denied check wrote nothing to the cache. Now every distinct (namespace, subject, action, name, folder) that is denied writes one entry (service.go:153-155), with a TTL of shortCacheTTL. The key space is bounded only by request names, and an authenticated caller can make arbitrary names. The cache is a LocalCache with time-based expiry (rbac.go:88 configures it; I did not find a size limit in the repo). Memory and cleanup cost therefore grow with the rate of distinct denied names, not with users × actions as the existing permCache does.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 982,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "\"Should deny on explicit cache deny entry\" passes without the denial cache",
+      "body": "The test seeds the permCache with `dashboards:uid:dash1: false` (line 982) and the comment at 981 says this is to \"prove this is not checked\". With that value, the cached path (service.go:123-136) finds the permission not allowed and falls through to the database. `setupService` gives an empty fakeStore (service_test.go:1328-1343), so the DB path also denies. The assertion at line 994 therefore holds even if the `permDenialCache.Get` check at service.go:117 is removed, and the test does not exercise the feature its name describes. Fix: seed the permCache with `true` for dash1, so only the denial entry can produce the deny, and assert the DB store was not called (or that the result is deny while the cached allow is present).",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 116,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "A cached denial overrides a fresher cached grant for up to one more TTL",
+      "body": "The denial short-circuit (service.go:116-121) runs before the cached-allow path (service.go:123-136), so an entry written from an earlier DB read wins over a later allow in permCache. A grant made after the denial is written is therefore hidden for up to 30s (shortCacheTTL, service.go:32) after the permCache already reflects it. Before this change, a permCache hit with a stale deny was served until its own expiry, so this is one more TTL of grant latency rather than a new kind of staleness. I did not find a comment or test that states this ordering is intended. Is denial-over-allow precedence the intended behaviour? If the remote client path is also in use, its own 30s LocalCache (pkg/services/authz/rbac.go:160-167) sits in front of this server cache, so the two can compound.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac.go",
+      "line": 101,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "In-process client loses its 30s client-side cache; the rationale is not stated",
+      "body": "The in-process client now uses `NoopCache` (rbac.go:101-105). Before this change, `newRBACClient` used a 30s `cache.NewLocalCache` for this same client (removed lines at the old rbac.go:160-167 path), so every in-process Check and List now reaches the server, which has its own caches. The pull request body only says \"AuthZService: improve authz caching\", which does not explain removing a cache from one path while the remote path keeps its 30s cache. What is the reason for disabling the client cache in-process? If it is to avoid stacking TTLs, the remote path still stacks a 30s client cache over the server's 30s permCache and permDenialCache.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 367,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "`cacheHit` branches are dead after the cache case was removed",
+      "body": "With the \"should return permissions from cache if available\" case removed from `TestService_getUserPermissions` (service_test.go:336-340 now has only cacheHit=false cases), the `cacheHit` field and its branches at service_test.go:367-369 and 388-390 can never run. The field and branches should be removed, or a cache-hit case should be kept that checks the new behaviour (`getIdentityPermissions` no longer reads the cache, so the store call count is 3 on a seeded cache).",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check denial short-circuit: return Allowed=false when permDenialCache has a key for (namespace, UserUID, action, name, folder)",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-121",
+        "pkg/services/authz/rbac/cache.go:30-32",
+        "pkg/services/user/identity.go:296",
+        "pkg/services/user/identity.go:298",
+        "pkg/services/authz/rbac/service.go:446-448",
+        "pkg/services/authz/rbac/cache.go:58-68"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac/service.go:123-136 (cached-allow path that runs next)",
+      "before_after": "Before: Check always went to getIdentityPermissions; the permCache hit was read inside getUserPermissions and a cached deny was served as-is. After: a denial entry returns before any permCache or DB read, and the cached-allow path follows.",
+      "visible_effect": "The authz response is Allowed=false with no error. The renderer can be denied a read it is granted (see failure_mode).",
+      "failure_mode": "The key has no identity type. An anonymous denial on dashboard X (subject anonymous:0, UID \"0\") makes render:0 denied for X until the TTL expires, although getRendererPermissions grants \"*\" for dashboards:read (service.go:446-448). The identity source is pkg/services/user/identity.go:296 and :298. The failure is silent. Cache Get errors are treated as a miss (pkg/services/authz/rbac/cache.go:58-68).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Check denial write: record the denial after a DB-backed deny",
+      "location": "pkg/services/authz/rbac/service.go:153-155",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:153-155",
+        "pkg/services/authz/rbac/cache.go:79-92",
+        "pkg/services/authz/rbac/service.go:32",
+        "pkg/services/authz/rbac/service.go:85"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac/cache.go:79-92 (cacheWrap.Set used by every other cache write, e.g. service.go:406 and 430)",
+      "before_after": "Before: no write on deny. After: write with shortCacheTTL (service.go:85, 32). The write happens after the DB path, so the denial reflects a fresh DB read.",
+      "visible_effect": "Nothing directly. The next identical check within the TTL is denied from cache.",
+      "failure_mode": "A Set error is logged by cacheWrap.Set and otherwise ignored (cache.go:88-91), so the request still succeeds and there is no user-visible error. A grant made after the write is not seen for up to the TTL (see the finding on denial precedence).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Check cached-allow path: read permCache for the user or anonymous key and check the permission before the DB",
+      "location": "pkg/services/authz/rbac/service.go:123-137",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:123-137",
+        "pkg/services/authz/rbac/service.go:139-144",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/service.go:370-417"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac/service.go:139-144 (getIdentityPermissions, the DB path that now always runs after a cache miss or deny)",
+      "before_after": "Before: getUserPermissions read permCache and returned the cached map with no further check. After: getCachedIdentityPermissions reads the same key first. A cached allow returns; a cached deny or a miss falls through to a fresh DB read.",
+      "visible_effect": "Allowed reflects the cached map when it grants access, and the DB result otherwise.",
+      "failure_mode": "An error from getCachedIdentityPermissions (for example from GetUserIdentifiers) is ignored and the DB path runs (service.go:124, 139). The DB path reports the error to the caller. A checkPermission error returns deny with the error (service.go:126-130).",
+      "evidence_checked": true
+    },
+    {
+      "action": "List cached path: read permCache first and fall back to the DB only on a miss",
+      "location": "pkg/services/authz/rbac/service.go:180-192",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:180-192",
+        "pkg/services/authz/rbac/service.go:370-390",
+        "pkg/services/authz/rbac/service.go:419-430"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac/service.go:186 (getIdentityPermissions, the direct DB path used before this change)",
+      "before_after": "Before: List called getIdentityPermissions directly, and the cache check was inside getUserPermissions. After: the cache is read in List, and getIdentityPermissions is called only on a miss. The permission source for the user or anonymous key is unchanged.",
+      "visible_effect": "The list of items and folders comes from the cached map when it is present, so a revoked permission can still appear for up to the TTL. Before this change the same staleness applied through getUserPermissions.",
+      "failure_mode": "A cache miss falls through to the DB, and DB errors are returned to the caller (service.go:187-191). A GetUserIdentifiers error on the cached path is swallowed and the DB path reports it again. Nothing is lost for the session.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Removal of the permCache read from getUserPermissions and getAnonymousPermissions, leaving the singleflight DB path as the only path",
+      "location": "pkg/services/authz/rbac/service.go:370-390",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:139",
+        "pkg/services/authz/rbac/service.go:186",
+        "pkg/services/authz/rbac/service.go:370-390",
+        "pkg/services/authz/rbac/service.go:419-430",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/service_test.go:381"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac/service.go:419-430 (getAnonymousPermissions, which had the same cache-read pattern removed)",
+      "before_after": "Before: getUserPermissions and getAnonymousPermissions returned a permCache hit before the singleflight. After: they always run the singleflight, and the cache read has moved to getCachedIdentityPermissions (service.go:342-368). The only callers of getIdentityPermissions are Check (service.go:139) and List (service.go:186), and the test at service_test.go:381.",
+      "visible_effect": "None on the result for callers that go through Check or List. The DB is queried on every direct call to getIdentityPermissions.",
+      "failure_mode": "Any new caller of getIdentityPermissions that expects a cache hit gets a DB query instead. None exists in this part.",
+      "evidence_checked": true
+    },
+    {
+      "action": "In-process authz client now uses NoopCache instead of the 30s LocalCache",
+      "location": "pkg/services/authz/rbac.go:101-105",
+      "status": "open",
+      "evidence": [
+        "pkg/services/authz/rbac.go:101-105",
+        "pkg/services/authz/rbac.go:160-167",
+        "pkg/services/authz/rbac.go:239-251"
+      ],
+      "equivalent_path": "pkg/services/authz/rbac.go:160-167 (remote client, which still uses a 30s LocalCache)",
+      "before_after": "Before: the in-process client was built by newRBACClient with a 30s LocalCache. After: NoopCache, so every in-process Check and List goes to the server. The remote client still caches for 30s.",
+      "visible_effect": "No change in the decision. There is more latency and load on the in-process server, and the client no longer serves a result that is up to 30s old.",
+      "failure_mode": "Get always returns cache.ErrNotFound and Set and Delete succeed silently (rbac.go:241-250), so the client always calls the server. No failure is hidden. The change removes one staleness layer for the in-process path only.",
+      "open_question": "Why is the client-side cache removed for the in-process client only, given the PR body says only 'improve authz caching'? Is the intent to avoid stacking TTLs, and is the remote path's 30s client cache over the server's 30s caches intended?",
+      "candidates": [
+        "pkg/services/authz/rbac.go",
+        "pkg/services/authz/rbac/service.go"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Four files reviewed (rbac.go, rbac/cache.go, rbac/service.go, rbac/service_test.go). The main defect is that the new denial-cache key omits the identity type. Anonymous and render subjects both resolve to UID \"0\", so an anonymous denial can make the renderer's dashboard read fail silently for the TTL, although the renderer is granted \"*\" for dashboards:read. The new test \"Should deny on explicit cache deny entry\" passes without the denial cache, because it seeds the permCache with false, so it does not test its name. Other points are a possible unbounded denial key space, the precedence of a cached denial over a fresher grant, the unexplained removal of the in-process client cache, and dead cacheHit branches in the tests. I did not build or run anything.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 19,
+      "costUsd": 0.04069647
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.04069647,
+    "usage": {
+      "input": 18,
+      "output": 34845,
+      "cacheRead": 560277,
+      "cacheWrite": 88347
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 19,
+    "durationMs": 180261,
+    "stop": "complete",
+    "notices": []
+  }
+}

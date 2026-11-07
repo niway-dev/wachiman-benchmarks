@@ -1,0 +1,226 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-77754` of sentry-77754 against bb5a6837cb5b3d8d3b174e17d42ec14486ef8738 (merge-base bb5a683)",
+    "repository": {
+      "name": "sentry-77754"
+    },
+    "base": {
+      "sha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738",
+      "ref": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+    },
+    "head": {
+      "sha": "9501091c52ae94e8d916f79b35d21975b3f9cadb",
+      "ref": "pr-77754"
+    },
+    "title": "pr-77754",
+    "description": "fix(ecosystem): Breaks issue sync cycles\nPasses JSON instead of classes when queueing task\nremoves SourceType enum\nConverts from JSON to dictionaries instead\nRemoves minor change made to sync utils, adds test for assignment loop\nFix typing for optional assignment_source\nMore typing fixes\nFixes tests, adds new test for sync loop checks",
+    "author": "Gabe Villalobos"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/services/assignment_source.py",
+      "line": 18,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`queued` default is fixed at import time",
+      "body": "`queued: datetime = timezone.now()` is evaluated once, when the module is imported, not when an `AssignmentSource` is created. Every instance in a process therefore carries the same timestamp, the process start time, so the field does not record when the assignment was queued. `test_to_dict` only asserts `queued is not None`, so it does not catch this. Nothing in this pull request reads `queued`, which is why the severity is consider. Use `field(default_factory=timezone.now)` so each instance gets its own timestamp.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/mixins/issues.py",
+      "line": 390,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Same-integration skip also suppresses other external issues of that integration",
+      "body": "The check at lines 390-391 returns False for every external issue of this integration linked to the group, not only the one the assignment came from. `sync_group_assignee_outbound` (src/sentry/integrations/utils/sync.py:135) loops over all `GroupLink` rows of the group. If one group can be linked to two issues in the same integration (for example, two Jira issues on one site), an assignment made inbound from issue A will not be pushed to issue B, and nothing reports that. The comment says other integrations should still propagate, which the code does. Is skipping sibling issues of the same integration intended? The pull request does not say.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/models/test_groupassignee.py",
+      "line": 289,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test covers the inbound path that sets the assignment source",
+      "body": "`test_assignee_sync_outbound_assign_with_matching_source_integration` (lines 179-221) passes `assignment_source` straight to `GroupAssignee.objects.assign`. The inbound path that now sets the source, `sync_group_assignee_inbound` in src/sentry/integrations/utils/sync.py:96-99 and :112-116, is not exercised with a source. `test_assignee_sync_inbound_assign` (line 289) and `test_assignee_sync_inbound_deassign` (line 349) do not check the outbound call or the source. If `assignment_source=AssignmentSource.from_integration(integration)` were dropped from either call, every test here would still pass and the loop protection would silently stop working for inbound assignments. Add a test that runs inbound assign and deassign and asserts that the outbound sync is not called on the originating integration's external issue.",
+      "anchor": "outside"
+    },
+    {
+      "path": "src/sentry/integrations/mixins/issues.py",
+      "line": 416,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "New `assignment_source` parameter on the abstract `sync_status_outbound` has no caller",
+      "body": "`IssueSyncIntegration.sync_status_outbound` gains an explicit `assignment_source` parameter. Nothing in this pull request passes it, and the status path does not consume it. The example integration's override (src/sentry/integrations/example/integration.py:161, `sync_status_outbound(self, external_issue, is_resolved, project_id)`) does not accept extra keyword arguments. Any future caller that passes `assignment_source=` would fail with a TypeError on that integration. Either drop the parameter until the status path needs it, or update the example override in the same change.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GroupAssigneeManager.assign() now forwards assignment_source into sync_group_assignee_outbound",
+      "location": "src/sentry/models/groupassignee.py:189-194",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/models/groupassignee.py:130-139",
+        "src/sentry/models/groupassignee.py:189-194",
+        "src/sentry/integrations/utils/sync.py:123-145"
+      ],
+      "equivalent_path": "src/sentry/models/groupassignee.py:235-240 (deassign) and the original call without a source at the same site",
+      "before_after": "Before: the outbound sync was called with (group, user_id, assign=True). After: the same call also passes assignment_source, which defaults to None, so existing callers see no change.",
+      "visible_effect": "None on its own. The outbound task is queued with the source attached and only affects whether the originating integration is skipped.",
+      "failure_mode": "If the outbound enqueue fails, the same as before this change: the existing apply_async path has no handling here. No new failure is introduced.",
+      "evidence_checked": true
+    },
+    {
+      "action": "sync_group_assignee_inbound sets the source to the inbound integration for assign and deassign",
+      "location": "src/sentry/integrations/utils/sync.py:94-120",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/utils/sync.py:48",
+        "src/sentry/integrations/utils/sync.py:94-120",
+        "src/sentry/integrations/services/assignment_source.py:21-25",
+        "src/sentry/integrations/services/integration/model.py:21-24",
+        "src/sentry/integrations/models/integration.py:59"
+      ],
+      "equivalent_path": "src/sentry/integrations/utils/sync.py:48 (where_should_sync calls should_sync(key) without any source)",
+      "before_after": "Before: GroupAssignee.objects.deassign(group) and assign(group, user) with no source. After: both calls pass AssignmentSource.from_integration(integration), so the outbound sync can recognise its own origin. where_should_sync is unchanged and still passes no source, which is correct because it only decides whether inbound sync is enabled.",
+      "visible_effect": "None directly in Sentry. The originating external issue is intended to keep its assignee; the other linked issues still receive the change.",
+      "failure_mode": "AssignmentSource.from_integration reads integration.name and integration.id. Both exist on RpcIntegration (src/sentry/integrations/services/integration/model.py:21-24) and Integration (src/sentry/integrations/models/integration.py:59). If the source is not set, the loop protection is silently skipped and a sync cycle can start. No test covers this path (see the tests finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "sync_assignee_outbound task parses assignment_source_dict and passes it to should_sync and to the installation",
+      "location": "src/sentry/integrations/tasks/sync_assignee_outbound.py:53-61",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/tasks/sync_assignee_outbound.py:30-61",
+        "src/sentry/integrations/services/assignment_source.py:31-35",
+        "src/sentry/integrations/mixins/issues.py:382-394",
+        "src/sentry/integrations/example/integration.py:152-158",
+        "src/sentry/integrations/jira/integration.py:936-941"
+      ],
+      "equivalent_path": "src/sentry/integrations/tasks/sync_assignee_outbound.py:56 before this change: installation.should_sync(\"outbound_assignee\") with no source, then installation.sync_assignee_outbound(external_issue, user, assign=assign)",
+      "before_after": "Before: should_sync took one argument and the installation call had no source. After: a source is parsed from the dict when present, passed to should_sync, and forwarded as assignment_source= to the installation. A missing or empty dict gives None, which is the old behaviour.",
+      "visible_effect": "The external assignee is updated, or left alone when the source is the same integration. The analytics event is recorded only when the sync runs, as before.",
+      "failure_mode": "AssignmentSource.from_dict returns None on a TypeError or ValueError, which silently disables the loop protection for that message. Messages produced by to_dict always match the constructor, so this should not occur in practice. Messages queued before the deploy have no key and get None, which is the old behaviour. The installation methods accept **kwargs: Example (src/sentry/integrations/example/integration.py:152-158), Jira (src/sentry/integrations/jira/integration.py:936-941), Jira Server (src/sentry/integrations/jira_server/integration.py:1038-1043) and VSTS (src/sentry/integrations/vsts/issues.py:217-222), so the new keyword is accepted.",
+      "evidence_checked": true
+    },
+    {
+      "action": "should_sync skips the outbound sync when the source is the same integration",
+      "location": "src/sentry/integrations/mixins/issues.py:382-394",
+      "status": "open",
+      "evidence": [
+        "src/sentry/integrations/mixins/issues.py:382-394",
+        "src/sentry/integrations/utils/sync.py:123-145"
+      ],
+      "equivalent_path": "src/sentry/integrations/mixins/issues.py:383-385 (the existing key and org_integration check that runs before the new check)",
+      "before_after": "Before: returned the org_integration config value for the key. After: returns False first when sync_source.integration_id equals org_integration.integration_id, otherwise the same config lookup.",
+      "visible_effect": "The originating integration's external issue does not get an assignee update. Other integrations and other external issues are still updated (see the question about sibling issues of the same integration).",
+      "failure_mode": "If sync_source is None, the check is skipped and the result is unchanged. The IssueBasicIntegration base (src/sentry/integrations/mixins/issues.py:66-67) takes the argument and always returns False, so it is unaffected.",
+      "open_question": "Does the author intend every external issue of the same integration linked to the group to be skipped, or only the one the assignment came from? Could one group be linked to two issues of one integration? Files to read: src/sentry/models/grouplink.py and the Jira linking code to confirm whether multiple issues per integration can be linked to one group.",
+      "candidates": [
+        "src/sentry/models/grouplink.py",
+        "src/sentry/integrations/utils/sync.py"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Celery task kwargs carry a datetime inside assignment_source_dict",
+      "location": "src/sentry/integrations/utils/sync.py:134-145",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/conf/server.py:739",
+        "src/sentry/integrations/utils/sync.py:135-145",
+        "src/sentry/integrations/services/assignment_source.py:27-28"
+      ],
+      "equivalent_path": "src/sentry/integrations/utils/sync.py:135-145 (the existing kwargs dict for the same apply_async call)",
+      "before_after": "Before: kwargs held external_issue_id, user_id and assign. After: also includes assignment_source_dict, which contains a datetime under queued because to_dict uses asdict.",
+      "visible_effect": "None.",
+      "failure_mode": "The serializer is pickle (src/sentry/conf/server.py:739), so the datetime round-trips. A JSON serializer would fail here, so this depends on the pickle setting staying in place.",
+      "evidence_checked": true
+    },
+    {
+      "action": "AssignmentSource.queued default value",
+      "location": "src/sentry/integrations/services/assignment_source.py:18",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/services/assignment_source.py:18",
+        "tests/sentry/integrations/services/test_assignment_source.py:36"
+      ],
+      "before_after": "The default is computed once at import, so every instance has the process start time, not the time of queuing.",
+      "visible_effect": "None today: nothing reads queued in this pull request.",
+      "failure_mode": "Any future consumer that reads queued for ordering or staleness gets the process start time. The test only checks not None (tests/sentry/integrations/services/test_assignment_source.py:36).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "No blockers. The loop-prevention wiring holds on the direct path: the inbound integration is passed as the source, serialised through the pickle-based Celery task, and skipped in should_sync. The new keyword is accepted by all four installation implementations (Example, Jira, Jira Server, VSTS). Findings are a wrong default on AssignmentSource.queued (evaluated at import), a question about whether skipping every same-integration external issue is intended, a missing test on the inbound path that sets the source, and an unused abstract parameter on sync_status_outbound.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 227,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.021638130000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+  },
+  "execution": {
+    "costUsdEstimate": 0.021638130000000002,
+    "usage": {
+      "input": 10,
+      "output": 18563,
+      "cacheRead": 168863,
+      "cacheWrite": 53335
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 88995,
+    "stop": "complete",
+    "notices": []
+  }
+}

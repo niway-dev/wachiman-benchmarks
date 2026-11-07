@@ -48,7 +48,7 @@ Opus 5.5, high).
 
 | # | Arm | Variable | Built from | Question it answers | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Haiku 5.5 high alone | the review model | the product as released: `run-weekly.sh <label> claude-haiku-5-5 high` | How much recall and cost does a cheaper model give on public PRs? | running 2026-11-07 |
+| 1 | Haiku 5.5 high alone | the review model | the product as released: `run-weekly.sh <label> claude-haiku-5-5 high` | How much recall and cost does a cheaper model give on public PRs? | done 2026-11-07: [report](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md) |
 | 2 | Opus 5.5 + a findings falsifier on `fix` and `consider` | a verification pass | a prototype outside the product, over this bench's candidates | Does trying to disprove each finding cut false positives without losing real bugs? | to design |
 | 3 | Haiku 5.5 high + the same falsifier | the proposer model, falsifier fixed | arms 1 and 2 | Is cheap proposer plus verifier as good as Opus, for less? | after 1 and 2 |
 | 4 | Feature-guarantee falsifier | a review mode for critical features | a design to come | Does stating a documented guarantee and trying to break it find bugs others miss? | measured on kaipu-record, not here: these PRs carry no written guarantees |

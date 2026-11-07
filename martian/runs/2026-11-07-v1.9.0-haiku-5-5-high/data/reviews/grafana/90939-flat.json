@@ -1,0 +1,139 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Cache-miss path has no double-check after taking the write lock, so concurrent cold-start requests load the manifest one after another",
+      "body": "The read path takes RLock, reads the pointer, and releases it (lines 41-43). On a miss it takes the write Lock (line 48) and then unconditionally re-reads the manifest (lines 51-69). It never re-checks `entryPointAssetsCache` after acquiring the lock. Every request that missed while another request was loading therefore runs the full `readWebAssetsFromFile` in turn, and each one overwrites the global with a new pointer.\n\nBefore this change the same redundant loads ran in parallel. After it they are serialized, so N concurrent cache-miss requests (cold start, or after a failed load that leaves the cache nil) wait roughly N times one manifest read. In development (`cfg.Env == setting.Dev`, line 45) every request takes the write lock, so all dev requests are serialized through a file read. No wrong result is produced.\n\nA re-check after `Lock()` (return the cached value if it is now non-nil, unless Dev) would make the waiters reuse the first load. Callers that reach this function: `pkg/api/index.go:82`, `pkg/api/frontendsettings.go:62`, `pkg/middleware/recovery.go:141`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "The write lock is held across the CDN fetch, and waiters ignore their request context",
+      "body": "`GetWebAssets` holds `entryPointAssetsCacheMu` for the whole load, including `readWebAssetsFromCDN` (line 56). That function uses `http.DefaultClient`, which has no timeout, but does honor the context of the request that started it. `sync.Mutex.Lock` is not context-aware, so a waiting request whose client has gone away still blocks until the holder's fetch finishes. Today this is unreachable because `cdn := \"\"` on line 54 is a constant empty string, so only the local file read runs under the lock. If that constant is ever set, one slow CDN would stall every page load that misses the cache. Consider moving the CDN fetch outside the lock, or adding a timeout.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 35,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test covers the new locking or the cache behaviour",
+      "body": "The pull request adds locking to the process-wide cache but changes no test. `pkg/api/webassets/webassets_test.go` only exercises `readWebAssetsFromFile` and a skipped CDN test. There is no test for `GetWebAssets` cache hit, cache miss, dev-mode reload, or concurrent access. A test that calls `GetWebAssets` from several goroutines against `testdata/sample-assets-manifest.json`, run with `-race`, would confirm the new RLock/Lock pairs are correct and would show the serialization described above.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Cache-miss (or Dev-mode) load: GetWebAssets takes the write lock and reloads the manifest from disk, then stores it in the global cache",
+      "location": "pkg/api/webassets/webassets.go:48",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:40-70",
+        "pkg/api/webassets/webassets.go:54",
+        "pkg/api/index.go:82",
+        "pkg/api/frontendsettings.go:62",
+        "pkg/middleware/recovery.go:141"
+      ],
+      "equivalent_path": "pkg/api/webassets/webassets.go:40-70 at the base commit cca9dee, where the same load ran with no lock",
+      "before_after": "Before: concurrent misses each loaded the manifest in parallel and each wrote the global. After: they load one at a time and never re-check the cache after acquiring the lock, so each waiter repeats the load.",
+      "visible_effect": "No wrong page is produced. Cold-start or dev-mode page loads that overlap wait for each other, so latency grows with concurrency.",
+      "failure_mode": "A waiting request does not honor its own context while blocked on Lock(). A failed load (the manifest is missing) stores nil and the next request reloads, the same as before. The CDN branch is unreachable today because cdn is the constant \"\" (line 54).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cache-hit read: GetWebAssets reads the global pointer under RLock and returns it when not in Dev mode",
+      "location": "pkg/api/webassets/webassets.go:41-47",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:41-47",
+        "pkg/api/webassets/webassets.go:69-70"
+      ],
+      "equivalent_path": "pkg/api/webassets/webassets.go:45 at the base commit, which read the global without any lock",
+      "before_after": "Before: unguarded read. After: the pointer is read under RLock/RUnlock and the early return is unchanged. The global is written only under the write lock (line 69), so there is no data race on the pointer.",
+      "visible_effect": "None. Callers receive the same pointer as before.",
+      "failure_mode": "None found. The returned struct is fully built before it is published (readWebAssets and SetContentDeliveryURL run before line 69), so no reader sees a partially built value.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change adds an RWMutex around the global manifest cache in pkg/api/webassets/webassets.go. Every access to the global is now guarded, and I found no data race or deadlock: the write at line 69 happens under the write lock, and the three callers do not re-enter GetWebAssets. The weaknesses are on the cache-miss path. There is no re-check after acquiring the write lock, so concurrent cold-start loads serialize instead of sharing one result. The write lock is also held across the CDN branch, which is unreachable today because cdn is a constant empty string. No test covers the new behaviour. None of these produce a wrong result, so all three findings are \"consider\".",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.010912400000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.010912400000000001,
+    "usage": {
+      "input": 12,
+      "output": 10213,
+      "cacheRead": 91270,
+      "cacheWrite": 24460
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 50010,
+    "stop": "complete",
+    "notices": []
+  }
+}

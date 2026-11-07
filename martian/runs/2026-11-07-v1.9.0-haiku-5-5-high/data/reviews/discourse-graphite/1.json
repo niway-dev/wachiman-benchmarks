@@ -1,0 +1,262 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-1` of discourse-graphite-1 against 3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca (merge-base 3f71fa1)",
+    "repository": {
+      "name": "discourse-graphite-1"
+    },
+    "base": {
+      "sha": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca",
+      "ref": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca"
+    },
+    "head": {
+      "sha": "ffbaf8c54269df2ce510de91245760fddce09896",
+      "ref": "pr-1"
+    },
+    "title": "pr-1",
+    "description": "FEATURE: automatically downsize large images",
+    "author": "Régis Hanol"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/lib/utilities.js",
+      "app/controllers/uploads_controller.rb",
+      "app/models/optimized_image.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/lib/utilities.js",
+      "app/controllers/uploads_controller.rb",
+      "app/models/optimized_image.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/optimized_image.rb",
+      "line": 149,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Second `downsize` definition breaks the 5-argument call in ResizeEmoji",
+      "body": "The PR adds `def self.downsize(from, to, dimensions, opts={})` at line 149 while the width/height version stays at line 145. Ruby keeps only the later definition, so line 145-147 is dead code and any 4+ positional-argument call now fails. `app/jobs/regular/resize_emoji.rb:14` still calls `OptimizedImage.downsize(path, path, 100, 100, opts)` (5 arguments), which raises ArgumentError before any conversion. Every custom emoji upload is enqueued that way (`app/models/emoji.rb:73`), so the emoji is stored at its original size and the job fails. No spec exercises `downsize`, so the suite does not catch it. Fix: keep one signature. If the dimensions-string form is kept, change `resize_emoji.rb:14` to pass `\"100x100\"` and delete lines 145-147. The job's exception goes to `Discourse.handle_job_exception` on the sync path (`app/jobs/base.rb:110-111`); I did not read the async branch.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/uploads_controller.rb",
+      "line": 67,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Oversized animated GIFs are silently reduced to their first frame when animation is off",
+      "body": "The shrink loop calls `OptimizedImage.downsize` for any image over the limit, GIFs included. `downsize_instructions` reads `#{from}[0]` (`app/models/optimized_image.rb:129`), so without the animated path the output is a single frame. The animated path is only chosen when `allow_animation` is true and `from` ends in `.GIF` (`app/models/optimized_image.rb:155`). The controller passes `SiteSetting.allow_animated_thumbnails` (`uploads_controller.rb:67`). With that setting off, an animated GIF over `max_image_size_kb` is replaced by its first frame and the user gets a success response, not an error. The default is true (`config/site_settings.yml:574`). With the default on, the animated path depends on `tempfile.path` ending in `.GIF`. Rack names multipart tempfiles itself (Rack 1.5.5, `Gemfile.lock:231`), and I could not confirm the name in this repo, so please confirm that case. Fix: skip the loop for GIFs when animation is disabled so the validator rejects the file as before, and pass a path that keeps the original extension when animation is enabled.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/uploads_controller.rb",
+      "line": 55,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Remote images above 10 MB are silently truncated, then 'downsized' and accepted",
+      "body": "`FileHelper.download` stops writing once the file exceeds the cap and returns the partial tempfile with no error (`lib/file_helper.rb:16-23`). The cap moved from `max_image_size_kb` to a fixed 10 MB here. The truncated file then goes through the shrink loop (`uploads_controller.rb:64-67`), and `convert_with` only checks the exit status and sends output to /dev/null (`app/models/optimized_image.rb:161-162`). A truncated JPEG may therefore produce a partially grey image that is stored and returned as success. This depends on ImageMagick exiting 0 on truncated input, which I could not run. Fix: after the download, reject the upload when `tempfile.size > 10.megabytes`. Truncation only happens when the size exceeds the cap, so that check catches every truncated file.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/uploads_controller.rb",
+      "line": 64,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "SVG uploads over the limit are sent through ImageMagick conversion",
+      "body": "`FileHelper.is_image?` includes svg (`lib/file_helper.rb:31`), so the loop at line 64 runs `convert` on SVGs. `OptimizedImage.create_for` deliberately avoids this, copying SVGs instead of converting them (`app/models/optimized_image.rb:45-47`). Writing an SVG back out through ImageMagick is expected to rasterize or embed a bitmap, which would silently replace vector art. I did not verify ImageMagick's SVG output here. The trigger (an SVG over the limit) is rare, but the result is silent. Fix: exclude `.svg` from the loop, as `optimized_image.rb:45` does.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/lib/utilities.js",
+      "line": 182,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Client size test now fails and was not updated",
+      "body": "`test/javascripts/lib/utilities-test.js.es6:52-61` sets `max_image_size_kb = 5`, uploads a 10 KB image, and expects it to be rejected with `file_too_large` for 5. With the hard-coded `maxSizeKB = 10 * 1024`, the file is 10 KB, which is not over 10240, so `validateUploadedFile` accepts it and the assertion fails. That test file is not in this PR's diff, so the suite is left red. Fix: update the test to the new 10 MB behaviour, or reinstate the setting-based check (see the separate note on attachments).",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/lib/utilities.js",
+      "line": 182,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Client limit ignores the per-type settings for attachments and for images above 10 MB",
+      "body": "The fixed 10 MB gate applies to every upload type. `max_image_size_kb` and `max_attachment_size_kb` are both `client: true` (`config/site_settings.yml:513-518`), and the server still enforces them (`lib/validators/upload_validator.rb:37-38, 80-88`). Effects: an attachment over `max_attachment_size_kb` is now uploaded in full and only rejected afterwards by the server. An admin who raises `max_image_size_kb` above 10 MB is capped at 10 MB client-side, and the alert reports 10240 KB. The same fixed value is used for the 413 branch (`utilities.js:246`), whatever the nginx `client_max_body_size` is set to. These are visible errors, not silent failures. Fix: keep the per-type setting for non-image types, and decide whether images should use the setting or a fixed cap.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/uploads_controller.rb",
+      "line": 66,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Shrink loop ignores failures and can run five full conversions in the request",
+      "body": "`OptimizedImage.downsize` returns false when `convert` or `ImageOptim` fails (`app/models/optimized_image.rb:160-169`), but the return value is discarded. The loop then runs all five attempts, each a `convert` plus an ImageOptim pass, inside the request on the synchronous API path (`uploads_controller.rb:15-17`). The user then sees the generic size error from `upload_validator.rb:84-86`, not the real cause. Fix: stop the loop when `downsize` returns false and log the failure.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/optimized_image.rb",
+      "line": 120,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Does gifsicle accept a percentage for `--resize-fit`?",
+      "body": "The animated path passes `dimensions` straight to `--resize-fit` (`optimized_image.rb:120`, reached from `:138`). The controller now sends `\"80%\"`, and I could not confirm that gifsicle accepts percentages there. If it does not, GIFs over the limit fail, the loop runs five times, and the user sees the size error. Please confirm against the gifsicle version the deployment uses, or pass an explicit WxH.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Multipart image upload above max_image_size_kb is shrunk in place (up to 5 times at 80%) before Upload.create_for",
+      "location": "app/controllers/uploads_controller.rb:63-72",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/uploads_controller.rb:63-72",
+        "app/models/optimized_image.rb:126-135",
+        "app/models/optimized_image.rb:160-169",
+        "lib/validators/upload_validator.rb:80-88",
+        "config/site_settings.yml:574"
+      ],
+      "equivalent_path": "lib/validators/upload_validator.rb:80-88 (the previous path: reject oversize files with the too-large message)",
+      "before_after": "Before: a file over max_image_size_kb was rejected by the validator. After: it is shrunk in place with OptimizedImage.downsize, then the size is re-read and validated.",
+      "visible_effect": "Success with a smaller image; upload.filesize is the reduced size (uploads_controller.rb:72). The async path publishes via MessageBus (uploads_controller.rb:19-21) and the sync path renders JSON (uploads_controller.rb:15-17).",
+      "failure_mode": "downsize returns false on convert or ImageOptim failure (optimized_image.rb:160-163) and the return value is ignored, so all five attempts run; the user then gets the validator's size error (upload_validator.rb:84-86), not the real cause. Animated GIFs with animation off are flattened to one frame (see finding at uploads_controller.rb:67).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Client-side size gate in validateUploadedFile now uses a fixed 10 MB for every upload type",
+      "location": "app/assets/javascripts/discourse/lib/utilities.js:180-186",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/lib/utilities.js:180-186",
+        "config/site_settings.yml:513-518",
+        "lib/validators/upload_validator.rb:37-38",
+        "lib/validators/upload_validator.rb:80-88",
+        "test/javascripts/lib/utilities-test.js.es6:52-61"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/lib/utilities.js:180-186 before the change: Discourse.SiteSettings['max_' + type + '_size_kb']",
+      "before_after": "Before: the limit was max_image_size_kb or max_attachment_size_kb, depending on type. After: a constant 10240 KB for all types.",
+      "visible_effect": "Alert via bootbox with max_size_kb 10240 when the file is too large; otherwise the upload proceeds.",
+      "failure_mode": "Attachments above the admin's max_attachment_size_kb pass the client, upload in full, and are rejected only by the server afterwards (lib/validators/upload_validator.rb:37-38, 80-88). The visible error is delayed, not silent.",
+      "evidence_checked": true
+    },
+    {
+      "action": "413 response handler in displayErrorForUpload",
+      "location": "app/assets/javascripts/discourse/lib/utilities.js:245-248",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/lib/utilities.js:245-248",
+        "config/locales/server.en.yml:1037"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/lib/utilities.js:245-248 before the change: Discourse.SiteSettings.max_image_size_kb",
+      "before_after": "Before: the alert quoted max_image_size_kb. After: it always quotes 10240 KB.",
+      "visible_effect": "Alert saying the maximum size is 10240kb, whatever the site setting or the nginx client_max_body_size.",
+      "failure_mode": "The quoted limit can differ from the real web-server limit. The server's own limit is set in nginx, per config/locales/server.en.yml:1037. The message is wrong but visible.",
+      "evidence_checked": true
+    },
+    {
+      "action": "API URL download capped at 10 MB, then shrunk if it is an image",
+      "location": "app/controllers/uploads_controller.rb:54-56",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/uploads_controller.rb:54-56",
+        "lib/file_helper.rb:16-23",
+        "app/models/optimized_image.rb:160-169"
+      ],
+      "equivalent_path": "lib/file_helper.rb:9-26 (same FileHelper.download, previously called with SiteSetting.max_image_size_kb.kilobytes)",
+      "before_after": "Before: the cap was max_image_size_kb, for every type. After: 10 MB for every type, and images above the setting are shrunk.",
+      "visible_effect": "None directly; a remote image above the setting but under 10 MB is now shrunk and stored.",
+      "failure_mode": "FileHelper.download stops writing once the file exceeds the cap and returns the partial file with no error (lib/file_helper.rb:16-23). The partial file is then treated as complete (see finding at uploads_controller.rb:55).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Custom emoji upload enqueues resize_emoji, which calls OptimizedImage.downsize with five arguments",
+      "location": "app/jobs/regular/resize_emoji.rb:14",
+      "status": "open",
+      "evidence": [
+        "app/jobs/regular/resize_emoji.rb:14",
+        "app/models/emoji.rb:73",
+        "app/models/optimized_image.rb:145-151",
+        "app/jobs/base.rb:110-111"
+      ],
+      "equivalent_path": "app/models/optimized_image.rb:145-147 (the previous width/height downsize, now dead code)",
+      "before_after": "Before: the emoji is downsized to a 100x100 bound. After: the call raises ArgumentError before any conversion, so the emoji stays at its original size.",
+      "visible_effect": "The emoji upload succeeds but the file is not resized, so oversized emoji are stored as-is.",
+      "failure_mode": "The job exception is handled by the job runner. On the sync path it goes to Discourse.handle_job_exception (app/jobs/base.rb:110-111). I did not read the async branch, so I cannot say whether it is logged or surfaced.",
+      "open_question": "How does the async job runner handle the exception raised at resize_emoji.rb:14? It should be logged, but I did not read that branch.",
+      "candidates": [
+        "app/jobs/base.rb:140-165"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "OptimizedImage.resize and downsize calls from existing code (dimensions now built inline)",
+      "location": "app/models/optimized_image.rb:141-158",
+      "status": "closed",
+      "evidence": [
+        "app/models/optimized_image.rb:141-158",
+        "app/models/upload.rb:98",
+        "lib/letter_avatar.rb:48",
+        "lib/tasks/uploads.rake:347",
+        "app/jobs/regular/resize_emoji.rb:14"
+      ],
+      "equivalent_path": "app/models/upload.rb:98, lib/letter_avatar.rb:48, lib/tasks/uploads.rake:347 (the previous dimensions(width, height) helper, now removed)",
+      "before_after": "Before: dimensions(width, height) built \"WxH\" and optimize received it. After: resize and downsize build \"#{width}x#{height}\" inline and pass it to optimize. The string is identical, so the instructions are identical.",
+      "visible_effect": "None; the same ImageMagick or gifsicle arguments are produced.",
+      "failure_mode": "The only caller with a different arity is resize_emoji.rb:14, covered above.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed the three files in this part by reading them in full and following their callers. The most serious finding is a runtime break: the new second `OptimizedImage.downsize` definition (optimized_image.rb:149) overrides the width/height version, so the 5-argument call in resize_emoji.rb:14 raises ArgumentError and custom emoji are no longer resized. The shrink loop in uploads_controller.rb also silently flattens animated GIFs when animation is off and sends SVGs through ImageMagick. The client's fixed 10 MB limit breaks the existing JS size test (utilities-test.js.es6:52-61), which the PR does not update. Remote downloads above the cap are silently truncated and then accepted. Nothing was built or run; all claims are from reading the code. Two premises are unverified: Rack's multipart tempfile naming (relevant to the GIF path) and ImageMagick's behaviour on truncated JPEGs and SVG output.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 32,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 27,
+      "costUsd": 0.03518036
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca"
+  },
+  "execution": {
+    "costUsdEstimate": 0.03518036,
+    "usage": {
+      "input": 24,
+      "output": 35671,
+      "cacheRead": 499006,
+      "cacheWrite": 61762
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 27,
+    "durationMs": 174233,
+    "stop": "complete",
+    "notices": []
+  }
+}
