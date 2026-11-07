@@ -25,10 +25,39 @@ Same judge for every row, 50 PRs, Martian's "All" profile and counting:
 - **Wachiman finds the most.** Highest recall and the most High/Critical goldens of the four.
 - **Wachiman is loud.** Precision is the lowest of the four: 174 false positives against 57 to 91.
   That is what puts it third on F1.
-- **Where it would sit on Martian's published table** is an estimate, not a measurement: our judge
-  route scores the three reference tools 3.5 to 5.1 F1 points below Martian's stored scores. Shifted
-  by that much, Wachiman's F1 would be about 51 to 53, between bugbot (50.8) and macroscope (53.5) on
-  the stored table below, about 6th of the leading eleven, and near the top on High/Critical recall. Only Martian running the pipeline itself would settle it.
+- **Martian's site ranks by F2 on the Core profile, not F1.** F2 weighs recall four times as much
+  as precision. On that metric Wachiman's raw score (55.7, with our stricter judge) would be 6th of
+  the 22 tools on Martian's stored list. Corrected by the judge offset measured on the reference tools
+  (3.6 to 5.1 F2 points), it would be about 59 to 61: 4th or 5th, between copilot-v2 (58.0) and
+  qodo-v2 (60.6). That is an estimate, not a measurement; only Martian running the pipeline would
+  settle it. On F1 the same correction gives about 51 to 53, around 6th.
+
+## Martian's site metric: Core profile, F2
+
+Computed with Martian's own `analysis/score_profiles.py --profile core --beta 2.0`, the dashboard's
+default (`analysis/benchmark_dashboard.py`: "Tools ranked by F-beta score (default F2, recall-weighted)").
+
+Same judge for every row (ours):
+
+| Tool | Precision | Recall | F1 | **F2** | TP | FP | FN |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| augment | 55.7% | 61.4% | 58.4% | **60.2%** | 97 | 77 | 61 |
+| qodo-extended-v2 | 62.3% | 59.5% | 60.8% | **60.0%** | 94 | 57 | 64 |
+| **wachiman** | 36.7% | 63.9% | 46.7% | **55.7%** | 101 | 174 | 57 |
+| claude-code | 43.5% | 44.3% | 43.9% | **44.1%** | 70 | 91 | 88 |
+
+Martian's stored judgments, top of the list (22 tools; Wachiman is not in it):
+
+| # | Tool | F2 | | # | Tool | F2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | qodo-extended-v2 | 65.1% | | 7 | gitlab | 52.7% |
+| 2 | cubic-v2 | 64.9% | | 8 | sourcery | 51.5% |
+| 3 | augment | 64.0% | | 9 | greptile-v4-1 | 51.2% |
+| 4 | qodo-v2 | 60.6% | | 10 | coderabbit | 51.1% |
+| 5 | copilot-v2 | 58.0% | | 11 | macroscope | 50.8% |
+| 6 | gemini-v2 | 52.8% | | 13 | claude-code | 47.7% |
+
+Judge offset on F2, ours minus stored: augment −3.8, qodo-extended-v2 −5.1, claude-code −3.6.
 
 ## Martian's stored table, for reference
 

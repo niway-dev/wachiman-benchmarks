@@ -24,7 +24,9 @@ One blind run of Wachiman 1.9.0 · Opus 5.5 on Martian's 50 public PRs, every ro
 | **wachiman** | **47/66** | **63.6%** | 38.7% | 48.1% |
 | claude-code | 29/66 | 44.5% | 45.8% | 45.2% |
 
-Highest recall, lowest precision of the four. One run only; Pullfrog is not in Martian's dataset.
+Highest recall, lowest precision of the four. On the site's metric (Core, F2) Wachiman scores 55.7 with
+our stricter judge; corrected for the judge offset that is an estimated 4th or 5th of 22. One run only;
+Pullfrog is not in Martian's dataset.
 
 ## Headline (kaipu-record, five PRs)
 
