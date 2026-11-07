@@ -8,6 +8,7 @@
 #   QUEUES         review queues in parallel (default 2: two Opus sessions at a time)
 #   JUDGE_BATCH    judge calls in flight (default 8)
 #   EXTRA_ENV      extra settings for the reviews, e.g. "AGENT_REVIEW_X=1" (an arm)
+#   RAM_GB         RAM disk size for snapshots (default 6; two Discourse snapshots need about 4)
 # Needs: the installed `wachiman`, ~/.wachiman/claude-personal signed in, ANTHROPIC_API_KEY unset.
 set -u
 LABEL=$1; MODEL=${2:-claude-opus-5-5}; EFFORT=${3:-high}
@@ -27,7 +28,7 @@ log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, q
 # 1. RAM disk for wachiman's snapshots (the laptop disk is too slow: see the 2026-11-07 report)
 RAM=/Volumes/martianram
 if [ ! -d $RAM ]; then
-  D=$(hdiutil attach -nomount ram://8388608 | awk '{print $1}')   # 4 GiB
+  D=$(hdiutil attach -nomount ram://$(( ${RAM_GB:-6} * 2097152 )) | awk '{print $1}')
   diskutil erasevolume APFS martianram $D >/dev/null
 fi
 mkdir -p $RAM/tmp

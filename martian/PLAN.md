@@ -38,8 +38,31 @@ check: method, deviations, and raw data are in this directory.
 | 6 | Score with the same profiles as the published table; place next to the stored rows | `README.md` |
 
 Pilot: Cal.com, 10 PRs, 1 run. Then the other 40 PRs. Then two more runs of all 50 (replicates).
-Later: the GitHub Actions path on forked PRs (Martian's official step 0), and other arms (a refuter;
-Haiku proposer with an Opus verifier), each as its own row.
+Later: the GitHub Actions path on forked PRs (Martian's official step 0).
+
+## Planned arms (test measures)
+
+Agreed with the owner on 2026-11-07: every arm runs, one at a time, each as its own row in
+[history.md](history.md). One variable per arm. The baseline is the 2026-11-07 run (v1.9.0,
+Opus 5.5, high).
+
+| # | Arm | Variable | Built from | Question it answers | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Haiku 5.5 high alone | the review model | the product as released: `run-weekly.sh <label> claude-haiku-5-5 high` | How much recall and cost does a cheaper model give on public PRs? | running 2026-11-07 |
+| 2 | Opus 5.5 + a findings falsifier on `fix` and `consider` | a verification pass | a prototype outside the product, over this bench's candidates | Does trying to disprove each finding cut false positives without losing real bugs? | to design |
+| 3 | Haiku 5.5 high + the same falsifier | the proposer model, falsifier fixed | arms 1 and 2 | Is cheap proposer plus verifier as good as Opus, for less? | after 1 and 2 |
+| 4 | Feature-guarantee falsifier | a review mode for critical features | a design to come | Does stating a documented guarantee and trying to break it find bugs others miss? | measured on kaipu-record, not here: these PRs carry no written guarantees |
+
+Decision rules for every arm, fixed before it runs:
+
+- **Same judge route as the baseline**, and only rows judged that way are compared.
+- **A High/Critical difference of 3 or fewer is noise** for a single run; a claim needs replicates.
+- **Tuning is held out:** anything adjusted after seeing results is adjusted on Cal.com and Sentry
+  only and judged on Grafana, Keycloak and Discourse.
+- **Cost is reported with quality:** `$/PR median`, `$/golden found` and `$/High+Critical found`.
+- **The falsifier must show its evidence:** the claim, the paths it checked with lines, and the
+  counterexample or the disproof. A bare "refuted" or "corroborated" is not accepted. A finding it
+  cannot disprove is kept.
 
 ## Deviations from Martian's pipeline
 
