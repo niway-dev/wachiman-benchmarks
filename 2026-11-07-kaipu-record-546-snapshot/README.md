@@ -53,16 +53,16 @@ All verdicts stay `unverified` as to which tool found what on merit. Nothing her
 Clean replay: new empty repo (or delete Pullfrog's stored notes for this one), minimal description, same head, then
 medium once and high once, plus a repeat of one of them to measure variance. About $1 to $1.50 per run.
 
-## Cost note (owner concern, 2026-11-07)
+## Cost note (corrected the same day)
 
-Wachiman's cost is close to Pullfrog's on this PR, and the owner does not want that. Same code, same model (Opus 5.5):
+Same code, same model (Opus 5.5). The detailed, checked version is in `2026-11-07-rereview-cost-and-time/` (PR #18); this is the short form.
 
 | Reviewer | Effort | Runs | Cost to review the PR up to `93a721a` |
 | --- | --- | --- | --- |
-| Wachiman | high | 2 (whole PR $0.47, re-review $0.57) | $1.04 |
+| Wachiman (v1.8.0) | high | 2 (whole PR $0.47, re-review $0.57) | $1.04 |
 | Pullfrog | medium | 1 | $1.00 |
 | Pullfrog | high | 1 | $1.47 |
 
-Wachiman's third run (`6d2bf6a`, $0.55) is not in the table because it reviews later commits; with it the total is $1.59.
-Wachiman pays for a re-review on every push; Pullfrog's one run covered the whole PR. One PR, so this is an observation, not a measured ratio.
-To investigate in another thread: where Wachiman's per-run cost goes (cache write about 58k tokens per run, 9 to 12 turns), and whether a re-review needs the full read again.
+- Per run Wachiman costs about half of Pullfrog; per line reviewed the costs are similar. This compares two incremental runs with one read of the final diff, so it does not say which is cheaper on a live PR with many pushes.
+- Wachiman's longer wall time is mostly a fixed 180 s wait ("Wait for further pushes") before each run after the first. Review steps took 42 to 111 s.
+- Re-review cost does fall with the size of the change, to a floor near $0.27 (676 lines $0.57, 417 $0.55, 61 $0.28, 9 $0.27). An earlier version of this note said it did not; that was wrong.
