@@ -19,6 +19,10 @@ Reference tools, same judge, same 50 PRs (do not change between runs unless the 
 | augment | 46/66 | 59.0% | 57.0% | 58.0% | 60.2% |
 | claude-code | 29/66 | 44.5% | 45.8% | 45.2% | 44.1% |
 
+Planned next rows, one at a time: arm 1 (Haiku 5.5 high alone), arm 2 (Opus 5.5 + a findings
+falsifier on `fix`/`consider`), arm 3 (Haiku 5.5 high + the same falsifier). Arm 4 (feature-guarantee
+falsifier) is measured on kaipu-record. Details and decision rules: [PLAN.md](PLAN.md#planned-arms-test-measures).
+
 ## Questions each row answers
 
 - **Did a change help?** Compare F1, F2 and High/Critical with the previous row of the same model.
