@@ -5,7 +5,7 @@ ledger a later study can extend, plus a first read of the gaps.
 
 Companion to the [field run with Haiku and verifiers](../2026-11-field-kaipu/README.md) (draft #11):
 that one reruns Wachiman locally on cheaper models; this one reads what the **live CI review**
-(Wachiman v1.8.0 on Claude Opus 5.5, high effort) and **CodeRabbit** actually posted on the same PRs,
+(Claude Opus 5.5, high effort; **v1.7.0** on #534 and #535, v1.8.0 from #536 on, per the workflow runs: the review footer does not show the version) and **CodeRabbit** actually posted on the same PRs,
 and builds ground truth by hand.
 
 ## Read this first (one minute)
@@ -21,8 +21,12 @@ and builds ground truth by hand.
 - **Rerun closes the #534 gap.** Wachiman run locally on the same commit found the checkbox bug as
   🟠 Fix · bug, on the same line CodeRabbit used (see [L1](#ledger)). So **no confirmed quality miss by
   Wachiman today**; the one open candidate is C3 below, and it is unverified.
-- **Confound.** The #534 rerun used Sonnet 5.5 ($0.20), not the CI's Opus 5.5. It shows a cheaper model
+- **Confound.** The #534 rerun used Sonnet 5.5 on v1.8.0 ($0.20), not the CI's Opus 5.5 on v1.7.0. It shows a cheaper model
   finds it; it does not reproduce the CI run.
+
+## Correction (2026-11-06, later)
+
+The first version of this page said every CI review ran v1.8.0. The workflow runs say v1.7.0 for #534 and #535; the bump to v1.8.0 (#536) merged at 02:01 UTC. `scripts/pair.ts` (PR #13) reads the version from the run, which is how the mistake was found.
 
 ## Method
 
