@@ -83,7 +83,7 @@ ROW=$(python3 -I $HERE/scripts/metrics.py --reviews $RUN/reviews --evals $RUN/be
 
 # 6. Copy the raw data into the repository
 mkdir -p $DEST/data/evaluations $DEST/data/judge-calls
-cp -R $RUN/reviews $DEST/data/
+(cd $RUN && find reviews -name '*.json' -size +0 | while read f; do mkdir -p $DEST/data/${f:h}; cp $f $DEST/data/$f; done)   # not .stderr: it holds local paths
 cp $RUN/bench/results/$JD/wachiman-evaluations.json $DEST/data/evaluations/wachiman.json
 cp $RUN/judge-calls.jsonl $DEST/data/judge-calls/
 cp $RUN/metrics.json $RUN/run.log $DEST/

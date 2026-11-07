@@ -1,0 +1,714 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-4` of discourse-graphite-4 against 62db063e1e1abe691313ab42682a68f796d63769 (merge-base 62db063)",
+    "repository": {
+      "name": "discourse-graphite-4"
+    },
+    "base": {
+      "sha": "62db063e1e1abe691313ab42682a68f796d63769",
+      "ref": "62db063e1e1abe691313ab42682a68f796d63769"
+    },
+    "head": {
+      "sha": "4f8aed295a29954023b2849c060ef4fb299d1b5d",
+      "ref": "pr-4"
+    },
+    "title": "pr-4",
+    "description": "FEATURE: Embeddable Discourse comments, now with simple-rss instead of feedzirra",
+    "author": "Robin Ward"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "Gemfile",
+      "app/assets/javascripts/embed.js",
+      "app/assets/stylesheets/embed.css.scss",
+      "app/controllers/embed_controller.rb",
+      "app/jobs/regular/retrieve_topic.rb",
+      "app/jobs/scheduled/poll_feed.rb",
+      "app/models/post.rb",
+      "app/models/topic_embed.rb",
+      "app/views/embed/best.html.erb",
+      "app/views/embed/loading.html.erb",
+      "app/views/layouts/embed.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "config/site_settings.yml",
+      "db/migrate/20131210181901_migrate_word_counts.rb",
+      "db/migrate/20131217174004_create_topic_embeds.rb",
+      "db/migrate/20131219203905_add_cook_method_to_posts.rb",
+      "db/migrate/20131223171005_create_top_topics.rb",
+      "lib/post_creator.rb",
+      "lib/post_revisor.rb",
+      "lib/tasks/disqus.thor",
+      "lib/topic_retriever.rb",
+      "spec/components/topic_retriever_spec.rb",
+      "spec/controllers/embed_controller_spec.rb",
+      "spec/jobs/poll_feed_spec.rb",
+      "spec/models/topic_embed_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20131210181901_migrate_word_counts.rb",
+      "db/migrate/20131217174004_create_topic_embeds.rb",
+      "db/migrate/20131219203905_add_cook_method_to_posts.rb",
+      "db/migrate/20131223171005_create_top_topics.rb",
+      "app/assets/javascripts/embed.js",
+      "app/controllers/embed_controller.rb",
+      "app/jobs/regular/retrieve_topic.rb",
+      "app/jobs/scheduled/poll_feed.rb",
+      "app/models/post.rb",
+      "app/models/topic_embed.rb",
+      "app/views/embed/best.html.erb",
+      "app/views/embed/loading.html.erb",
+      "app/views/layouts/embed.html.erb",
+      "lib/post_creator.rb",
+      "lib/post_revisor.rb",
+      "lib/tasks/disqus.thor",
+      "lib/topic_retriever.rb",
+      "spec/components/topic_retriever_spec.rb",
+      "spec/controllers/embed_controller_spec.rb",
+      "spec/jobs/poll_feed_spec.rb",
+      "spec/models/topic_embed_spec.rb",
+      "app/assets/stylesheets/embed.css.scss",
+      "Gemfile",
+      "config/routes.rb",
+      "config/site_settings.yml",
+      "config/locales/server.en.yml",
+      "config/locales/client.en.yml"
+    ],
+    "skipped": [],
+    "excluded": 1,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/post.rb",
+      "line": 133,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "Feed and remote content is stored as unsanitized HTML and rendered raw",
+      "body": "Imported posts are created with cook_method raw_html (app/models/topic_embed.rb:22). Post#cook then returns raw and skips both the markdown/PrettyText pipeline and Plugin::Filter(:after_post_cook) (app/models/post.rb:133-136). The RSS path feeds CGI.unescapeHTML(i.content) straight into that import (app/jobs/scheduled/poll_feed.rb:35-36), so any <script> or event-handler markup in a feed item is stored as cooked. Cooked HTML is rendered unescaped in the topic page ({{{cooked}}} in app/assets/javascripts/discourse/templates/post.js.handlebars:70) and in the embed iframe, which is served from the Discourse origin (app/views/embed/best.html.erb:19 uses `raw post.cooked`). The result is stored XSS on the forum origin for every viewer. The import footer also interpolates the URL into an HTML attribute without escaping (app/models/topic_embed.rb:13), so a URL containing a single quote can break out of the href. The remote path (import_remote, topic_embed.rb:48-50) only passes Readability tag and attribute filters; nothing in this code checks href schemes, and I did not verify what ruby-readability strips. The trust assumption is that the operator's feed or embeddable host is not hostile, but the content comes from third-party pages and feed items, and nothing in the change sanitizes it. Suggested fix: run imported HTML through the existing sanitizer before storing, or drop the raw_html shortcut for feed-sourced content.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/topic_retriever.rb",
+      "line": 26,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "high",
+      "title": "Per-URL throttle lets anonymous requests trigger unlimited feed polls and HTTP fetches",
+      "body": "The throttle key is `retrieved:#{@embed_url}` (lib/topic_retriever.rb:26), so it covers the whole URL including the query string. invalid_host? checks only the host (lib/topic_retriever.rb:15), so any path or query on the embeddable host is accepted. Every distinct URL therefore gets a fresh key and goes through perform_retrieve (lib/topic_retriever.rb:40-42), which downloads and re-imports the entire feed (app/jobs/scheduled/poll_feed.rb:29-37) and then issues an HTTP GET to the embeddable host (lib/topic_retriever.rb:52, app/models/topic_embed.rb:48). Each request also enqueues a job with no dedupe (app/controllers/embed_controller.rb:15). The only gate on the controller is the Referer host check (app/controllers/embed_controller.rb:26), which any non-browser client can set. An unauthenticated client can therefore cause unbounded feed downloads and outbound requests. Suggested fix: key the throttle on the feed or host rather than the full URL, or rate-limit the enqueue.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 32,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A trashed embed post makes the feed import raise and stops the rest of the feed",
+      "body": "TopicEmbed belongs_to :post (line 5). Post includes Trashable (app/models/post.rb:16), whose default_scope hides deleted rows (lib/trashable.rb:5). The update branch does `post = embed.post` (line 32), which should be nil when the post is soft-deleted, and then calls `PostRevisor.new(post).revise!` whenever content_sha1 differs (lines 34-36). PostRevisor#should_revise? reads @post.raw (lib/post_revisor.rb:27), which raises NoMethodError on nil. PollFeed#poll_feed has no per-item rescue (app/jobs/scheduled/poll_feed.rb:31-37), so one such item aborts the loop. embed.content_sha1 is not updated, so the same failure recurs every hour and the later feed items are never imported. The failure only reaches the admin as a logged job error. I rely on Rails applying a default scope through belongs_to, which I did not check in this repository. Suggested fix: treat a nil post as not found (for example, create a new post or skip with a log line), and rescue per item.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/tasks/disqus.thor",
+      "line": 148,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Disqus threads with non-http links lose all their comments silently; nil links abort the import",
+      "body": "The import now calls TopicEmbed.import_remote(user, t[:link], ...) (line 148). TopicEmbed.import returns nil for any URL that does not match /^https?:\\/\\//, and the code then skips the comments with `if post.present?` (line 149). The loop still prints 'Creating ...' (line 144), so the comments of those threads are dropped with no error. When t[:link] is nil, open(nil) raises inside import_remote, and the loop has no rescue, so the whole import stops midway. The previous code created the topic and its comments whatever the link was. Suggested fix: fail loudly or report skipped threads by name, and rescue per thread.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/tasks/disqus.thor",
+      "line": 118,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "The --category option was removed without a replacement",
+      "body": "The method_option :category flag and the category lookup were removed (diff hunks at lines 114-143), so imported topics are no longer placed in a category, and nothing in the change mentions it. Was dropping -c intended? If yes, the Thor help and any docs should say so. If not, the category should be passed through TopicEmbed.import.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/layouts/embed.html.erb",
+      "line": 4,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "embed.css and embed.js are not precompiled, so production cannot serve the embed",
+      "body": "Production sets config.assets.compile = false (config/environments/production.rb:23). config/application.rb:61 lists the precompiled assets explicitly and does not include 'embed.css' or 'embed.js'. The embed layout requests stylesheet_link_tag 'embed' (line 4), and the embed script (app/assets/javascripts/embed.js) is never added, so it cannot be fetched from the asset pipeline by the host page. Expected result: the embed page is unstyled or errors, and embed.js 404s on the host page. I confirmed the list and the compile setting, not the exact runtime error. Suggested fix: add 'embed.css' and 'embed.js' to config.assets.precompile.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 21,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Post-process jobs are enqueued inside the outer Topic transaction",
+      "body": "PostCreator#create runs inside the Topic.transaction block at line 21, so enqueue_jobs (lib/post_creator.rb:288-298) runs before the outer transaction commits. lib/post_creator.rb:290-291 says jobs must be enqueued after the transaction for exactly this reason. If Sidekiq picks up process_post first, Jobs::ProcessPost returns without doing anything when the post is not visible yet (app/jobs/regular/process_post.rb:9-11), so oneboxes and image sizing for the imported post are silently skipped. Whether the race happens depends on timing, which I did not verify.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 24,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A post rolled back by the spam check is treated as saved",
+      "body": "When rollback_if_host_spam_detected fires, PostCreator swallows the Rollback and returns the unsaved @post (lib/post_creator.rb:222-228 and 51-87). `if post.present?` (line 24) is true for an unsaved object, so TopicEmbed.create! runs with post.id nil. The embed table has post_id NOT NULL (db/migrate/20131217174004_create_topic_embeds.rb:5), so this raises. For the feed path that aborts the whole loop, and for the retrieve path the embed is never created. The trigger needs an acting user who is not basic trust (app/models/post.rb:165-172 and lib/post_creator.rb:223), so the likelihood is low. Suggested fix: check post.persisted? or the errors before creating the embed.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/embed/loading.html.erb",
+      "line": 8,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Loading page reloads forever with no failure state",
+      "body": "The page reloads every 30 seconds (lines 8-10) for as long as no TopicEmbed exists. Several failures leave it there with no message: the embed_by_username user does not exist (lib/topic_retriever.rb:49-50 returns silently), the host is not embeddable, or the remote fetch fails in the job. The user sees 'Loading Discussion...' indefinitely, and the admin sees nothing beyond the job log. Suggested fix: show a terminal error state after a bounded number of retries, or tell the admin in the settings UI when embed_by_username is missing.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/embed_controller.rb",
+      "line": 10,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A deleted embed topic leaves a TopicEmbed row that 404s forever",
+      "body": "topic_id_for_embed returns the topic_id of any matching row (line 10), so retrieval never runs again. If that topic is later deleted, TopicView.new raises Discourse::NotFound (lib/topic_view.rb:260-264 and 300), and the iframe shows a 404 page for that URL until someone removes the TopicEmbed row by hand. No admin UI in this change clears it. Suggested fix: treat a missing or trashed topic as no embed, so the retrieve path runs again.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/controllers/embed_controller_spec.rb",
+      "line": 8,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Test 'is 404 without an embed_url' does not test a missing embed_url",
+      "body": "The example is named for a 404 on a missing embed_url, but it sends no embed_url and no host is configured (embeddable_host defaults to '' in config/site_settings.yml:354). The request therefore fails in ensure_embeddable with InvalidAccess, which is a 403 (app/controllers/application_controller.rb:86-87). The `params.require(:embed_url)` path is never exercised, and `should_not be_success` passes for any error. Suggested fix: set the host and a valid referer, then assert the 400 or 404 result for a missing param, and rename the example to match.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/jobs/poll_feed_spec.rb",
+      "line": 18,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Two guard tests pass without reaching the guard they name",
+      "body": "The examples 'requires feed_polling_url' (line 18) and 'requires embed_by_username' (line 24) never enable feed polling. feed_polling_enabled defaults to false (config/site_settings.yml:355, with no test override), so execute returns before it checks the URL or username, and poll_feed is never called for any reason. Removing either guard would not fail these examples. Suggested fix: stub feed_polling_enabled? to true in both examples, as the last example already does.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/components/topic_retriever_spec.rb",
+      "line": 27,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Throttle, feed polling and fetch paths are never exercised",
+      "body": "Every example in this file stubs retrieved_recently? or perform_retrieve, so the Redis throttle (lib/topic_retriever.rb:21-33), the feed-first branch (lines 39-43) and fetch_http (lines 48-53) have no coverage. The per-URL throttle bug in lib/topic_retriever.rb:26 would also go unnoticed. Suggested fix: add examples that use a real or stubbed $redis for setnx and cover the feed-enabled path.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/jobs/scheduled/poll_feed.rb",
+      "line": 20,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "feed_key is unused",
+      "body": "feed_key (lines 20-22) is defined but nothing in the repository calls it (the grep found only the definition). Remove it, or use it for the change detection it seems to be intended for.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/embed/best.html.erb",
+      "line": 6,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Stray `end if` in the header block",
+      "body": "Line 6 closes the if block with `<%- end if %>`. The trailing `if` is a stray modifier, and it makes the logo link's output hinge on the result of the preceding `safe_append` assignment, which is always truthy. It works today by accident. Change it to `<%- end %>`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/embed.js",
+      "line": 17,
+      "severity": "consider",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Origin check is a substring match",
+      "body": "`discourseUrl.indexOf(e.origin) === -1` accepts any origin that is a substring of discourseUrl. A page on a lookalike host such as https://forum.example.co can match https://forum.example.com/. The handler only sets iframe height, so the impact is limited to resizing the frame. Suggested fix: compare parsed origins for equality.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Remote fetch and feed download have no timeout",
+      "body": "open(url).read (line 48) and SimpleRSS.parse open(...) (poll_feed.rb:29) pass no timeout. The retrieve job also runs the whole feed import (poll_feed.rb:31-37) before the single-page fetch, and no overall deadline bounds it. When queue_jobs is off, Jobs.enqueue runs the job inline in the request (app/jobs/base.rb:85-91 and 169-172), so an anonymous GET /embed/best waits as long as the remote hosts take. I did not check the Net::HTTP defaults used by open-uri.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/jobs/scheduled/poll_feed.rb",
+      "line": 29,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Kernel#open on an admin-set URL",
+      "body": "open(SiteSetting.feed_polling_url) uses Kernel#open. For a string that does not match a scheme, open-uri falls back to Kernel#open, which on older Rubies runs a command when the string starts with '|'. The setting is admin-controlled and only checked with present?. Consider URI.parse(url).open, which cannot run commands. I did not check the Ruby version this repository targets.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/jobs/scheduled/poll_feed.rb",
+      "line": 35,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Feed item without content would abort the whole poll",
+      "body": "i.content.scrub (line 35) raises NoMethodError if SimpleRSS returns nil for an item with no content element, and the loop has no rescue (lines 31-37), so one such item stops the rest of the feed. I could not confirm how the simple-rss gem populates content for items that only have a description, because the gem source is not in the repository.",
+      "anchor": "diff"
+    },
+    {
+      "path": "db/migrate/20131217174004_create_topic_embeds.rb",
+      "line": 3,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "force: true on new and edited migrations can drop existing data",
+      "body": "create_table :topic_embeds, force: true drops and recreates the table if it already exists, so any rows in it are lost when this migration runs. The same flag was added to the already-shipped migration db/migrate/20131223171005_create_top_topics.rb:3. Editing a migration that has already run does not change databases that recorded it, and on any other database the flag drops the table. Consider removing force: true from both.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/locales/server.en.yml",
+      "line": 37,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "embed.permalink is never used",
+      "body": "The `embed.permalink` key is not referenced anywhere. The embed views use `embed.title`, `embed.start_discussion` and `embed.continue` (app/views/embed/best.html.erb:3,5,25), `embed.loading` (app/views/embed/loading.html.erb:2) and `embed.imported_from` (app/models/topic_embed.rb:13). Remove the key or use it in a view.",
+      "anchor": "diff"
+    },
+    {
+      "path": "Gemfile",
+      "line": 210,
+      "severity": "fix",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Confirm the require name for ruby-readability",
+      "body": "Gemfile:210 declares `ruby-readability` with `require: false`, and app/models/topic_embed.rb:45 loads it with `require 'ruby-readability'`. The chain is embed_controller.rb:15 (enqueues retrieve_topic for any unknown embed_url) -> app/jobs/regular/retrieve_topic.rb:17 -> lib/topic_retriever.rb:52 -> TopicEmbed.import_remote (topic_embed.rb:44-45). So this require is on the first-embed path. The repository does not contain the gem source, so I could not confirm that the 0.5.7 gem (Gemfile_rails4.lock:313) ships a lib/ruby-readability.rb entry point. If it does not, the LoadError would stop every first-time embed, and the iframe would show 'Loading Discussion...' indefinitely. Can you confirm that `require 'ruby-readability'` loads the gem in this bundle?",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/site_settings.yml",
+      "line": 354,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "embeddable_host accepts values that can never match the referer host",
+      "body": "`embeddable_host` has no validation, and the description (config/locales/server.en.yml:768) asks for a host. EmbedController compares the raw setting with `URI(request.referer).host` (app/controllers/embed_controller.rb:26). A value with a scheme, such as `https://blog.example.com`, or with a port never equals that host, so every embed request raises InvalidAccess (embed_controller.rb:25-26). The admin is not told what went wrong. Consider normalising the value (strip scheme, port and path) or validating it on save. I have not read how InvalidAccess is rendered, so how visible the failure is to the admin is unconfirmed.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/locales/server.en.yml",
+      "line": 769,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Feed polling needs three settings, and the descriptions do not say so",
+      "body": "PollFeed does nothing unless `feed_polling_enabled`, `feed_polling_url` and `embed_by_username` are all set (app/jobs/scheduled/poll_feed.rb:15-17). It also returns silently when no user matches `embed_by_username` (poll_feed.rb:25-26). The descriptions at server.en.yml:769-771 each describe one setting on its own, so enabling the feed without the other two produces no import and no message. Consider saying in the description that all three are required, and that the username must already exist.",
+      "anchor": "diff"
+    },
+    {
+      "path": "Gemfile",
+      "line": 209,
+      "severity": "info",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "No feedzirra dependency exists in the base or head Gemfile",
+      "body": "The PR title says simple-rss replaces feedzirra. The Gemfile diff only adds lines, and no `feedzirra` string appears anywhere in the checked-out snapshot, so there was no feedzirra gem to replace in this diff. The swap is not visible in these files.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GET /embed/best renders the top five posts when a TopicEmbed exists",
+      "location": "app/controllers/embed_controller.rb:8-13",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/embed_controller.rb:10-13",
+        "lib/topic_view.rb:12-15",
+        "lib/topic_view.rb:109",
+        "lib/topic_view.rb:260-264",
+        "lib/topic_view.rb:300",
+        "app/views/embed/best.html.erb:11-19"
+      ],
+      "equivalent_path": "lib/topic_view.rb:12-15",
+      "before_after": "TopicView.new(topic_id, current_user, {best: 5}) runs for the logged-in or anonymous user; the view then renders each post's cooked HTML with `raw`.",
+      "visible_effect": "The iframe shows up to five posts, each linking to the topic.",
+      "failure_mode": "If the topic was deleted or is not visible, TopicView raises Discourse::NotFound, so the iframe shows a 404 page for that URL (see the TopicEmbed finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Loading page reloads every 30 seconds until an embed exists",
+      "location": "app/views/embed/loading.html.erb:6-12",
+      "status": "open",
+      "evidence": [
+        "app/views/embed/loading.html.erb:8-10",
+        "app/controllers/embed_controller.rb:15-19",
+        "app/controllers/application_controller.rb:168-171"
+      ],
+      "equivalent_path": "app/controllers/embed_controller.rb:15-19",
+      "before_after": "The action enqueues the job, then renders 'loading', then calls discourse_expires_in 1.minute. The cache call comes after render, unlike TopicsController which calls it before rendering.",
+      "visible_effect": "The user sees 'Loading Discussion...' and the page reloads every 30 s.",
+      "failure_mode": "If the job never creates an embed, the iframe reloads indefinitely with no message.",
+      "open_question": "Does the anonymous cache (Middleware::AnonymousCache.anon_cache, keyed by request) return the cached loading page on the 30-second reload? Read the middleware and its cache key.",
+      "candidates": [
+        "lib/middleware/anonymous_cache.rb"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Enqueue retrieve_topic from the embed action when no embed exists",
+      "location": "app/controllers/embed_controller.rb:15",
+      "status": "open",
+      "evidence": [
+        "app/controllers/embed_controller.rb:15-16",
+        "app/jobs/base.rb:85-91",
+        "app/jobs/base.rb:153-173",
+        "app/jobs/base.rb:102-132",
+        "config/site_settings.yml:348-351"
+      ],
+      "equivalent_path": "app/models/post.rb:374",
+      "before_after": "Post#trigger_post_process calls Jobs.enqueue(:process_post, args) and returns. The embed action enqueues and renders the loading page. Neither wraps the call in a transaction, and neither dedupes.",
+      "visible_effect": "The loading page is shown until the job finishes.",
+      "failure_mode": "When queue_jobs is off, Jobs.enqueue runs the job inline, so its exceptions reach the request. When it is on, job exceptions are captured by the job runner (app/jobs/base.rb:102-132), and whether they are surfaced beyond the log is not confirmed.",
+      "open_question": "Confirm how the job runner reports an exception raised in the async path (log only, or a visible state).",
+      "candidates": [
+        "app/jobs/base.rb"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Anonymous request starts a feed poll and an HTTP fetch for an unknown URL",
+      "location": "lib/topic_retriever.rb:26-30",
+      "status": "closed",
+      "evidence": [
+        "lib/topic_retriever.rb:9",
+        "lib/topic_retriever.rb:15",
+        "lib/topic_retriever.rb:26-30",
+        "lib/topic_retriever.rb:40-42",
+        "lib/topic_retriever.rb:45-46",
+        "lib/topic_retriever.rb:52",
+        "app/controllers/embed_controller.rb:15",
+        "app/controllers/embed_controller.rb:26"
+      ],
+      "equivalent_path": "lib/topic_retriever.rb:40-42",
+      "before_after": "The throttle key is set with setnx and expired after 60 s, but only for the exact URL. A new URL skips the throttle and runs perform_retrieve, which polls the feed and fetches the page.",
+      "visible_effect": "Nothing is visible to the requester apart from the loading page.",
+      "failure_mode": "Unbounded feed downloads and outbound requests from unauthenticated requests (see the throttle finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Import creates a post via PostCreator with skip_validations and raw_html",
+      "location": "app/models/topic_embed.rb:22",
+      "status": "closed",
+      "evidence": [
+        "app/models/topic_embed.rb:21-29",
+        "lib/post_creator.rb:79-81",
+        "lib/post_creator.rb:216",
+        "lib/post_creator.rb:223-236"
+      ],
+      "equivalent_path": "app/services/group_message.rb:31",
+      "before_after": "Sibling PostCreator calls leave validations on, so SpamRulesEnforcer runs. With skip_validations: true, both the spam enforcement and the save validation are skipped. cook_method is set in setup_post.",
+      "visible_effect": "The imported post is saved without validation and without spam enforcement.",
+      "failure_mode": "A spam rollback returns an unsaved post, which then raises in TopicEmbed.create! (see the post.present? finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Update an existing imported post via PostRevisor with skip_validations and bypass_rate_limiter",
+      "location": "app/models/topic_embed.rb:36",
+      "status": "closed",
+      "evidence": [
+        "app/models/topic_embed.rb:32-37",
+        "lib/post_revisor.rb:27",
+        "lib/post_revisor.rb:53-54",
+        "lib/post_revisor.rb:85"
+      ],
+      "equivalent_path": "lib/post_revisor.rb:11-22",
+      "before_after": "A normal edit runs EditRateLimiter.performed! (post_revisor.rb:53) and validates on save (post_revisor.rb:85). This call skips both, but bump_topic still runs (post_revisor.rb:54), so the topic is bumped on every feed change.",
+      "visible_effect": "The post content is replaced and the topic moves up in lists when the feed changes.",
+      "failure_mode": "A soft-deleted embed post gives a nil post, and PostRevisor raises (see the trashed post finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Post#cook returns raw for raw_html posts",
+      "location": "app/models/post.rb:133-136",
+      "status": "closed",
+      "evidence": [
+        "app/models/post.rb:133-136",
+        "app/models/post.rb:319-322",
+        "app/models/post.rb:63-64",
+        "app/views/embed/best.html.erb:19",
+        "app/assets/javascripts/discourse/templates/post.js.handlebars:70"
+      ],
+      "equivalent_path": "app/models/post.rb:136",
+      "before_after": "The regular branch runs post_analyzer.cook and then Plugin::Filter.apply(:after_post_cook). The raw_html branch returns raw and skips both, so no sanitizing and no plugin filters run.",
+      "visible_effect": "Stored HTML is served as cooked and rendered unescaped.",
+      "failure_mode": "Stored XSS on the forum origin (see the blocker finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "cook_method default for existing posts",
+      "location": "db/migrate/20131219203905_add_cook_method_to_posts.rb:3",
+      "status": "closed",
+      "evidence": [
+        "db/migrate/20131219203905_add_cook_method_to_posts.rb:3",
+        "app/models/post.rb:63-64",
+        "lib/enum.rb:14-16"
+      ],
+      "equivalent_path": "lib/enum.rb:10-16",
+      "before_after": "The enum starts at 1, so regular is 1 and raw_html is 2. The column default of 1 means every existing post is regular and is cooked as before.",
+      "visible_effect": "None for existing posts.",
+      "failure_mode": "None.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Disqus import creates one topic per thread from the remote link",
+      "location": "lib/tasks/disqus.thor:148-149",
+      "status": "closed",
+      "evidence": [
+        "lib/tasks/disqus.thor:143-149",
+        "lib/tasks/disqus.thor:174",
+        "app/models/topic_embed.rb:11",
+        "lib/post_creator.rb:218"
+      ],
+      "equivalent_path": "lib/tasks/disqus.thor:174",
+      "before_after": "Before: PostCreator with a permalink as raw and created_at set. After: the link is fetched and imported. Comments are still created with PostCreator and with created_at, but the topic no longer gets created_at.",
+      "visible_effect": "Topics now hold remote page content and get the import-time date.",
+      "failure_mode": "A non-http link silently drops that thread's comments, and a nil link or network error stops the whole import (see the Disqus findings).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Remote fetch and feed download inside the import jobs",
+      "location": "app/models/topic_embed.rb:48",
+      "status": "open",
+      "evidence": [
+        "app/models/topic_embed.rb:48",
+        "app/jobs/scheduled/poll_feed.rb:29-37",
+        "lib/topic_retriever.rb:40-46",
+        "lib/topic_retriever.rb:52",
+        "app/jobs/base.rb:85-91"
+      ],
+      "equivalent_path": "app/jobs/scheduled/poll_feed.rb:29",
+      "before_after": "Neither call passes a timeout. Both sit in a job; the retrieve path also runs the full feed import before the single-page fetch.",
+      "visible_effect": "The loading page stays up for as long as the fetch and import take. Inline execution (queue_jobs off) holds the request open.",
+      "failure_mode": "No deadline bounds the whole retrieve run; the wait is limited only by the library defaults.",
+      "open_question": "What are the open-uri and Net::HTTP default open and read timeouts in the Ruby version this repository runs on?",
+      "candidates": [
+        "Gemfile.lock"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Embed page sets X-Frame-Options to ALLOWALL",
+      "location": "app/controllers/embed_controller.rb:28",
+      "status": "open",
+      "evidence": [
+        "app/controllers/embed_controller.rb:28",
+        "config/initializers/11-rack-protection.rb:3"
+      ],
+      "equivalent_path": "config/initializers/11-rack-protection.rb:3",
+      "before_after": "The controller writes a non-standard value after referer validation. Rack::Protection::FrameOptions also runs as middleware.",
+      "visible_effect": "Framing is allowed if the value that wins is not a recognised one.",
+      "failure_mode": "None found.",
+      "open_question": "Does rack-protection's FrameOptions keep an existing X-Frame-Options header or overwrite it? Check the gem version in Gemfile.lock.",
+      "candidates": [
+        "Gemfile.lock"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Parent page receives height messages from the embed iframe",
+      "location": "app/assets/javascripts/embed.js:15-25",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/embed.js:15-25",
+        "app/views/layouts/embed.html.erb:8-13"
+      ],
+      "equivalent_path": "app/views/layouts/embed.html.erb:8-13",
+      "before_after": "The embed layout posts its body height to the parent when the window loads. The parent accepts messages only when the origin is a substring of discourseUrl.",
+      "visible_effect": "The iframe height changes to match its content.",
+      "failure_mode": "A lookalike origin can set the iframe height (see the origin finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Post-process job enqueued inside the outer Topic transaction",
+      "location": "app/models/topic_embed.rb:21-30",
+      "status": "open",
+      "evidence": [
+        "app/models/topic_embed.rb:21-30",
+        "lib/post_creator.rb:288-298",
+        "app/jobs/regular/process_post.rb:9-11"
+      ],
+      "equivalent_path": "lib/post_creator.rb:288-298",
+      "before_after": "PostCreator's comment says jobs must be enqueued after the transaction commits. Here the call runs inside the outer Topic.transaction, so the enqueue happens before commit.",
+      "visible_effect": "Post processing (oneboxes, image sizes) may be skipped for the new post.",
+      "failure_mode": "The job returns early when the post is not yet visible (app/jobs/regular/process_post.rb:9-11).",
+      "open_question": "Can Sidekiq pick up process_post before the outer transaction commits under real load? That depends on timing, which the code does not settle.",
+      "candidates": [
+        "config/initializers/sidekiq.rb"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "New public GET route /embed/best to EmbedController#best",
+      "location": "config/routes.rb:245",
+      "status": "open",
+      "evidence": [
+        "config/routes.rb:245",
+        "config/routes.rb:266",
+        "app/controllers/embed_controller.rb:2-6",
+        "app/controllers/embed_controller.rb:8-20",
+        "app/controllers/embed_controller.rb:24-31",
+        "app/views/embed/loading.html.erb:2",
+        "app/views/embed/loading.html.erb:6-11",
+        "app/views/layouts/embed.html.erb:11"
+      ],
+      "equivalent_path": "config/routes.rb:266 (get \"t/:slug/:topic_id\" => \"topics#show\")",
+      "before_after": "Topic pages render through topics#show in the main app layout, with check_xhr and preload_json. The embed route skips both (app/controllers/embed_controller.rb:2-3), adds ensure_embeddable (embed_controller.rb:4), and uses its own layout (embed_controller.rb:6). It builds TopicView directly (embed_controller.rb:13) instead of reusing topics#show.",
+      "visible_effect": "The iframe shows the posts, or 'Loading Discussion...' (app/views/embed/loading.html.erb:2) that reloads the page after 30 seconds (loading.html.erb:6-11). The layout posts its height to the parent with the referer as target origin (app/views/layouts/embed.html.erb:11).",
+      "failure_mode": "A blank embeddable_host, or a referer host that does not match, raises Discourse::InvalidAccess (embed_controller.rb:25-26). A malformed referer raises the same error (embed_controller.rb:29-30). A missing embed_url raises through params.require (embed_controller.rb:9).",
+      "open_question": "How InvalidAccess renders for this controller (status code, layout, what the iframe shows). Also whether discourse_expires_in 1.minute (embed_controller.rb:19) keeps a cached loading page for the 30-second reload.",
+      "candidates": [
+        "app/controllers/application_controller.rb",
+        "app/controllers/embed_controller.rb"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Four new site settings in the 'embedding' category (embeddable_host, feed_polling_enabled, feed_polling_url, embed_by_username)",
+      "location": "config/site_settings.yml:353-357",
+      "status": "closed",
+      "evidence": [
+        "config/site_settings.yml:223-227",
+        "config/site_settings.yml:353-357",
+        "config/locales/client.en.yml:1477",
+        "config/locales/server.en.yml:768-771",
+        "app/controllers/embed_controller.rb:25-26",
+        "app/jobs/scheduled/poll_feed.rb:15-17",
+        "app/jobs/scheduled/poll_feed.rb:25-26"
+      ],
+      "equivalent_path": "config/site_settings.yml:223-227 (pop3s_polling_* settings, same shape, disabled by default)",
+      "before_after": "No setting existed before. Each is read when used: embeddable_host by EmbedController (embed_controller.rb:25-26), the three feed settings by PollFeed on each hourly run (poll_feed.rb:15-17). None is marked client: true, so none is sent to the browser.",
+      "visible_effect": "Admin Settings shows an 'Embedding' tab (config/locales/client.en.yml:1477) with the descriptions at config/locales/server.en.yml:768-771.",
+      "failure_mode": "embeddable_host is not validated, so a value with a scheme or port never equals the referer host (embed_controller.rb:26), and every embed request is rejected. feed_polling_enabled with a missing embed_by_username or feed_polling_url is a silent no-op (poll_feed.rb:15-17), and an unknown username returns silently (poll_feed.rb:25-26).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Two gems added with require: false, loaded lazily by feed polling and remote topic import",
+      "location": "Gemfile:210-211",
+      "status": "open",
+      "evidence": [
+        "Gemfile:23-26",
+        "Gemfile:204-211",
+        "Gemfile_rails4.lock:313",
+        "app/controllers/embed_controller.rb:15",
+        "app/jobs/regular/retrieve_topic.rb:17",
+        "lib/topic_retriever.rb:52",
+        "app/models/topic_embed.rb:44-45",
+        "app/jobs/scheduled/poll_feed.rb:28-29"
+      ],
+      "equivalent_path": "Gemfile:204-207 (other require: false gems loaded on demand)",
+      "before_after": "Boot is unchanged. The gems load only at poll_feed.rb:28 (simple-rss) and topic_embed.rb:45 (ruby-readability).",
+      "visible_effect": "None on boot. First-time embeds depend on ruby-readability through lib/topic_retriever.rb:52 and topic_embed.rb:44-45.",
+      "failure_mode": "If the require name does not match the gem's load path, a LoadError is raised inside the retrieve_topic job (app/jobs/regular/retrieve_topic.rb:17). The job does not create the topic, and the iframe keeps showing 'Loading Discussion...' because loading.html.erb reloads the same placeholder.",
+      "open_question": "Does the ruby-readability 0.5.7 gem provide a load path that makes require 'ruby-readability' (topic_embed.rb:45) succeed? The gem source is not in the repository, so this cannot be checked here.",
+      "candidates": [
+        "Gemfile_rails4.lock",
+        "app/models/topic_embed.rb"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Admin category label 'Embedding' for the new settings category",
+      "location": "config/locales/client.en.yml:1477",
+      "status": "closed",
+      "evidence": [
+        "config/locales/client.en.yml:1475",
+        "config/locales/client.en.yml:1477",
+        "config/site_settings.yml:327",
+        "config/site_settings.yml:353"
+      ],
+      "equivalent_path": "config/locales/client.en.yml:1475 (rate_limits label for the rate_limits category in config/site_settings.yml:327)",
+      "before_after": "Adds a label for the new category. The category name is the key under which the settings sit (config/site_settings.yml:353).",
+      "visible_effect": "The Admin Settings category tab reads 'Embedding'.",
+      "failure_mode": "Without this key the tab would show the raw key. The key is present at the same nesting level as its siblings.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New embed strings for the iframe views and the imported-topic footer",
+      "location": "config/locales/server.en.yml:32-38",
+      "status": "closed",
+      "evidence": [
+        "config/locales/server.en.yml:30",
+        "config/locales/server.en.yml:32-38",
+        "app/views/embed/best.html.erb:3",
+        "app/views/embed/best.html.erb:5",
+        "app/views/embed/best.html.erb:25",
+        "app/views/embed/loading.html.erb:2",
+        "app/models/topic_embed.rb:13"
+      ],
+      "equivalent_path": "config/locales/server.en.yml:30 (top-level message strings in the same file)",
+      "before_after": "New keys only. Each used key is looked up by a view or by topic_embed.rb. embed.permalink (line 37) is not used.",
+      "visible_effect": "Header and footer button labels on the embed page (best.html.erb:3,5,25), the loading text (loading.html.erb:2), and the 'Imported from' footer on imported topics (topic_embed.rb:13).",
+      "failure_mode": "A missing key would show a translation-missing span. All used keys are defined.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 1.** Part 1 of the pull request adds the topic-embedding feature: the embed controller, retrieval job, RSS poller, TopicEmbed model, views, and the Disqus import rewrite. The main problem is a stored-XSS path. Imported feed and remote content is stored with cook_method raw_html, which skips the sanitizing pipeline, and then rendered unescaped on the topic page and in the embed iframe (blocker). Other findings: an unauthenticated per-URL throttle bypass that triggers unlimited feed polls and fetches; a trashed embed post that stops the feed import; Disqus threads with non-http links silently losing comments; imported topics losing their original created_at; embed.css and embed.js missing from the production precompile list; and several test and cleanup issues. The config YAML files, routes.rb, site_settings.yml and Gemfile were checked only through their diff hunks and targeted greps, not read in full, so they are not in files_reviewed, and I made no findings on them. Nothing was built or run.\n\n**Batch 1 of 1, retry.** Reviewed the five files in this part (Gemfile, config/routes.rb, config/site_settings.yml, config/locales/server.en.yml, config/locales/client.en.yml). I read each in full and followed their references into the embed controller, views, jobs and TopicEmbed to check the route, settings and locale keys. The strongest concern is a require name for ruby-readability that I could not confirm from the repository, and it sits on the first-embed path (finding 2). The other findings are a locale key that is never used, a settings description that omits required companions, a host setting with no normalisation, and a lockfile that does not list the new gems. The PR title's 'instead of feedzirra' has nothing to replace in this diff. I did not run or build anything. Open contract questions: how InvalidAccess renders for the embed controller, and whether the 1-minute cache header affects the 30-second loading reload.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 27,
+      "lines": 659,
+      "maxRisk": 6,
+      "status": "reviewed after a retry",
+      "turns": 78,
+      "costUsd": 0.35899248000000006
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "62db063e1e1abe691313ab42682a68f796d63769"
+  },
+  "execution": {
+    "costUsdEstimate": 0.35899248000000006,
+    "usage": {
+      "input": 38,
+      "output": 128694,
+      "cacheRead": 1442080,
+      "cacheWrite": 249498
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 78,
+    "durationMs": 579164,
+    "stop": "complete",
+    "notices": []
+  }
+}

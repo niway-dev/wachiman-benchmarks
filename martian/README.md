@@ -52,7 +52,7 @@ EXTRA_ENV="AGENT_REVIEW_X=1" caffeinate -i scripts/run-weekly.sh <label>    # an
 
 It runs two review queues at a time (two Opus sessions) and at most eight judge calls in flight,
 then writes `runs/<label>/` and prints the row for [history.md](history.md). About 1.5 hours.
-It was assembled from the steps of the 2026-11-07 run; its first end-to-end use is the next run.
+First used end to end for arm 1 on 2026-11-07: 50 of 50 reviews on the first attempt, no judge errors, about 3 h 10 min with Haiku.
 
 **Bootstrap the cache** (`~/.cache/wachiman-martian`, once per machine): clone Martian's benchmark
 into `martian-upstream/`, create `venv/` with `openai tqdm aiohttp requests`, then
