@@ -275,7 +275,16 @@ export function parseWachimanReview(body: string): WachimanReview | null {
   const partial = /Partial review\*\*: the agent reviewed (\d+) of (\d+) files of (.+?), at `([0-9a-f]+)`/.exec(body);
   const count = /(\d+) finding\(s\)(?:: [^;\n]*)?; (\d+) on their lines/.exec(body);
   const countLine = /^.*finding\(s\).*$/m.exec(body)?.[0] ?? "";
-  const sub = /<sub>(.+?) via ([^·<]+?)(?: · effort (\w+))?(?: · (\d+) batches)? · \$([\d.]+)<\/sub>/.exec(body);
+  // Footer: `<model> via <runtime> · effort <e> · [<mode> · <usage> ·] [N batches ·] $<cost>`. v1.8 adds the
+  // mode and a usage line between the effort and the cost, so each field is read on its own.
+  const subText = /<sub>(.+?)<\/sub>/.exec(body)?.[1] ?? "";
+  const subParts = subText.split(" · ");
+  const sub = subText.includes(" via ") && /\$[\d.]+$/.test(subText)
+    ? [subText, subParts[0]!.split(" via ")[0]!, subParts[0]!.split(" via ")[1] ?? "",
+       /^effort (\w+)$/.exec(subParts.find((x) => x.startsWith("effort ")) ?? "")?.[1],
+       /^(\d+) batches$/.exec(subParts.find((x) => / batches$/.test(x)) ?? "")?.[1],
+       /\$([\d.]+)$/.exec(subText)![1]] as (string | undefined)[]
+    : null;
   const { header, contracts, hidden } = parseContracts(body);
   const batches: BatchRow[] = [];
   for (const row of body.matchAll(/^\| (Batch [^|]+?) \| (\d+) \| (\d+) \| (\d+) \| ([^|]+?) \| (\d+) \| \$([\d.]+) \|$/gm)) {
