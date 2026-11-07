@@ -10,6 +10,7 @@
 - **Found by both:** the screenshot zoom-out that enlarges and crops tall images (#543, verified) and the history arrows missing pushes while unmounted (#545, owner-accepted).
 - **Basis:** all rows are `live`; no laptop reruns. Wachiman version seen: v1.8.0 on every row (Claude Opus 5.5, high effort), from `pairs.csv`.
 - **Judge:** claude-sonnet-5-5.
+- **Every number, with its source file, formula and limits:** [`INDICATORS.md`](INDICATORS.md), generated from the CSVs by `scripts/indicators.ts`.
 
 ## Pairs
 
