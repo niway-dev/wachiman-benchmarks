@@ -88,6 +88,8 @@ export interface SpecialCase {
   commit: string;
   tool: Tool;
   status: ReviewRecord["status"] | "unpaired";
+  /** Wachiman only: the engine version of that review, so a special case still says what ran. */
+  version: string;
   reason: string;
   /** What would make it comparable. */
   action: string;
@@ -251,12 +253,12 @@ export function pair(all: { reviews: ReviewRecord[]; findings: FindingRecord[] }
     }
     for (const r of reviews) {
       if (r.status !== "completed") {
-        specials.push({ pr, commit: r.commit, tool: r.tool, status: r.status, reason: r.reason, action: actionFor(r.status, r.tool) });
+        specials.push({ pr, commit: r.commit, tool: r.tool, status: r.status, version: r.version, reason: r.reason, action: actionFor(r.status, r.tool) });
       } else if (!paired.has(r.commit)) {
         const otherTool: Tool = r.tool === "wachiman" ? other : "wachiman";
         const otherTried = reviews.some((x) => x.tool === otherTool && x.commit === r.commit);
         specials.push({
-          pr, commit: r.commit, tool: r.tool, status: "unpaired",
+          pr, commit: r.commit, tool: r.tool, status: "unpaired", version: r.version,
           reason: otherTried ? `${otherTool} did not complete at this commit` : `${otherTool} never reviewed this commit`,
           action: `rerun ${otherTool} at this commit (basis: rerun), or replay the commit`,
         });
@@ -305,7 +307,7 @@ export function readFixture(dir: string): RawPr {
 }
 
 export const PAIR_COLUMNS = ["pr", "commit", "wachiman_review", "wachiman_version", "wachiman_model", "wachiman_effort", "wachiman_cost_usd", "wachiman_findings", "other_tool", "other_review", "other_findings", "minutes_apart"] as const;
-export const SPECIAL_COLUMNS = ["pr", "commit", "tool", "status", "reason", "action"] as const;
+export const SPECIAL_COLUMNS = ["pr", "commit", "tool", "status", "version", "reason", "action"] as const;
 export const REVIEW_COLUMNS = ["pr", "tool", "commit", "review_id", "submitted_at", "status", "reason", "scope", "version", "model", "effort", "cost_usd", "findings", "url"] as const;
 export const FINDING_COLUMNS = ["id", "pr", "tool", "commit", "comparison", "review_id", "comment_id", "placement", "path", "line", "severity", "topic", "confidence", "native_severity", "native_category", "native_tags", "title", "url"] as const;
 
@@ -325,8 +327,8 @@ export function summaryMarkdown(repo: string, other: Other, pairs: PairRow[], sp
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...pairs.map((p) => `| #${p.pr} | \`${short(p.commit)}\` | ${p.wachiman_version || "?"} | ${p.wachiman_model} · ${p.wachiman_effort} | ${money(p.wachiman_cost_usd)} | ${p.wachiman_findings} | ${p.other_findings} | ${p.minutes_apart} |`),
     "", "## Special cases (not compared)", "",
-    "| PR | Commit | Tool | Status | Reason | What would make it comparable |", "| --- | --- | --- | --- | --- | --- |",
-    ...specials.map((s) => `| #${s.pr} | \`${short(s.commit)}\` | ${s.tool} | ${s.status} | ${s.reason} | ${s.action} |`),
+    "| PR | Commit | Tool | Status | Version | Reason | What would make it comparable |", "| --- | --- | --- | --- | --- | --- | --- |",
+    ...specials.map((s) => `| #${s.pr} | \`${short(s.commit)}\` | ${s.tool} | ${s.status} | ${s.version} | ${s.reason} | ${s.action} |`),
     "",
   ].join("\n");
 }
