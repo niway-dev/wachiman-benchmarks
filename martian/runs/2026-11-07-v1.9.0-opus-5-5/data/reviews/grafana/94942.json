@@ -1,0 +1,143 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of 94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions always returns false; the flag lookup does nothing and the variable name says the opposite",
+      "body": "Both branches of `enableSqlExpressions` return `false`, so the `sqlExpressions` toggle has no effect. The local variable `enabled` holds `!IsEnabledGlobally(FlagSqlExpressions)`, which is the opposite of what its name says. Since the PR's aim is to turn SQL expressions off completely, this reads like a half-finished gate. Someone who later enables the flag will expect it to work, and it won't. Either drop the helper and return the error directly with a comment explaining why (the go-duck backend was removed), or write the helper as `return h.features.IsEnabledGlobally(featuremgmt.FlagSqlExpressions)` once a backend exists again.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql_command.go",
+      "line": 30,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Legacy parse path still reaches the stub and reports SQL expressions as invalid SQL",
+      "body": "The new gate in `ReadQuery` only runs when `FlagExpressionParser` is on (`pkg/expr/nodes.go:123`). Otherwise `buildCMDNode` calls `UnmarshalSQLCommand` (`pkg/expr/nodes.go:160`), which calls `NewSQLCommand` → `sql.TablesList`. That now always fails, because `RunCommands` is a stub (`pkg/expr/sql/db.go:16-18`). Two things follow:\n- `pkg/expr/sql/parser.go:28` logs the user's raw SQL at Error level on every request.\n- The user gets the BadRequest \"error reading SQL command\", which suggests their query is wrong when the feature is actually disabled.\n\nThe feature still ends up disabled, so the fix is only to make both paths fail the same way, for example by returning the same \"not implemented\" error at the start of `NewSQLCommand` or `UnmarshalSQLCommand`.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "ReadQuery for type \"sql\" now returns an error before parsing",
+      "location": "pkg/expr/reader.go:128-132",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:194-200",
+        "pkg/expr/nodes.go:123-146",
+        "pkg/expr/nodes.go:159-166",
+        "pkg/expr/sql_command.go:25-36",
+        "pkg/expr/sql/parser.go:22-30",
+        "pkg/expr/sql/db.go:16-18"
+      ],
+      "equivalent_path": "Legacy parse path buildCMDNode → UnmarshalSQLCommand (pkg/expr/nodes.go:159-160), used when FlagExpressionParser is off",
+      "before_after": "Reader path: returns \"sqlExpressions is not implemented\" no matter how the flag is set. Legacy path: never checks a flag, calls NewSQLCommand → sql.TablesList → stub RunCommands, logs the raw SQL at Error level and returns BadRequest \"error reading SQL command\".",
+      "visible_effect": "Any query or alert that has an SQL expression fails with an error. The message depends on which parser is active.",
+      "failure_mode": "Not silent: both paths return errors. The legacy-path message points at the user's SQL instead of the disabled feature.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand.Execute uses the stub sql.NewInMemoryDB().QueryFramesInto",
+      "location": "pkg/expr/sql_command.go:96-105",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:30-36",
+        "pkg/expr/sql_command.go:100-105",
+        "pkg/expr/sql/db.go:20-22"
+      ],
+      "equivalent_path": "Previously duck.NewInMemoryDB().QueryFramesInto",
+      "before_after": "The stub always returns \"not implemented\". Execute logs it and sets rsp.Error. In practice this code can't be reached, because NewSQLCommand already fails in TablesList.",
+      "visible_effect": "If it were reached, the user would see the error in the expression's result.",
+      "failure_mode": "The error is returned in rsp.Error and logged, so it is not silent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR does what its body says: it removes go-duck and turns off SQL expressions. Nothing blocks the merge, and I found two small points to consider.\n\n**What I checked:**\n- No `.go` or `go.mod` file still references go-duck or the other dependencies the PR drops.\n- `FlagSqlExpressions` exists in `pkg/services/featuremgmt/toggles_gen.go`.\n- The tests that call `NewSQLCommand` or `TablesList` already call `t.Skip()`, so the stubs don't break them.\n\n**Findings (both \"consider\"):**\n1. **The flag gate is a no-op.** `enableSqlExpressions` in `pkg/expr/reader.go` returns `false` on both branches, so the `sqlExpressions` flag has no effect. Its local variable `enabled` also holds the opposite of what the name says.\n2. **The two parse paths fail differently.** When `FlagExpressionParser` is off, SQL expressions go through the legacy path (`nodes.go` → `UnmarshalSQLCommand` → `TablesList`). They still fail there, but the user's raw SQL is logged at Error level and the user sees \"error reading SQL command\" instead of \"not implemented\".",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.5031266
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5031266,
+    "usage": {
+      "input": 18,
+      "output": 5816,
+      "cacheRead": 296593,
+      "cacheWrite": 40927
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 69706,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of 103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 116,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Denial cache key omits identity type, so an anonymous denial wrongly denies the renderer",
+      "body": "`userPermDenialCacheKey` is built from `checkReq.UserUID` and does not include `checkReq.IdentityType`. Both anonymous and renderer subjects use UID `0` (`anonymous:0` and `render:0`, see service_test.go:803 and service_test.go:853), so both end up with the same key, `<ns>.perm_0_<action>_<name>_<folder>`.\n\nHere is how it breaks. An anonymous Viewer is denied `dashboards:read` on dashboard X in folder F, which stores the denial at line 154. For the next 30s, a renderer Check for the same X/F hits the denial cache at line 117 and returns `Allowed: false`. That happens before `getRendererPermissions` (line 446) is reached, even though that function always grants `dashboards:read`. Image rendering then fails, and no error explains why. The reverse also happens: when the renderer is denied an action, anonymous is denied it too.\n\nFix: put the identity type in the denial key, e.g. `userPermDenialCacheKey(ns, string(idType)+\":\"+uid, …)`, or skip the denial cache for `TypeRenderService`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/cache.go",
+      "line": 31,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Ambiguous `_` separator lets different (name, folder) pairs share a denial entry",
+      "body": "The key joins `name` and `parent` with `_`, but Grafana dashboard and folder UIDs can contain `_`. So `(name=\"a_b\", folder=\"c\")` and `(name=\"a\", folder=\"b_c\")` both produce `…_a_b_c`. A denial cached for the first pair silently denies the second for `shortCacheTTL` (30s), even when the user has access to it.\n\nFix: use a separator that cannot appear in UIDs, or length-prefix or escape the components. Medium confidence because I did not re-check the UID charset validation in this snapshot.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 982,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "\"explicit cache deny\" test passes even with the denial cache removed",
+      "body": "The comment says the cached permission allows access \"to prove this is not checked\", but the map value is `false`. `checkPermission` treats a scope as granted only when `scopeMap[scope]` is true (service.go:558). Without the denial cache, the flow would go like this:\n- the cached perms deny the request;\n- `checkInheritedPermissions` finds no folders, because `fakeStore.ListFolders` returns nil;\n- the DB fallback gets empty `userPermissions` from `fakeStore`.\n\nThe result is still `Allowed: false`, so the test does not exercise the denial cache. Set the value to `true` (and ideally assert that `fakeStore.calls == 0`).",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 139,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Every first-time denial now goes to the permission DB query instead of the cached scope map",
+      "body": "Before this change, `getUserPermissions` served the scope map from `permCache` for 30s, whatever the Check outcome. Now a cached map that denies falls through to `getIdentityPermissions`, and that function no longer reads `permCache` (the read was removed at line 379). The denial cache is keyed per name and folder, so a user who is denied N distinct dashboards triggers N `permissionStore.GetUserPermissions` queries. `singleflight` only merges concurrent calls. Workloads that filter many resources through Check (search results, for example) will see much more DB load. Consider rate-limiting the refresh per user and action, e.g. refresh only when the cached entry is older than a few seconds.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 356,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "User identifier lookup runs twice on cache miss or error",
+      "body": "`getCachedIdentityPermissions` calls `GetUserIdentifiers`. If that lookup fails (unknown user, DB error), Check and List fall back to `getIdentityPermissions` → `getUserPermissions`, which calls `GetUserIdentifiers` again (line 374). Failures are not cached, so every failing request makes two `store.GetUserIdentifiers` round-trips. Consider returning the identifiers, or the error, from the cached lookup so the fallback can reuse them.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check consults the new per-resource denial cache before anything else",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-121",
+        "pkg/services/authz/rbac/service.go:153-155",
+        "pkg/services/authz/rbac/cache.go:30-32",
+        "pkg/services/authz/rbac/cache.go:58-91",
+        "pkg/services/authz/rbac/service.go:442-450",
+        "pkg/services/authz/rbac/service_test.go:803",
+        "pkg/services/authz/rbac/service_test.go:853"
+      ],
+      "equivalent_path": "permCache lookups in getCachedIdentityPermissions / getUserPermissions, keyed by resolved user UID",
+      "before_after": "Before: no per-resource denial cache; the scope map was cached for 30s. After: a hit returns deny immediately, and any DB-derived deny is stored for shortCacheTTL. The key has no identity type, and anonymous and renderer share UID 0.",
+      "visible_effect": "An anonymous denial causes the renderer to be denied the same resource for 30s, so rendering fails.",
+      "failure_mode": "Cache Get errors are logged in cacheWrap.Get and treated as a miss; Set errors are logged and ignored.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cached scope map used first in Check and List; a deny from the cache falls back to the DB",
+      "location": "pkg/services/authz/rbac/service.go:123",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:123-139",
+        "pkg/services/authz/rbac/service.go:180-192",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/service.go:374-417",
+        "pkg/services/authz/rbac/service.go:452-479"
+      ],
+      "equivalent_path": "getUserPermissions/getAnonymousPermissions previously read permCache before the singleflight DB fetch",
+      "before_after": "Before: a cache hit was authoritative for both allow and deny. After: allow from the cache is authoritative; deny triggers a fresh DB fetch, and getUserPermissions no longer reads the cache, so the DB fetch always runs.",
+      "visible_effect": "New grants are visible immediately unless a denial for the same resource is still cached. DB load rises for denials.",
+      "failure_mode": "An error in the cached lookup (e.g. GetUserIdentifiers) is swallowed and the DB path runs, which repeats the lookup and reports its error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "In-process authz client now uses NoopCache instead of a 30s local cache",
+      "location": "pkg/services/authz/rbac.go:101",
+      "status": "open",
+      "evidence": [
+        "pkg/services/authz/rbac.go:101-105",
+        "pkg/services/authz/rbac.go:239-251",
+        "pkg/services/authz/rbac.go:160-167"
+      ],
+      "equivalent_path": "newRemoteRBACClient keeps the 30s LocalCache",
+      "before_after": "Before: in-proc Check/List results were cached client-side for 30s. After: every call reaches rbac.Service, which applies its own caches.",
+      "visible_effect": "Permission changes are visible sooner in-proc, and every check makes an in-proc gRPC call.",
+      "failure_mode": "NoopCache.Get returns cache.ErrNotFound. I could not read the authlib client source to confirm that it treats ErrNotFound as a miss and not as an error.",
+      "open_question": "Does authlib's authz client handle cache.ErrNotFound from Get as a miss, and does it use the cache for anything besides Check/List results?",
+      "candidates": [
+        "github.com/grafana/authlib/authz/client.go"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a per-resource denial cache to Check. It tries the cached scope map first in Check and List, and falls back to the DB when the cached map denies. The in-process client now uses a no-op cache. I found three problems to fix and two to consider.\\n\\nFix:\\n- **Denial key collision between anonymous and renderer (high confidence).** The denial key has no identity type, and both anonymous and renderer use UID `0`. A recent anonymous denial makes the renderer fail on the same dashboard for 30s.\\n- **`_` separator collision (medium confidence).** The denial key joins name and folder with `_`, which UIDs can contain, so different name/folder pairs can share one entry and deny each other. I did not re-check the UID charset rules in this snapshot.\\n- **Ineffective test.** The \\\"explicit deny\\\" test stores `false` where it means `true`, so it passes even without the denial cache.\\n\\nConsider:\\n- Every first-time denial now runs the permission DB query, a perf regression.\\n- The user identifier lookup runs twice when it fails.\\n\\nOne question is still open: I could not read the authlib client source, so I have not confirmed it treats `cache.ErrNotFound` from `NoopCache` as a cache miss.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.5625435999999999
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5625435999999999,
+    "usage": {
+      "input": 12,
+      "output": 9657,
+      "cacheRead": 186858,
+      "cacheWrite": 41498
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 110113,
+    "stop": "complete",
+    "notices": []
+  }
+}

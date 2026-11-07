@@ -1,0 +1,168 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-6` of 6 against 7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7 (merge-base 7a5fbae)",
+    "repository": {
+      "name": "6"
+    },
+    "base": {
+      "sha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7",
+      "ref": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+    },
+    "head": {
+      "sha": "267d8be1f556ed59639ced396c885bb44586da19",
+      "ref": "pr-6"
+    },
+    "title": "pr-6",
+    "description": "UX: show complete URL path if website domain is same as instance domain",
+    "author": "Arpit Jalan"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 153,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "website_name leaks TL0 users' website to anonymous visitors, bypassing untrusted_attributes",
+      "body": "`website` is listed in `untrusted_attributes` (line 109), so for a TL0 user seen by an anonymous visitor `include_website?` returns false (lines 28-31, `restrict_user_fields?` in lib/guardian/user_guardian.rb:58-60). `website_name` gets no such filter. It is not in `untrusted_attributes`, and `include_website_name` has no trailing `?`, so ActiveModel::Serializers never calls it as an include filter; it's dead code. The result: an anonymous visitor (or a crawler) looking at a TL0 spam account gets `website_name: \"spam-site.com\"`, and user.hbs:66-71 renders it in the profile header. That's the exact thing the TL0 restriction exists to stop. Fix: delete `include_website_name` and add `:website_name` to `untrusted_attributes`. Its generated `include_website_name?` already checks `present?`. Also add `website_name` to the `untrusted_attributes` list in spec/serializers/user_serializer_spec.rb:11 so a test covers this.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "line": 66,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Website name goes stale after the user edits their website in preferences",
+      "body": "Before this change, `websiteName` was computed from `model.website`, so it updated as soon as the user saved preferences. Now the template reads `model.website_name`, a value the server sends only through `findDetails()` in the `user` route's `afterModel` (routes/user.js.es6:50-58). `preferences` is a child route of `user` (app-route-map.js.es6:56,74), and `User#save` (models/user.js.es6:206-213) copies only `bio_excerpt` back from the response. So when a user changes their website and goes back to their profile, the header still shows the old name, or nothing if they just added a website, next to an `href` that points to the new URL. A full reload is the only fix. Set `website_name` from the PUT response the way `bio_excerpt` is set, if the update endpoint returns a serialized user. Otherwise keep a client-side fallback.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 138,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Port is dropped from the displayed website name",
+      "body": "The old client code (`website.split(\"/\")[2]`) showed `example.com:8080` for `http://example.com:8080/`. `URI#host` drops the port, so the name now shows `example.com` while the link goes to port 8080. If the change is meant to keep the old display for foreign domains, consider using `URI#host` plus the port when it isn't the default.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 146,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Sibling-domain heuristic treats unrelated domains under a public suffix as the same site",
+      "body": "This branch removes the first label and compares what's left. With three-label hosts under a multi-part public suffix, unrelated sites match: a website on `foo.co.uk` and a forum on `bar.co.uk` both reduce to `co.uk`, so the full path is shown as if the website belonged to the forum's domain. The effect is only cosmetic, but the heuristic doesn't do what the comment `www.example.com == forum.example.com` says. A stricter rule would be a public-suffix check, or requiring the remainder to have at least 2 labels plus a non-ccTLD second-level label.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/serializers/user_serializer_spec.rb",
+      "line": 87,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Sibling-subdomain branch and the TL0 case are untested",
+      "body": "The three new examples cover the equal-host branch (line 141) and the `ends_with?` branch (line 149). None of them covers the `www.example.com` vs `forum.example.com` branch at user_serializer.rb:144-146. The TL0/anonymous example at lines 6-15 doesn't check `website_name` either, which is why the leak reported on user_serializer.rb:153 went unnoticed.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "New serialized attribute website_name rendered in the profile header instead of the client-computed websiteName",
+      "location": "app/serializers/user_serializer.rb:137",
+      "status": "closed",
+      "evidence": [
+        "app/serializers/user_serializer.rb:25-33",
+        "app/serializers/user_serializer.rb:105-111",
+        "app/serializers/user_serializer.rb:153-155",
+        "lib/guardian/user_guardian.rb:58-60",
+        "app/assets/javascripts/discourse/templates/user/user.hbs:66-71"
+      ],
+      "equivalent_path": "website attribute, filtered by untrusted_attributes for TL0 users seen anonymously",
+      "before_after": "Before: the client derived websiteName from model.website, which was already hidden for restricted users, so nothing showed. After: website_name is always serialized because include_website_name lacks `?` and the attribute is not in untrusted_attributes, so restricted users' website hosts reach anonymous viewers.",
+      "visible_effect": "user.hbs shows model.website_name text, linked to model.website",
+      "failure_mode": "URI parse errors are rescued and return nil, so nothing is shown",
+      "evidence_checked": true
+    },
+    {
+      "action": "Profile header after the user saves a changed website in preferences",
+      "location": "app/assets/javascripts/discourse/templates/user/user.hbs:66",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/routes/user.js.es6:50-58",
+        "app/assets/javascripts/discourse/routes/app-route-map.js.es6:56",
+        "app/assets/javascripts/discourse/routes/app-route-map.js.es6:74",
+        "app/assets/javascripts/discourse/models/user.js.es6:206-213"
+      ],
+      "equivalent_path": "User#save then navigating back to the user's profile",
+      "before_after": "Before: websiteName was a computed property of model.website and updated right away. After: website_name loads once in the user route's afterModel and isn't refreshed by save or by moving between child routes.",
+      "visible_effect": "The name stays stale (or missing) until a full reload, while href points at the new website",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This change moves the website display name from the client to the server, and the new attribute skips the protection on `website`. Anonymous visitors (and crawlers) can now see the website of a TL0 (trust level 0) user, because `website_name` isn't in `untrusted_attributes` and `include_website_name` has no `?`, so it never runs as a filter. That's a blocker. The name also goes stale after a user edits their website in preferences, because it is loaded once per user route and isn't refreshed. Smaller points: the port is now dropped from the name, the sibling-domain heuristic can match unrelated domains, and two branches lack tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 56,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 14,
+      "costUsd": 0.278584
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.278584,
+    "usage": {
+      "input": 14,
+      "output": 5942,
+      "cacheRead": 107440,
+      "cacheWrite": 17275
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 14,
+    "durationMs": 65915,
+    "stop": "complete",
+    "notices": []
+  }
+}

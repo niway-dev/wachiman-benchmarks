@@ -1,0 +1,226 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-79265-flat` of 79265-flat against 7ddcd0c9611882858701f4f876fb8e449fe73980 (merge-base 7ddcd0c)",
+    "repository": {
+      "name": "79265-flat"
+    },
+    "base": {
+      "sha": "7ddcd0c9611882858701f4f876fb8e449fe73980",
+      "ref": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+    },
+    "head": {
+      "sha": "1ac848883795d232d69850166dd2016fc9162aef",
+      "ref": "pr-79265-flat"
+    },
+    "title": "pr-79265-flat",
+    "description": "Anonymous: Add configurable device limit",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/setting/setting.go"
+    ],
+    "reviewed": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/setting/setting.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 87,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Local cache entry is written before the limit check, so a rejected device gets in on its next request",
+      "body": "`tagDeviceUI` calls `a.localCache.SetDefault(key, ...)` (line 87) before `CreateOrUpdateDevice` (line 93). When the store returns `ErrDeviceLimitReached`, the cache key stays set. For the next 29 minutes (`localcache.New(29*time.Minute, ...)`, line 42), every later request from that device hits the early `return nil` at line 83-84. `TagDevice` then returns nil, and `Anonymous.Authenticate` (client.go:44-58) returns an anonymous identity. Only the first request of a device over the limit is refused. A page reload lets it in, and nothing records it in the DB. Fix: set the cache entry only after `CreateOrUpdateDevice` succeeds, or delete it when the call fails.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 52,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "pkg/server/wire.go still registers ProvideAnonDBStore, whose new int64 parameter has no provider",
+      "body": "`ProvideAnonDBStore` now takes `(db.DB, int64)`. `pkg/server/wire.go:374-375` still lists `anonstore.ProvideAnonDBStore` and binds `anonstore.AnonStore` to it. Nothing provides an `int64`. `ProvideAnonymousDeviceService` now builds the store itself (impl.go:43), and no other wire consumer of `anonstore.AnonStore` exists, so the provider is also unused. Wire rejects both a missing input and an unused provider, so regenerating `wire_gen.go` (which the Go build does) should fail. Remove the two lines from wire.go.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 120,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Requests without X-Grafana-Device-Id skip the device limit entirely",
+      "body": "`TagDevice` returns nil when the `X-Grafana-Device-Id` header is missing (lines 119-121) or the IP cannot be parsed (lines 125-128). `Authenticate` then grants anonymous access with no limit check. The device ID is also chosen by the client, so any client can reuse an ID that is already registered. Is `device_limit` meant only as a usage counter for the UI, or as an access limit? If it is an access limit, a request without the header should probably be refused once the limit is reached.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 110,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Separate count and insert let concurrent new devices go over the limit",
+      "body": "`CountDevices` (line 110) and the upsert (lines 149-153) run in separate sessions with no lock or transaction. Several new devices arriving at once, or several Grafana instances in HA, can all read `count < limit` and all insert. The limit is then exceeded. If the limit must be exact, run the count and insert in one transaction, or use a conditional `INSERT ... SELECT ... WHERE (SELECT COUNT(*) ...) < ?`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/client.go",
+      "line": 44,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Device tagging moved from a goroutine onto the request path, using the request context",
+      "body": "The upsert used to run in a goroutine with its own 2-minute `context.Background()` timeout. With `device_limit` set, it now runs synchronously on the request path, together with a `COUNT(*)` over `anon_device`, on every local-cache miss. This applies even when no limit is configured. The write also uses the request `ctx`. If the client disconnects, the write is cancelled, but the cache key was already set (impl.go:87), so that device is not tagged for the next 29 minutes. Consider keeping the async path when `AnonymousDeviceLimit == 0`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "line": 51,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Limit test does not cover a known device updating while the store is at its limit",
+      "body": "`TestIntegrationBeyondDeviceLimit` only checks that a second, new device is rejected. It never re-submits the first device (`32mdo31deeqwes`) after the limit is reached. That is the path `updateDevice` exists for, and it is what keeps existing users working. There is also no `TagDevice`/`Authenticate` test with a limit, which would have caught the local-cache bypass in impl.go:87.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/setting/setting.go",
+      "line": 1654,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "New `device_limit` option is not documented in conf/defaults.ini or sample.ini",
+      "body": "The other `[auth.anonymous]` keys, such as `hide_version`, are listed in `conf/defaults.ini:592` and `conf/sample.ini:581`. `device_limit` is not, so operators have no way to find it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/grafana-runtime/src/config.ts",
+      "line": 97,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "anonymousDeviceLimit is typed as possibly undefined, but the backend always sends a number, and the frontend never reads it",
+      "body": "`FrontendSettingsDTO.AnonymousDeviceLimit` is an `int64` with no `omitempty` (frontend_settings.go:195). The boot data therefore always contains a number, 0 when the option is unset, never `undefined`. With the `= undefined` initializer and no annotation, TypeScript also infers the class field's type as `undefined`. Nothing under `public/` reads the field. Consider `anonymousDeviceLimit: number | undefined = undefined`, or `= 0`, or leave the field out until a consumer exists.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous.Authenticate now calls TagDevice synchronously and fails authentication on ErrDeviceLimitReached",
+      "location": "pkg/services/anonymous/anonimpl/client.go:44",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/client.go:44-58",
+        "pkg/services/anonymous/anonimpl/impl.go:80-98",
+        "pkg/services/anonymous/anonimpl/impl.go:42",
+        "pkg/services/authn/authnimpl/service.go:197-224",
+        "pkg/services/contexthandler/contexthandler.go:116-124"
+      ],
+      "equivalent_path": "The old code ran TagDevice in a goroutine with a 2-minute background timeout and only logged errors",
+      "before_after": "Before: tagging was fire-and-forget. After: tagging blocks the request, and ErrDeviceLimitReached makes Authenticate return an error. The local cache is set before the store call, so a rejected device is let in on later requests.",
+      "visible_effect": "The authn service joins the error and tries the remaining clients. contexthandler stores it in LookupTokenErr and the request continues unauthenticated, so the user is redirected to login or gets a 401.",
+      "failure_mode": "After one rejection, the cache key makes TagDevice return nil for 29 minutes, so the limit is not enforced (finding on impl.go:87). Other DB errors are logged and the request continues anonymously.",
+      "evidence_checked": true
+    },
+    {
+      "action": "CreateOrUpdateDevice counts active devices and, when at the limit, only updates existing ones",
+      "location": "pkg/services/anonymous/anonimpl/anonstore/database.go:109",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:73-118",
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:158-166",
+        "pkg/services/sqlstore/sqlstore.go:287",
+        "pkg/services/anonymous/anonimpl/impl.go:70"
+      ],
+      "equivalent_path": "usageStatFn and the admin stats use CountDevices with the same 30-day window",
+      "before_after": "The count and the update/insert run in separate sessions, with no transaction around them",
+      "visible_effect": "A new device over the limit gets ErrDeviceLimitReached; an existing device updated in the last 30 days is updated normally",
+      "failure_mode": "Concurrent inserts can push the count over the limit. MySQL reports matched rows rather than changed rows because of clientFoundRows=true, so an update that changes nothing is not mistaken for an unknown device.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ProvideAnonDBStore signature gains a deviceLimit int64 parameter",
+      "location": "pkg/services/anonymous/anonimpl/anonstore/database.go:52",
+      "status": "closed",
+      "evidence": [
+        "pkg/server/wire.go:374",
+        "pkg/server/wire.go:375",
+        "pkg/services/anonymous/anonimpl/impl.go:43"
+      ],
+      "equivalent_path": "pkg/server/wire.go:374-375 registers the provider and its interface binding",
+      "before_after": "wire.go is unchanged and still lists the provider",
+      "visible_effect": "Wire code generation, and therefore the build",
+      "failure_mode": "No int64 provider exists, and the provider is now unused, so wire generation should fail",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The device limit doesn't hold as written. `tagDeviceUI` caches the device key before the store's limit check, so a device turned away once gets anonymous access on every request for the next 29 minutes. Also, `pkg/server/wire.go` still registers `ProvideAnonDBStore`, which now takes an `int64` that nothing provides, so wire generation should break. Smaller points: requests without the device-ID header skip the limit, a race lets concurrent new devices go over it, tagging now runs on the request path, the limit test is thin, and the new `device_limit` option isn't in the config files.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 11,
+      "lines": 142,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 14,
+      "costUsd": 0.5028785999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5028785999999998,
+    "usage": {
+      "input": 20,
+      "output": 9263,
+      "cacheRead": 286413,
+      "cacheWrite": 32532
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 14,
+    "durationMs": 124325,
+    "stop": "complete",
+    "notices": []
+  }
+}

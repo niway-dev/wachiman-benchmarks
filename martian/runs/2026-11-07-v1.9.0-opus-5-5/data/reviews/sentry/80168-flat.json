@@ -1,0 +1,159 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80168-flat` of 80168-flat against bdd229e3f22e307fe40b30ef99e92ff3f6723da4 (merge-base bdd229e)",
+    "repository": {
+      "name": "80168-flat"
+    },
+    "base": {
+      "sha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4",
+      "ref": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+    },
+    "head": {
+      "sha": "781605afac1aa48e829bb514faf813eed48a37e4",
+      "ref": "pr-80168-flat"
+    },
+    "title": "pr-80168-flat",
+    "description": "feat(workflow_engine): Add in hook for producing occurrences from the stateful detector",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "reviewed": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/incidents/grouptype.py",
+      "line": 11,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "MetricAlertDetectorHandler is now abstract and can't be instantiated",
+      "body": "`MetricAlertDetectorHandler` now subclasses `StatefulDetectorHandler` with only `pass`. That leaves four abstract members unimplemented: `counter_names`, `get_dedupe_value`, `get_group_key_values` and the new `build_occurrence_and_event_data` (src/sentry/workflow_engine/processors/detector.py:142-170). It is still registered as `MetricAlertFire.detector_handler` (line 27). `Detector.detector_handler` calls `group_type.detector_handler(self)` (src/sentry/workflow_engine/models/detector.py:86), so for any detector of type `metric_alert_fire` that call now raises `TypeError: Can't instantiate abstract class`. Before this change it returned a handler whose `evaluate` returned `[]`. In `process_detectors` (processors/detector.py:52-68) that exception exits the loop: every detector after it in the list goes unevaluated and its state is never committed, while occurrences for the detectors before it have already gone to Kafka. Nothing in `src/` calls `process_detectors` yet, so this can't fail in production today, but it is a trap. Either keep a concrete stub (for example, return `{}` from `evaluate`, or implement the four members as no-ops), or don't register the handler until it is implemented. The TODO on line 10 (\"This will be a stateful detector when we build that abstraction\") is also stale now.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 536,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Occurrence assertions only compare a constant id, so the hook's arguments are never checked",
+      "body": "`IssueOccurrence.__eq__` compares only `id` (src/sentry/issues/issue_occurrence.py:181-184), and `build_mock_occurrence_and_event` always uses `id=\"eb4b0acffadb4d098d48cb14165ab578\"` (line 252). The `event_data` it builds doesn't depend on `group_key` or `value` either. So every `result == DetectorEvaluationResult(..., result=occurrence, ...)` assertion passes no matter what group key, value or priority `evaluate_group_key_value` passes to `build_occurrence_and_event_data`. The tests already show the mismatch:\n- Here the expected occurrence is built for `\"val1\"`, but the handler evaluates `\"group_key\"`, so the fingerprints differ.\n- Line 191 builds group_2's occurrence with value 6, but the packet has 10.\n- Lines 489-490 and 509-510 use 6 where the packet has 100 and 8.\n\nAll of these still pass. That means nothing tests the new hook wiring: that the right `group_key` and `value` reach the hook, that `PriorityLevel(new_status)` is converted correctly, and that `build_fingerprint(group_key)` lands in the occurrence. Fix: assert on fields that carry the arguments (`fingerprint`, `initial_issue_priority`, `type`), or have the mock derive `id` or `evidence_data` from the arguments, and correct the mismatched keys and values.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/workflow_engine/processors/detector.py",
+      "line": 230,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "evaluate docstring still says it returns a list",
+      "body": "`evaluate` now returns `dict[DetectorGroupKey, DetectorEvaluationResult]` (lines 226-228, 237-244), but the docstring still says it \"returns a list of `DetectorEvaluationResult`\".",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "StatefulDetectorHandler.evaluate_group_key_value calls the new abstract build_occurrence_and_event_data hook for any non-OK status change",
+      "location": "src/sentry/workflow_engine/processors/detector.py:298-301",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/processors/detector.py:47-70",
+        "src/sentry/workflow_engine/processors/detector.py:73-87",
+        "src/sentry/workflow_engine/processors/detector.py:285-309",
+        "src/sentry/workflow_engine/types.py:8-12",
+        "src/sentry/types/group.py:63-66"
+      ],
+      "equivalent_path": "The OK branch at src/sentry/workflow_engine/processors/detector.py:290-297, which builds a StatusChangeMessage with build_fingerprint(group_key) and detector.project_id",
+      "before_after": "Before: the non-OK branch returned result=None, so process_detectors produced nothing. After: the hook returns (IssueOccurrence, event_data), and process_detectors passes it to create_issue_occurrence_from_result, which calls produce_occurrence_to_kafka with PayloadType.OCCURRENCE. The state update is enqueued (line 287) before the hook runs, like the OK branch. PriorityLevel(new_status) is safe because the OK value (0) is handled in the other branch and LOW/MEDIUM/HIGH share PriorityLevel's values.",
+      "visible_effect": "An issue occurrence is produced to Kafka for each group key whose status changes to LOW, MEDIUM or HIGH.",
+      "failure_mode": "If the hook raises, the exception leaves evaluate and process_detectors before commit_state_updates (line 68). Enqueued dedupe and state updates are lost, so the packet is reprocessed next time. Detectors later in the list are skipped, and occurrences already produced for earlier detectors stay sent.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New Detector.group_type property, which detector_handler now reuses",
+      "location": "src/sentry/workflow_engine/models/detector.py:58-64",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/models/detector.py:58-86"
+      ],
+      "equivalent_path": "The previous inline grouptype.registry.get_by_slug(self.type) in detector_handler",
+      "before_after": "Same lookup, moved into a property. detector_handler still logs and returns None when the slug is unknown or the type has no handler.",
+      "visible_effect": "None. The tests use it to build the expected occurrence type.",
+      "failure_mode": "An unknown slug returns None, the same as before.",
+      "evidence_checked": true
+    },
+    {
+      "action": "MetricAlertDetectorHandler switched to StatefulDetectorHandler with no implementation",
+      "location": "src/sentry/incidents/grouptype.py:11-12",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/incidents/grouptype.py:11-27",
+        "src/sentry/workflow_engine/processors/detector.py:142-170",
+        "src/sentry/workflow_engine/models/detector.py:86"
+      ],
+      "equivalent_path": "MockDetectorStateHandler in tests/sentry/workflow_engine/processors/test_detector.py:27-39, which implements all the abstract members",
+      "before_after": "Before: a concrete DetectorHandler whose evaluate returned []. After: an abstract class, so instantiating it raises TypeError.",
+      "visible_effect": "Detector.detector_handler raises for metric_alert_fire detectors. Nothing in src/ calls process_detectors yet.",
+      "failure_mode": "TypeError propagates out of process_detectors and aborts the rest of the batch.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR does what its title says: it adds a `build_occurrence_and_event_data` hook to `StatefulDetectorHandler`, and handlers now return results as a dict keyed by group key. Occurrences flow correctly through `process_detectors` to `produce_occurrence_to_kafka`. I found two issues to fix and one doc nit:\\n\\n1. **Handler can't be instantiated (fix).** `MetricAlertDetectorHandler` is still registered on `MetricAlertFire` but now inherits four unimplemented abstract members. Instantiating it raises `TypeError`, which would abort `process_detectors` for the whole batch. Nothing in `src/` calls `process_detectors` yet, so it can't fail in production today.\\n2. **Tests don't check the hook's arguments (fix).** `IssueOccurrence` equality compares only `id`, and the test mock always uses the same constant id. The new occurrence assertions therefore pass even when the wrong group key or value reaches the hook, and several tests already pass mismatched ones.\\n3. **Stale docstring (consider).** `evaluate`'s docstring still says it returns a list.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 400,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.47108700000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.47108700000000003,
+    "usage": {
+      "input": 16,
+      "output": 6431,
+      "cacheRead": 249775,
+      "cacheWrite": 36556
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 76488,
+    "stop": "complete",
+    "notices": []
+  }
+}

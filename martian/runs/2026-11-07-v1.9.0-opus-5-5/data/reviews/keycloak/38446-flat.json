@@ -1,0 +1,182 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-38446-flat` of 38446-flat against 85737f52b59aa2e3403c9b8e48acf71ccc5bfae3 (merge-base 85737f5)",
+    "repository": {
+      "name": "38446-flat"
+    },
+    "base": {
+      "sha": "85737f52b59aa2e3403c9b8e48acf71ccc5bfae3",
+      "ref": "85737f52b59aa2e3403c9b8e48acf71ccc5bfae3"
+    },
+    "head": {
+      "sha": "168285c932d8e603c22d314610b91f2397b01532",
+      "ref": "pr-38446-flat"
+    },
+    "title": "pr-38446-flat",
+    "description": "Implement recovery key support for user storage providers",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.319",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java",
+      "server-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/RecoveryAuthnCodesFormAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/requiredactions/RecoveryAuthnCodesAction.java",
+      "services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java",
+      "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+      "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorageFactory.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/storage/BackwardsCompatibilityUserStorageTest.java"
+    ],
+    "reviewed": [
+      "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java",
+      "server-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/RecoveryAuthnCodesFormAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/requiredactions/RecoveryAuthnCodesAction.java",
+      "services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java",
+      "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+      "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorageFactory.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/storage/BackwardsCompatibilityUserStorageTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java",
+      "line": 125,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Codes regenerated into user storage leave the old local codes valid",
+      "body": "When `updateCredential` succeeds in user storage, the code returns without touching any `recovery-authn-codes` credential already in the local DB. Only the `else` branch goes through `RecoveryAuthnCodesCredentialProvider.createCredential`, which deletes the old stored credential first (RecoveryAuthnCodesCredentialProvider.java:39-42).\n\nAt login, `UserCredentialManager.isValid` asks the federated validator first. If that validator rejects the input, the input stays in `toValidate` and the local `RecoveryAuthnCodesCredentialProvider` checks it against the stale local codes (UserCredentialManager.java:66-79, 270-278).\n\nWhen it happens: a federated user who set up recovery codes before their provider supported the type, then regenerates them. Their old codes still log them in, and nothing tells them. Fix: in the `userStorageCreated` branch, remove any stored local recovery-codes credential.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/RecoveryAuthnCodesFormAuthenticator.java",
+      "line": 80,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Federated recovery codes are never consumed, and the cleanup goes to the wrong store",
+      "body": "For a local credential, `RecoveryAuthnCodesCredentialProvider.isValid` removes the used code and saves the change (RecoveryAuthnCodesCredentialProvider.java:109-112). The federated path has no matching step.\n\n`getCredential` now returns the user-storage credential, but the authenticator never tells user storage that a code was used. When `allCodesUsed()` is true, it calls `removeStoredCredentialById` with the federated credential's id, and that call goes to the local store (UserCredentialManager.java:114-117), so the federated credential is never removed.\n\nThe test provider shows the effect: `isValid` accepts any code in the list and never removes it (BackwardsCompatibilityUserStorage.java:326-340). The same code can be reused forever, and the login page always asks for code #1. The SPI says nothing about who consumes the code.\n\nFix: either define that contract (for example, call `updateCredential`/`disableCredentialType` on user storage when codes run out) or document that the provider must consume codes. Also make the test provider do it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+      "line": 231,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Overriding getCredentials (and returning OTP) defeats the purpose of the 4.8.3 compatibility provider",
+      "body": "The class Javadoc says this provider stands for code written for Keycloak 4.8.3 that \"should work fine without a need to change the code\" (lines 59-60). The new `getCredentials` override, which did not exist then, now also returns the OTP model.\n\nBefore this change, the default `getCredentials` returned an empty stream (CredentialInputUpdater.java:50-51). The existing OTP account-REST tests therefore covered the fallback in AccountCredentialResource.java:212-217, which builds a dummy credential with an `otp-id` placeholder id, and the `-id` branch in CredentialDeleteHelper.java:75-79. They now go through the real-model path at CredentialDeleteHelper.java:64 instead, so the legacy behaviour has no test left.\n\nKeep OTP out of `getCredentials`, or put recovery-code support in a separate, modern test provider.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+      "line": 237,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Federated recovery credential has no id and cannot be disabled",
+      "body": "`createFromValues` never sets an id (RecoveryAuthnCodesCredentialModel.java:58-85), and the generated `recoveryCodes.getId()` is thrown away. The account REST API therefore lists the credential with a null id. `CredentialDeleteHelper` cannot match it (line 64), and `disableCredentialType`/`getDisableableCredentialTypesStream` ignore recovery codes (lines 217-224, 255-263), so the credential cannot be removed from the account console.\n\n`getMyUser(user)` can also return null here, which throws a NullPointerException; `getDisableableCredentialTypesStream` checks for null. Set the id from `myUser.recoveryCodes.getId()` and add null checks.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/storage/BackwardsCompatibilityUserStorageTest.java",
+      "line": 259,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Test never checks that a used code is rejected or that the next code is requested",
+      "body": "`testRecoveryKeysSetupAndLogin` logs in once with code 0 and stops. A second login that expects code 1, or a check that reusing code 0 fails, would have caught the missing consumption on the federated path. The delayed-authenticator step with delay 0 does nothing, and its alias has a typo (`delayed-suthenticator-config`, line 135).",
+      "anchor": "diff"
+    },
+    {
+      "path": "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java",
+      "line": 116,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Hard-coded provider id; provider is looked up even when it is not used",
+      "body": "`\"keycloak-recovery-authn-codes\"` repeats `RecoveryAuthnCodesCredentialProviderFactory.PROVIDER_ID` (RecoveryAuthnCodesCredentialProviderFactory.java:11). If that constant changes, `recoveryCodeCredentialProvider` silently becomes null and line 129 throws a NullPointerException. Use the constant if the module can see it, or look the provider up only in the `else` branch.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Recovery-code setup required action stores codes via user storage first",
+      "location": "services/src/main/java/org/keycloak/authentication/requiredactions/RecoveryAuthnCodesAction.java:116",
+      "status": "closed",
+      "evidence": [
+        "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java:115-131",
+        "services/src/main/java/org/keycloak/credential/RecoveryAuthnCodesCredentialProvider.java:36-43",
+        "model/storage/src/main/java/org/keycloak/credential/UserCredentialManager.java:83-99"
+      ],
+      "equivalent_path": "RecoveryAuthnCodesCredentialProvider.createCredential deletes the existing stored credential, then creates the new one",
+      "before_after": "The local path deletes the old local credential first. The federated path (CredentialHelper.java:125-127) skips that, so stale local codes survive.",
+      "visible_effect": "The user sees the success page; old local codes may still log them in.",
+      "failure_mode": "If the provider is not registered, the lookup returns null and the user gets a NullPointerException (500) in the else branch.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Authenticator and login bean read the recovery credential from user storage first",
+      "location": "server-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils.java:56-62",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/RecoveryAuthnCodesFormAuthenticator.java:80-92",
+        "services/src/main/java/org/keycloak/credential/RecoveryAuthnCodesCredentialProvider.java:99-119",
+        "model/storage/src/main/java/org/keycloak/credential/UserCredentialManager.java:114-146"
+      ],
+      "equivalent_path": "RecoveryAuthnCodesCredentialProvider.isValid consumes the code and calls updateStoredCredential",
+      "before_after": "The local path removes the used code. The federated path does not, and its all-codes-used cleanup removes the id from the local store.",
+      "visible_effect": "The login page shows the code number from the federated model; with the test provider it never advances.",
+      "failure_mode": "No code is consumed, and nothing tells the user.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR lets a user storage provider hold recovery codes, but that path is missing steps the local path has. Regenerating codes into user storage does not delete stale local codes, and those still validate as a fallback. Codes validated by user storage are never consumed, and the all-codes-used cleanup removes the id from the local store instead of user storage. In the tests, the 4.8.3 compatibility provider gains a `getCredentials` override that also returns OTP, so the legacy dummy-credential path no longer has a test. The new test does not check that a used code is rejected.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 287,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 15,
+      "costUsd": 0.6639805999999999
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "85737f52b59aa2e3403c9b8e48acf71ccc5bfae3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.6639805999999999,
+    "usage": {
+      "input": 18,
+      "output": 10675,
+      "cacheRead": 307003,
+      "cacheWrite": 48626
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 15,
+    "durationMs": 118974,
+    "stop": "complete",
+    "notices": []
+  }
+}
