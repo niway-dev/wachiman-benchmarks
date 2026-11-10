@@ -4,10 +4,10 @@
 
 - **Scope:** niway-dev/kaipu-record #538-#543 and #545-#549 (#544 is not a pull request). Both tools ran live in CI on commits pushed during the local day of 2026-11-06.
 - **Pairs:** 14 commits both tools finished. **Special cases:** 22 (0 refused, 3 partial, 4 skipped, 15 unpaired). **Comparable findings:** Wachiman 18, CodeRabbit 10.
-- **Verdicts on the 28 paired findings:** 6 verified rows (5 distinct defects, the screenshot zoom counts twice) by reading the code, 10 owner-accepted (the file changed after the comment; the line was not compared), 12 unverified and not scored.
-- **What CodeRabbit found that Wachiman did not:** one verified defect, a failed settings save that leaves the in-memory hidden-tracks list ahead of the stored one (#542, low). Four more CodeRabbit-only findings were fixed by the owner afterwards (#543: focus ring, "Move to workspace" check, navigation order; #548: test timers). Wachiman did post other findings on those commits (8 on #543 `d70421e`, 2 on #548 `151d8a8`), but not these.
+- **Verdicts on the 28 paired findings:** 8 verified rows (6 distinct defects, because two defects were found by both tools) by reading the code, 8 owner-accepted (the file changed after the comment; the line was not compared), 12 unverified and not scored.
+- **What CodeRabbit found that Wachiman did not:** one verified defect, a failed settings save that leaves the in-memory hidden-tracks list ahead of the stored one (#542, low). Three more CodeRabbit-only findings were fixed by the owner afterwards, with file-level evidence only (#543: focus ring, "Move to workspace" check; #548: test timers). Wachiman did post other findings on those commits (8 on #543 `d70421e`, 2 on #548 `151d8a8`), but not these.
 - **What Wachiman found that CodeRabbit did not:** a verified defect where a copy of a copy shows its parent as "Original" (#543, medium), and two verified low findings (#539 stale comment, #548 stale summary under a throttled drag).
-- **Found by both:** the screenshot zoom-out that enlarges and crops tall images (#543, verified) and the history arrows missing pushes while unmounted (#545, owner-accepted).
+- **Found by both:** the screenshot zoom-out that enlarges and crops tall images (#543, verified), the pager that disappears when the open version is outside the passed order (#543, verified) and the history arrows missing pushes while unmounted (#545, owner-accepted).
 - **Basis:** all rows are `live`; no laptop reruns. Wachiman version seen: v1.8.0 on every row (Claude Opus 5.5, high effort), from `pairs.csv`.
 - **Judge:** claude-sonnet-5-5.
 - **Every number, with its source file, formula and limits:** [`INDICATORS.md`](INDICATORS.md), generated from the CSVs by `scripts/indicators.ts`.
@@ -38,7 +38,7 @@
 | #539 | `e41c267`: stale comment about stable callbacks | nothing | verified, low |
 | #541 | nothing | `6e2fe35`: `setSize` vs `setContentSize` in a verify script | unverified (depends on the window's frame settings) |
 | #542 | nothing | `1e7cf17`: `latest` is not reset when a save fails | verified, low |
-| #543 | `d70421e`: 8 (copy-of-copy "Original", zoom-out crop, nav order, a11y, tests, dead strings); `b579b7b`: 2; `4fb9bbb`: 1 | `d70421e`: 5 (path traversal, focus ring, movability, zoom-out, nav order); `b579b7b`: 1 | 1 matched pair, see Gaps |
+| #543 | `d70421e`: 8 (copy-of-copy "Original", zoom-out crop, a version outside the passed order, a11y, tests, dead strings); `b579b7b`: 2; `4fb9bbb`: 1 | `d70421e`: 5 (path traversal, focus ring, movability, zoom-out, nav order); `b579b7b`: 1 | 2 matched pairs (zoom-out, navigation order), see Gaps |
 | #545 | `d728849`: forward arrow stale after a sign-in round trip; a test that never clicks Back | the same stale-arrow defect | matched, owner-accepted |
 | #548 | `151d8a8`: throttled preview drops the trailing value; a test that only checks "not empty" | fake timers not restored | 1 verified (Wachiman), 1 accepted (CodeRabbit) |
 
@@ -47,7 +47,7 @@
 Findings only CodeRabbit made, verified or accepted:
 
 1. **#542, `use-hidden-tracks.ts:44` (verified, low, difficulty 3).** `write()` stores the new list in `latest.current` before the save finishes. If the save is rejected, the catch only reports the error, so the next toggle starts from a list the settings never stored. CodeRabbit named the fix (reset `latest` on a refused save). Wachiman posted nothing on this commit, whose review covered only the changes since the previous one. On the earlier commit `af20a5b` Wachiman did flag a related race on the same `latest` ref (an intermediate settings reply overwriting it), which I did not compare with this symptom, so treat the gap as weak.
-2. **#543 `d70421e`, three accepted findings (low, difficulty 2-3):** focus indicator on menu items, "Move to workspace" offered without a movability check, navigation order not filtered by library. The owner changed those files in `b579b7b`. Wachiman's 8 findings on that commit did not include the focus ring or the movability check; its finding on opening a version outside the passed order is in the same file and related to the navigation-order one, and I judged it a different symptom (no `matched_by`).
+2. **#543 `d70421e`, two accepted findings (low; severity and difficulty are my unread estimates):** focus indicator on menu items, and "Move to workspace" offered without a movability check. The owner changed those files in `b579b7b`. Wachiman's 8 findings on that commit did not include them. CodeRabbit's navigation-order finding is not a gap: it is the same defect as Wachiman's finding about a version outside the passed order (the pager is gated on `position >= 0`, and one fix in `b579b7b` covers both), so the two are matched.
 3. **#548 `151d8a8`, fake timers not restored (accepted, low).** The owner changed `inspector.test.tsx` afterwards.
 
 Not a gap, unverified: the path-traversal finding on #543 (`index.ts` was not changed afterwards; only a test was added) and the `setSize` finding on #541.

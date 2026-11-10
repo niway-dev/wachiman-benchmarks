@@ -7,18 +7,20 @@ hand. `README.md` has the day's headline and the per-pair detail; this file has 
 
 ## One-minute block
 
-- **What we can conclude:** the two tools are complementary, not interchangeable. Of 14 distinct
-  confirmed defects, Wachiman found 9, CodeRabbit found 7, and only 2 were found by both. Using
-  both would have caught 14; using one alone, at most 9.
-- **What we cannot conclude:** that Wachiman is better. The sample is 14 commit pairs and 5
+- **What we can conclude:** the two tools are complementary, not interchangeable. On the 6
+  distinct defects I verified by reading the code, Wachiman found 5, CodeRabbit found 3 and 2 were
+  found by both. If the 8 owner-accepted rows are added (file-level evidence only) there are 13
+  distinct defects: Wachiman 9, CodeRabbit 7, both 3. Neither tool alone covers the set.
+- **What we cannot conclude:** that Wachiman is better. The sample is 14 commit pairs and 6
   verified defects, from one day, one repository and one judge, and no finding was judged wrong,
   so false positives are not measured.
 - **Operational gap, not quality gap:** Wachiman completed 26 of 33 observed commits (3 more
   partial, 0 refused). CodeRabbit completed 17 of 33 and skipped 4 because of its own settings
   (stacked pull requests and path filters). Only 14 commits (42%) are comparable.
-- **Cheap misses:** the 5 confirmed defects only CodeRabbit found are low severity and
-  difficulty 2 to 3 (focus indicator, movability check, navigation order, a failed-save reset, test
-  cleanup). Nothing high severity was found by either tool.
+- **Possibly cheap misses:** 4 confirmed defects were found only by CodeRabbit: one verified (a
+  failed-save reset, #542, low, difficulty 3) and three owner-accepted (focus indicator,
+  movability check, test cleanup) whose severity and difficulty are my unread estimates, low and 2
+  to 3. Nothing high severity was found by either tool. That the misses are cheap is a hypothesis.
 - **Cost:** $7.16 on the 14 pairs, $16.34 for every Wachiman review of the day. 56% of the spend
   falls outside the pairs, so the pairs understate the real day.
 
@@ -45,7 +47,7 @@ reported, never counted in a comparison.
 | Commits seen | distinct (PR, commit) in `reviews.csv` | 33 |
 | Pair rate | pairs / commits seen | 14 / 33 = **42.4%** |
 | Wachiman completed | distinct commits with status `completed` / commits seen | 26 / 33 = **78.8%** |
-| Wachiman partial, refused | rows with status `partial`, `refused` | 3 (10%), 0 |
+| Wachiman partial, refused | rows with status `partial`, `refused` over commits seen | 3 / 33 = **9.1%**, 0 |
 | CodeRabbit completed | same formula | 17 / 33 = **51.5%** |
 | CodeRabbit skipped | rows with status `skipped` | 4 |
 | Special-case rows vs commits | rows in `special-cases.csv` vs distinct commits in it | 22 rows, 19 commits |
@@ -80,58 +82,65 @@ say nothing about its review quality. The 3 Wachiman partials are all on #540.
 
 | | Findings | Verified | Owner-accepted | Unverified | Wrong | Confirmed |
 | --- | --- | --- | --- | --- | --- | --- |
-| Wachiman | 18 | 4 | 5 | 9 | 0 | 9 |
-| CodeRabbit | 10 | 2 | 5 | 3 | 0 | 7 |
+| Wachiman | 18 | 5 | 4 | 9 | 0 | 9 |
+| CodeRabbit | 10 | 3 | 4 | 3 | 0 | 7 |
 
 Wachiman also posted 38 findings on commits that are not pairs. They are in `findings.csv` as
 `comparison: special` and are in no indicator here.
 
 ### 2.3 Defects, not rows
 
-Two defects were found by both tools, so two pairs of rows describe one defect each. A defect is
-counted once.
+Three defects were found by both tools, so three pairs of rows describe one defect each. A defect
+is counted once.
 
 | Indicator | Formula | Value |
 | --- | --- | --- |
-| Distinct verified defects | verified rows, a matched pair counted once | 6 rows = **5 defects** |
-| Distinct confirmed defects | confirmed rows, a matched pair counted once | 16 rows = **14 defects** |
-| Recall on verified defects | defects the tool found / 5 | Wachiman 4/5 = **80%**; CodeRabbit 2/5 = **40%** |
-| Recall on confirmed defects | defects the tool found / 14 | Wachiman 9/14 = **64%**; CodeRabbit 7/14 = **50%** |
-| Overlap | defects both found / distinct defects | verified 1/5 = **20%**; confirmed 2/14 = **14%** |
-| Only one tool | confirmed defects found by exactly one tool | Wachiman only 7, CodeRabbit only 5 |
+| Distinct verified defects | verified rows, a matched pair counted once | 8 rows = **6 defects** |
+| Distinct confirmed defects | confirmed rows, a matched pair counted once | 16 rows = **13 defects** |
+| Recall on verified defects | defects the tool found / 6 | Wachiman 5/6 = **83%**; CodeRabbit 3/6 = **50%** |
+| Recall on confirmed defects | defects the tool found / 13 | Wachiman 9/13 = **69%**; CodeRabbit 7/13 = **54%** |
+| Overlap | defects both found / distinct defects | verified 2/6 = **33%**; confirmed 3/13 = **23%** |
+| Only one tool | confirmed defects found by exactly one tool | Wachiman only 6, CodeRabbit only 4 |
 
-The two matched defects are the screenshot zoom-out that enlarges and crops tall images (#543,
-verified) and the history arrows that miss pushes while unmounted (#545, owner-accepted).
+The three matched defects are the screenshot zoom-out that enlarges and crops tall images (#543,
+verified), the pager that disappears when the open version is outside the passed order (#543,
+verified; Wachiman and CodeRabbit worded it differently and one fix covers both) and the history
+arrows that miss pushes while unmounted (#545, owner-accepted).
 
-**What it tells us.** The union (14) is larger than either tool (9 and 7), and the overlap is
-small, so each tool finds things the other does not. This is the strongest result of the day.
+**What it tells us.** The union is larger than either tool alone (verified: 6 against 5 and 3;
+confirmed: 13 against 9 and 7), and the overlap is small, so each tool finds things the other does
+not. This is the strongest result of the day, and the verified figures carry it: the confirmed ones
+lean on file-level evidence.
 
 **Why it can mislead.** Recall here is against the defects the two tools found, not against all
-defects in the code: a defect both missed is invisible. With 5 verified defects, one defect moves a
-recall figure by 20 points, so read 80% and 40% as ranges.
+defects in the code: a defect both missed is invisible. With 6 verified defects, one defect moves a
+recall figure by about 17 points, so read 83% and 50% as ranges.
 
 ### 2.4 Precision (`verdicts.csv`)
 
 | Indicator | Formula | Value |
 | --- | --- | --- |
-| Lower bound | confirmed / all findings | Wachiman 9/18 = **50%**; CodeRabbit 7/10 = **70%** |
+| Verified-only lower bound | verified / all findings | Wachiman 5/18 = **28%**; CodeRabbit 3/10 = **30%** |
+| Accepted-or-verified share | confirmed / all findings | Wachiman 9/18 = **50%**; CodeRabbit 7/10 = **70%** |
 | Unverified share | unverified / all findings | Wachiman 9/18 = **50%**; CodeRabbit 3/10 = **30%** |
-| Among resolved | (verified) / (verified + wrong) | 4/4 and 2/2 = 100% |
+| Among resolved | (verified) / (verified + wrong) | 5/5 and 3/3 = 100% |
 
 **What it tells us.** Almost nothing yet. The 100% among resolved findings is meaningless because
-I never marked a finding `wrong`, so the true precision is somewhere between the lower bound and
-100%. The most useful number is the unverified share: half of Wachiman's result is still open.
+I never marked a finding `wrong`, so the true precision is somewhere between the verified-only
+lower bound and 100%. The accepted-or-verified share is not a true lower bound: an accepted row may
+be an unrelated change to the same file. The most useful number is the unverified share: half of
+Wachiman's result is still open.
 
 ### 2.5 Does Wachiman's own label carry information? (`findings.csv` label + verdicts)
 
-| Label | Findings | Confirmed | Share |
-| --- | --- | --- | --- |
-| `fix` | 5 | 4 | 80% |
-| `consider` | 13 | 5 | 38% |
+| Label | Findings | Confirmed | Unverified | Confirmed among judged |
+| --- | --- | --- | --- | --- |
+| `fix` | 5 | 4 | 1 | 4/4 |
+| `consider` | 13 | 5 | 8 | 5/5 |
 
-**What it tells us.** Wachiman's `fix` label is more reliable than `consider`, which is what a
-severity label should do. Confirmed excludes the unverified rows, so `consider` is probably
-undercounted.
+**What it tells us.** Nothing yet. `fix` looks better (4 of 5 against 5 of 13) only because 8 of
+the 13 `consider` rows are unverified, against 1 of 5 for `fix`. Among the rows I judged, both
+labels were right every time. The label is worth testing once the unverified rows are judged.
 
 ### 2.6 Test-quality notes (`topic = tests`, Wachiman only)
 
@@ -141,9 +150,10 @@ rows carry no `topic`, so this cannot be compared.
 
 ### 2.7 Severity and difficulty (`verdicts.csv`, hand-written)
 
-Among the 5 verified defects: severity 0 high, 2 medium, 3 low; difficulty (1 to 5, how hard for a
-human reviewer to find) 1, 3, 1 at levels 2, 3 and 4. Five defects cannot show whether either tool
-finds high-severity defects; both scales are my judgement.
+Among the 6 verified defects: severity 0 high, 2 medium, 4 low; difficulty (1 to 5, how hard for a
+human reviewer to find) 1, 4, 1 at levels 2, 3 and 4. Six defects cannot show whether either tool
+finds high-severity defects; both scales are my judgement. For the 8 owner-accepted rows they are
+estimates made without reading the changed lines.
 
 ## 3. Cost (`pairs.csv`, `reviews.csv`)
 
@@ -180,26 +190,27 @@ the same time.
 ## 5. Conclusions and what to do next
 
 **Concluded (supported by the data):**
-1. The tools are complementary: 14 confirmed defects in total, 2 shared (§2.3).
+1. The tools are complementary: 6 verified defects (2 shared) and 13 confirmed ones (3 shared)
+   (§2.3).
 2. Wachiman's coverage was high (79% completed, 0 refused); CodeRabbit's gaps come from its
    settings (§1).
-3. Wachiman's `fix` label is reliable on this sample, 4 of 5 (§2.5).
-4. The defects CodeRabbit found and Wachiman did not are low severity and easy to moderate, so
-   they are reasonable tuning candidates (§2.3).
-5. The day cost $16.34, of which the paired part is 44% (§3).
+3. The day cost $16.34, of which the paired part is 44% (§3).
 
 **Not concluded (the data does not support it):**
-1. That Wachiman is better or worse. The 4-vs-2 verified lead is five defects.
-2. A precision figure. No finding was judged `wrong`.
-3. Anything about the 38 Wachiman findings on non-pair commits.
-4. Why a tool missed a defect: `findings.csv` carries no commands or cited files.
-5. Any trend: one day, one release (v1.8.0), one repository.
+1. That Wachiman is better or worse. The 5-vs-3 verified lead is six defects.
+2. That Wachiman's `fix` label is more reliable than `consider`: the gap comes from how many rows
+   were verified (§2.5).
+3. That the defects only CodeRabbit found are cheap: only one of the four is verified (§2.3).
+4. A precision figure. No finding was judged `wrong`.
+5. Anything about the 38 Wachiman findings on non-pair commits.
+6. Why a tool missed a defect: `findings.csv` carries no commands or cited files.
+7. Any trend: one day, one release (v1.8.0), one repository.
 
 **Next, in value order:**
 1. Verify the 12 `unverified` rows, starting with the path-traversal finding on #543 and the
    `setSize` finding on #541, and mark any false one `wrong`. Until then precision stays a range.
 2. Have a second judge re-judge a sample, since every verdict here is mine.
-3. Add days. Five defects cannot support a release decision; the same script runs on any day.
+3. Add days. Six defects cannot support a release decision; the same script runs on any day.
 4. Replace the owner-accepted file-level check with a line-level one.
 
 ## Reproduce
