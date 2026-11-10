@@ -1,0 +1,569 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-6` of discourse-graphite-6 against 7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7 (merge-base 7a5fbae)",
+    "repository": {
+      "name": "discourse-graphite-6"
+    },
+    "base": {
+      "sha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7",
+      "ref": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+    },
+    "head": {
+      "sha": "267d8be1f556ed59639ced396c885bb44586da19",
+      "ref": "pr-6"
+    },
+    "title": "pr-6",
+    "description": "UX: show complete URL path if website domain is same as instance domain",
+    "author": "Arpit Jalan"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "reviewed": [
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb",
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 153,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "website_name exposes a TL0 user's website to anonymous visitors",
+      "body": "`website_name` is not in the `untrusted_attributes` list (app/serializers/user_serializer.rb:105-111), so the restriction that hides `website` from TL0 users seen by anonymous viewers does not apply to it. `include_website?` is generated there and returns false when `scope.restrict_user_fields?(object)` is true (lines 25-31; guardian at lib/guardian/user_guardian.rb:58-60, `anonymous?` at lib/guardian.rb:42). The explicit `include_website_name` at lines 153-155 only checks `website.present?`, so an anonymous visitor receives `website_name` for a TL0 user with a website. It reaches the JSON endpoint and the preloaded HTML (app/controllers/users_controller.rb:48-55) and is rendered in the header (templates/user/user.hbs:66-73), where the span shows the host and path. Fix: add `:website_name` to the `untrusted_attributes` list and delete `include_website_name` at lines 153-155. That `def` runs after the `define_method` from `untrusted_attributes`, so it overwrites the restricted check. The generated method already returns false for a nil value through `present?`.",
+      "origin": "introduced",
+      "originReason": "The diff adds the `website_name` attribute without listing it in `untrusted_attributes`.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "app/serializers/user_serializer.rb",
+          "line": 43
+        },
+        {
+          "snapshot": "head",
+          "path": "app/serializers/user_serializer.rb",
+          "line": 153
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "`website_name` is added to `attributes` but not to `untrusted_attributes`, so no `include_website_name?` guard calls `restrict_user_fields?`. The hand-written `include_website_name` has no trailing `?`, so the serializer never calls it at all. As a result, an anonymous viewer gets a TL0 user's `website_name`, even though `website` itself is hidden from them. The candidate's note about which method overwrites which is slightly off, because the two names differ, but the leak and the fix are both correct.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 43
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 105
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 153
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/guardian/user_guardian.rb",
+            "line": 58
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "line": 66,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Header label does not follow website edits on the preferences page",
+      "body": "Before this change the label was computed in the controller from `model.website`, so it changed as the user typed. The header stays on screen while preferences are edited: `user.hbs:206` renders `{{outlet}}` inside the same template, and `routes/preferences.js.es6:5-7` uses the same `User` object. The website input is bound to `model.website` (templates/user/preferences.hbs:158). The label is now `model.website_name`, which only `findDetails` sets (models/user.js.es6:320). `save()` (models/user.js.es6:166-217) sends `website` but reads back only `bio_excerpt`. As a result the link `href` (user.hbs:69) follows the new value while the text does not. After a save, or after clearing the website, the old label keeps showing until the user leaves and returns to the profile. Fix: update `website_name` from the save response in `save()`. This needs the PUT response to include it, which I did not verify; I did not read what the users controller `update` action renders.",
+      "origin": "introduced",
+      "originReason": "The base template used a controller property that was recomputed from `model.website`. The diff switched it to a static value from the server.",
+      "originEvidence": [
+        {
+          "snapshot": "base",
+          "path": "app/assets/javascripts/discourse/controllers/user.js.es6",
+          "line": 17
+        },
+        {
+          "snapshot": "head",
+          "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+          "line": 66
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "In the base, `websiteName` was a computed property on `model.website`, so the label updated as the user typed. The header now reads `model.website_name`, which only `findDetails` sets via `setProperties(json.user)`. `save()` copies back only `bio_excerpt`. The preferences route reuses the same user model, and the header is rendered above the `{{outlet}}`, so the label stays stale after an edit while the link `href` changes.",
+        "checked": [
+          {
+            "snapshot": "base",
+            "path": "app/assets/javascripts/discourse/controllers/user.js.es6",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+            "line": 66
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+            "line": 206
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/models/user.js.es6",
+            "line": 210
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/models/user.js.es6",
+            "line": 320
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/routes/preferences.js.es6",
+            "line": 6
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/preferences.hbs",
+            "line": 158
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/serializers/user_serializer_spec.rb",
+      "line": 11,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Untrusted-attribute spec does not cover website_name",
+      "body": "The 'doesn't serialize untrusted attributes' example lists `website` but not `website_name`. That is why the restricted-viewer leak in user_serializer.rb:153 passes this suite. Add `website_name` to this list, and add a restricted-viewer example for the website-name case.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "The untrusted-attributes list in the spec includes `website` but not `website_name`, so the spec does not catch the TL0/anonymous leak.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/serializers/user_serializer_spec.rb",
+            "line": 11
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "outside"
+    },
+    {
+      "path": "spec/serializers/user_serializer_spec.rb",
+      "line": 76,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Sibling-subdomain and scheme-less branches have no coverage",
+      "body": "The three new examples exercise the same-host branch and the parent-domain branch of `website_name`. The sibling-subdomain branch (app/serializers/user_serializer.rb:144-146, e.g. www.example.com against forum.example.com) and the nil-host path (138-140) have no examples. Add one example for each.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "The new examples stub hostnames `discourse.org`, `example.com` and `forums.example.com`. These exercise the different-domain, same-host and parent-domain branches. No example covers the sibling-subdomain branch at line 146, or a website with no scheme, where the host is nil (line 140).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/serializers/user_serializer_spec.rb",
+            "line": 76
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 140
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 144
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 141,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Host comparison is case-sensitive",
+      "body": "`website_host == discourse_host` (line 141) compares the host as the user typed it. `URI#host` does not normalize case, so `http://Example.com/user` on instance `example.com` takes the else branch and shows `Example.com` without the path. Downcasing both hosts before the comparison would match the intent of the same-domain branch. Confidence is medium because I did not run the code to confirm the Ruby URI behavior.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The code compares `URI(website).host` with `Discourse.current_hostname` using plain `==` and `ends_with?`, and never downcases either side. Ruby's URI parser keeps the case of the host as written, so `http://Example.com/user` on `example.com` falls into the else branch and the path is dropped.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 138
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 141
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 149
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous visitor loads a TL0 user's profile (JSON endpoint and HTML preload) and receives website_name",
+      "location": "app/serializers/user_serializer.rb:153",
+      "status": "closed",
+      "evidence": [
+        "app/serializers/user_serializer.rb:25-31",
+        "app/serializers/user_serializer.rb:105-111",
+        "app/serializers/user_serializer.rb:153-155",
+        "lib/guardian/user_guardian.rb:58-60",
+        "lib/guardian.rb:42",
+        "app/controllers/users_controller.rb:48-55",
+        "app/assets/javascripts/discourse/templates/user/user.hbs:66-73"
+      ],
+      "equivalent_path": "app/serializers/user_serializer.rb:105-111",
+      "before_after": "Before: website is hidden for restricted viewers through untrusted_attributes, so the header has no website label. After: include_website_name returns true whenever website is present, which bypasses that restriction.",
+      "visible_effect": "The host and path of a TL0 user's website appear in the profile header for anonymous visitors.",
+      "failure_mode": "The restriction on TL0 profile fields is bypassed silently. No error is raised.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Header label now reads model.website_name instead of the controller's websiteName computed from model.website",
+      "location": "app/assets/javascripts/discourse/templates/user/user.hbs:66",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/templates/user/user.hbs:66-73",
+        "app/assets/javascripts/discourse/templates/user/user.hbs:206",
+        "app/assets/javascripts/discourse/templates/user/preferences.hbs:155-160",
+        "app/assets/javascripts/discourse/routes/preferences.js.es6:5-7",
+        "app/assets/javascripts/discourse/models/user.js.es6:166-217",
+        "app/assets/javascripts/discourse/models/user.js.es6:320"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/controllers/user.js.es6:17",
+      "before_after": "Before: the label was derived from model.website, so it changed as the user typed on the preferences page. After: the label is server-computed and changes only when findDetails reloads the user.",
+      "visible_effect": "On the preferences page the label stays stale after the website is edited or saved, while the link href follows the new value.",
+      "failure_mode": "No error is shown. The stale label remains until the user leaves the page and returns to the profile.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Route entry or browser Back to the profile loads website_name via findDetails",
+      "location": "app/assets/javascripts/discourse/models/user.js.es6:285",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/models/user.js.es6:285-321",
+        "app/assets/javascripts/discourse/routes/user.js.es6:40-58"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/routes/user.js.es6:40-48",
+      "before_after": "Before and after: afterModel calls findDetails on every entry, and the preloaded JSON is consumed once via PreloadStore.getAndRemove. website_name is refreshed on each entry, with the same behavior as before.",
+      "visible_effect": "Re-entering the profile shows the current website label.",
+      "failure_mode": "If findDetails rejects, the route redirects to /404 (pre-existing behavior, not introduced here).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Server computes website_name from an unparseable or scheme-less website",
+      "location": "app/serializers/user_serializer.rb:138",
+      "status": "closed",
+      "evidence": [
+        "app/serializers/user_serializer.rb:138-140",
+        "app/services/user_updater.rb:105-107"
+      ],
+      "equivalent_path": "app/services/user_updater.rb:105-107",
+      "before_after": "Before: the JS label used split('/')[2] and was hidden when no host was present. After: the server returns nil and the label is hidden. Behavior matches the previous one.",
+      "visible_effect": "The label is hidden. The link still uses model.website.",
+      "failure_mode": "The URI parse error is rescued and nil is returned without a log. UserUpdater prefixes http:// on save, so this only happens for malformed stored values.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The pull request moves the profile website label from a controller computed property to a server-computed `website_name` attribute. I reviewed all five files in this part. The change has one blocker: `website_name` is not in `untrusted_attributes`, and the explicit `include_website_name` overrides the restriction, so anonymous visitors see a TL0 user's website host and path. There is also a fix-level stale-label bug on the preferences page, where the label does not follow website edits or saves. Two tests are weak (the untrusted list omits `website_name`, and the new branches are not covered), and one case-sensitivity issue is a consider. The `websiteName` removal in the controller and the `profileBackground` doc correction are clean. No docs/adr files exist in the snapshot, so there was no ADR to check.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 56,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 23,
+      "costUsd": 0.0263912
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2640924,
+    "usage": {
+      "input": 28,
+      "output": 30696,
+      "cacheRead": 390916,
+      "cacheWrite": 67121
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 23,
+    "durationMs": 174356,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.2377012,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "app/serializers/user_serializer.rb",
+        "line": 153,
+        "title": "website_name exposes a TL0 user's website to anonymous visitors",
+        "topic": "security",
+        "severity": "blocker",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The diff adds the `website_name` attribute without listing it in `untrusted_attributes`.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 43
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 153
+          }
+        ],
+        "reason": "`website_name` is added to `attributes` but not to `untrusted_attributes`, so no `include_website_name?` guard calls `restrict_user_fields?`. The hand-written `include_website_name` has no trailing `?`, so the serializer never calls it at all. As a result, an anonymous viewer gets a TL0 user's `website_name`, even though `website` itself is hidden from them. The candidate's note about which method overwrites which is slightly off, because the two names differ, but the leak and the fix are both correct.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 43
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 105
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 153
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/guardian/user_guardian.rb",
+            "line": 58
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+        "line": 66,
+        "title": "Header label does not follow website edits on the preferences page",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The base template used a controller property that was recomputed from `model.website`. The diff switched it to a static value from the server.",
+        "originEvidence": [
+          {
+            "snapshot": "base",
+            "path": "app/assets/javascripts/discourse/controllers/user.js.es6",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+            "line": 66
+          }
+        ],
+        "reason": "In the base, `websiteName` was a computed property on `model.website`, so the label updated as the user typed. The header now reads `model.website_name`, which only `findDetails` sets via `setProperties(json.user)`. `save()` copies back only `bio_excerpt`. The preferences route reuses the same user model, and the header is rendered above the `{{outlet}}`, so the label stays stale after an edit while the link `href` changes.",
+        "checked": [
+          {
+            "snapshot": "base",
+            "path": "app/assets/javascripts/discourse/controllers/user.js.es6",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+            "line": 66
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+            "line": 206
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/models/user.js.es6",
+            "line": 210
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/models/user.js.es6",
+            "line": 320
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/routes/preferences.js.es6",
+            "line": 6
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/templates/user/preferences.hbs",
+            "line": 158
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "spec/serializers/user_serializer_spec.rb",
+        "line": 11,
+        "title": "Untrusted-attribute spec does not cover website_name",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The untrusted-attributes list in the spec includes `website` but not `website_name`, so the spec does not catch the TL0/anonymous leak.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/serializers/user_serializer_spec.rb",
+            "line": 11
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "spec/serializers/user_serializer_spec.rb",
+        "line": 76,
+        "title": "Sibling-subdomain and scheme-less branches have no coverage",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The new examples stub hostnames `discourse.org`, `example.com` and `forums.example.com`. These exercise the different-domain, same-host and parent-domain branches. No example covers the sibling-subdomain branch at line 146, or a website with no scheme, where the host is nil (line 140).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/serializers/user_serializer_spec.rb",
+            "line": 76
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 140
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 144
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "app/serializers/user_serializer.rb",
+        "line": 141,
+        "title": "Host comparison is case-sensitive",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The code compares `URI(website).host` with `Discourse.current_hostname` using plain `==` and `ends_with?`, and never downcases either side. Ruby's URI parser keeps the case of the host as written, so `http://Example.com/user` on `example.com` falls into the else branch and the path is dropped.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 138
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 141
+          },
+          {
+            "snapshot": "head",
+            "path": "app/serializers/user_serializer.rb",
+            "line": 149
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

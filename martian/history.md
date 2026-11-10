@@ -9,6 +9,7 @@ is in each run's `metrics.json`, under `judge_cost`.
 
 | Run | PRs | High+Critical | Recall | Precision | F1 (All) | F2 (Core) | False positives | Reviews total | $/PR median | $/PR p90 | $/1k changed lines | $/golden found | $/High+Critical found | Partial reviews |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [2026-11-10 · v1.10.0 · Haiku 5.5 high + Opus 5.5 verifier (default)](runs/2026-11-10-v1.10.0-haiku-5-5-high-opus-verifier/README.md) | 50 | 45/66 | 61.3% | 26.0% | 36.5% | 47.0% | 302 | $28.62 | $0.55 | $0.91 | $1.48 | $0.27 | $0.64 | 0 |
 | [2026-11-07 · v1.9.0 · Haiku 5.5 · high · arm 1](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md) | 50 | 47/66 | 64.2% | 26.1% | 37.1% | 49.1% | 314 | $8.98 | $0.10 | $0.35 | $0.46 | $0.08 | $0.19 | 0 |
 | [2026-11-07 · v1.9.0 · Opus 5.5 · high](runs/2026-11-07-v1.9.0-opus-5-5/README.md) | 50 | 47/66 | 63.6% | 38.7% | 48.1% | 55.7% | 174 | $25.01 | $0.48 | $0.61 | $1.29 | $0.23 | $0.53 | 0 |
 

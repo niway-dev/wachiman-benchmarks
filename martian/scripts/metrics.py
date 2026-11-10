@@ -76,12 +76,35 @@ def product_cost(reviews_dir):
         findings += len(d.get("findings", []))
         partial += 1 if d["coverage"]["partial"] else 0
     total = sum(costs)
-    return {"reviews": len(costs), "partial_reviews": partial, "calls": calls, "findings": findings,
+    out = {"reviews": len(costs), "partial_reviews": partial, "calls": calls, "findings": findings,
             "changed_lines": lines, "total_usd": total,
             "per_pr_mean_usd": total / len(costs), "per_pr_median_usd": statistics.median(costs),
             "per_pr_p90_usd": pct(costs, 0.9), "per_pr_max_usd": max(costs),
             "per_1k_lines_usd": total / lines * 1000 if lines else None,
             "minutes_median": statistics.median(minutes), "minutes_max": max(minutes)}
+    out["verifier"] = verifier_stats(reviews_dir)
+    return out
+
+
+def verifier_stats(reviews_dir):
+    """What the verifier (result /2, v1.10.0 on) did and cost; None for older results."""
+    usd, statuses, outcomes, tiers, seen = 0.0, {}, {}, {}, 0
+    for f in sorted(glob.glob(os.path.join(reviews_dir, "**", "*.json"), recursive=True)):
+        d = json.load(open(f))
+        v = d.get("verification")
+        if not v:
+            continue
+        seen += 1
+        usd += v.get("costUsd") or 0
+        statuses[v["status"]] = statuses.get(v["status"], 0) + 1
+        for e in v.get("entries", []):
+            outcomes[e["outcome"]] = outcomes.get(e["outcome"], 0) + 1
+        for x in d.get("findings", []):
+            tiers[x["tier"]] = tiers.get(x["tier"], 0) + 1
+    if not seen:
+        return None
+    return {"reviews": seen, "total_usd": usd, "run_status": statuses, "entry_outcomes": outcomes,
+            "posted_tiers": tiers}
 
 
 def judge_cost(logs):

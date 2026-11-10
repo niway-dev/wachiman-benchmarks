@@ -1,0 +1,559 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-9` of discourse-graphite-9 against 728845d008f06828630a632e5c7d67e11bf15deb (merge-base 728845d)",
+    "repository": {
+      "name": "discourse-graphite-9"
+    },
+    "base": {
+      "sha": "728845d008f06828630a632e5c7d67e11bf15deb",
+      "ref": "728845d008f06828630a632e5c7d67e11bf15deb"
+    },
+    "head": {
+      "sha": "ecfa17b5a79dfdc91e7a4d50b42ae78a35d0a293",
+      "ref": "pr-9"
+    },
+    "title": "pr-9",
+    "description": "FEATURE: Localization fallbacks (server-side)",
+    "author": "Kane York"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "reviewed": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/controllers/application_controller.rb",
+      "line": 159,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Background jobs and with_locale never load the fallback locales",
+      "body": "`I18n.fallbacks.ensure_loaded!` runs only in `ApplicationController#set_locale`. `Jobs::Base#perform` sets `I18n.locale` on its worker thread (app/jobs/base.rb:151) and never loads the fallback chain. `app/services/post_alerter.rb:138` translates under `I18n.with_locale(user.effective_locale)` on the same path. The accelerator's `translate` loads only the current locale (lib/freedom_patches/translate_accelerator.rb:67-68), and `load_translations` with no arguments does nothing (lib/freedom_patches/translate_accelerator.rb:24-29). So when a key is missing from a user's locale, the fallback to the site default or `:en` finds nothing loaded, and emails or notifications sent from jobs show `translation missing: ...`. This gap predates the PR, because production's Rails fallbacks relied on the same unloaded `:en`. The PR still leaves jobs out, even though it is the server-side fallback feature. The premise that the user's locale lacks some key present in `en` is an assumption; I did not check the locale files. Suggested fix for the failure shown: add `I18n.fallbacks.ensure_loaded!` right after `I18n.locale = SiteSetting.default_locale` at app/jobs/base.rb:151. Any user locale's chain is `[user, default, :en]`, so loading the default and `:en` there covers the fallbacks, and `translate` loads the user's own locale.",
+      "origin": "pre-existing",
+      "originReason": "In the base, production already had Rails fallbacks enabled, and jobs set the locale in the same way without loading the :en fallback, so the same missing-load gap existed for jobs.",
+      "originEvidence": [
+        {
+          "snapshot": "base",
+          "path": "config/environments/production.rb",
+          "line": 29
+        },
+        {
+          "snapshot": "base",
+          "path": "app/jobs/base.rb",
+          "line": 151
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "Jobs set I18n.locale on their worker thread (app/jobs/base.rb:151) without calling I18n.fallbacks.ensure_loaded!. The accelerator's translate loads only config.locale (translate_accelerator.rb:68), and load_translations does nothing without arguments (24-29), so fallback locales stay unloaded unless something else already loaded them. @loaded_locales is shared by the whole process, so the default locale usually gets loaded by an earlier job, which lowers the real-world impact.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/jobs/base.rb",
+            "line": 151
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 68
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 62
+          },
+          {
+            "snapshot": "head",
+            "path": "app/services/post_alerter.rb",
+            "line": 138
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/application_controller.rb",
+            "line": 159
+          }
+        ]
+      },
+      "tier": "Pre-existing",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/freedom_patches/translate_accelerator.rb",
+      "line": 72,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Translation cache key ignores the fallback chain",
+      "body": "The LRU key on line 72 is `key + config.locale + backend.object_id`. The fallback chain now also depends on `SiteSetting.default_locale` (config/initializers/i18n.rb:17), and nothing in the repo calls `I18n.reload!` when that setting changes; the only `reload!` in the repo is this file's own definition (lines 39-43). Cached no-argument translations (lines 69-75) therefore keep the fallback text computed under the old default until the entry is evicted (`LRU_CACHE_SIZE` = 300, line 37) or the process restarts. Users then see text from the previous default locale with no error. Suggested fix: include `SiteSetting.default_locale` in the key on line 72. The chain is `[locale, default, :en]`, so the key change covers every input that the chain depends on. This adds one `SiteSetting` read per cached lookup.",
+      "origin": "introduced",
+      "originReason": "Before this change, fallbacks used Rails' static default (config.i18n.fallbacks = true). Making the chain depend on SiteSetting.default_locale is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "config/initializers/i18n.rb",
+          "line": 17
+        },
+        {
+          "snapshot": "base",
+          "path": "config/environments/production.rb",
+          "line": 29
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "The cache key on line 72 contains only key, config.locale and backend.object_id. The new fallback chain also depends on SiteSetting.default_locale (i18n.rb:17), and nothing clears @cache when that setting changes; the only reload! is the accelerator's own definition. Cached fallback strings can therefore go stale after the default locale changes, and in multisite they can leak between sites with different defaults.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 72
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 39
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 17
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "outside"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 24,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "high",
+      "title": "Fallbacks now apply in development and test, which the PR does not mention",
+      "body": "Before this PR, `config.i18n.fallbacks = true` was set only in production, profile and the cloud66 override. Development and test had no fallbacks (config/application.rb:98 is the only `config.i18n` line left in the repo). The unconditional `I18n.fallbacks = FallbackLocaleList.new` on line 24 changes lookups in every environment, so keys missing in development and test now show English text instead of `translation missing`. The PR body does not say this. Is that intended? If yes, say so in the PR body; if not, scope the initializer.",
+      "origin": "introduced",
+      "originReason": "The unconditional initializer is added by this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "config/initializers/i18n.rb",
+          "line": 24
+        }
+      ],
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "In the base, config.i18n.fallbacks = true appeared only in production.rb, profile.rb and the cloud66 production.rb. In the head, none of those lines remain, and the new initializer sets I18n.fallbacks unconditionally, so fallbacks now also apply in development and test.",
+        "checked": [
+          {
+            "snapshot": "base",
+            "path": "config/environments/production.rb",
+            "line": 29
+          },
+          {
+            "snapshot": "base",
+            "path": "config/environments/profile.rb",
+            "line": 32
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 24
+          },
+          {
+            "snapshot": "head",
+            "path": "config/application.rb",
+            "line": 98
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 20,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No spec covers the fallback list or ensure_loaded!",
+      "body": "The PR touches no spec files, and a grep of spec/ finds no reference to `ensure_loaded!`, `FallbackLocaleList` or `I18n.fallbacks`. The new behaviour (default-locale and `:en` fallback, the loading in `ensure_loaded!`, and the accelerator's new method in lib/freedom_patches/translate_accelerator.rb:62-65) has no test. The existing spec/integrity/i18n_spec.rb only checks lookups in the active locale, so it cannot detect a fallback regression.",
+      "origin": "introduced",
+      "originReason": "The untested code is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "config/initializers/i18n.rb",
+          "line": 12
+        }
+      ],
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "No spec mentions ensure_loaded!, FallbackLocaleList or I18n.fallbacks; a repo-wide grep finds them only in the initializer, the controller and the accelerator. spec/integrity/i18n_spec.rb only checks for missing translations in the active locale and YAML structure.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/integrity/i18n_spec.rb",
+            "line": 21
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 20
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 62
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "set_locale calls I18n.fallbacks.ensure_loaded! on every request",
+      "location": "app/controllers/application_controller.rb:159",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/application_controller.rb:152-160",
+        "config/initializers/i18n.rb:17-24",
+        "lib/freedom_patches/translate_accelerator.rb:62-65"
+      ],
+      "equivalent_path": "lib/freedom_patches/translate_accelerator.rb:67-68",
+      "before_after": "Before: the first translate call loads only the request locale. After: the request locale, the site default and :en are loaded once per process before any action runs.",
+      "visible_effect": "Keys missing from the user's locale show the default-locale or English string in web responses instead of 'translation missing'.",
+      "failure_mode": "A load error raises inside the before_filter and fails every request on that worker. Nothing rescues it, which matches what translate's own load does.",
+      "evidence_checked": true
+    },
+    {
+      "action": "I18n.t misses fall back through I18n.fallbacks (user locale, site default, :en)",
+      "location": "config/initializers/i18n.rb:9",
+      "status": "closed",
+      "evidence": [
+        "config/initializers/i18n.rb:9,17,24",
+        "config/application.rb:98",
+        "lib/freedom_patches/translate_accelerator.rb:24-29"
+      ],
+      "equivalent_path": "config/application.rb:98",
+      "before_after": "Before: fallbacks were enabled only in production, profile and the cloud66 override, through config.i18n.fallbacks, which the diff removes. After: the initializer enables them in every environment, and FallbackLocaleList#[] re-reads SiteSetting.default_locale on each lookup. config/application.rb:98 is the only config.i18n line left, so nothing else sets fallbacks.",
+      "visible_effect": "Fallback text now appears in development and test as well as production.",
+      "failure_mode": "If a fallback locale is not loaded, the miss is silent: the lookup returns nothing and the output is 'translation missing', with no error. translate_accelerator.rb:24-29 makes loading explicit, so nothing loads it automatically.",
+      "evidence_checked": false
+    },
+    {
+      "action": "Background jobs and I18n.with_locale look up keys with fallbacks, but ensure_loaded! is never called on that path",
+      "location": "app/jobs/base.rb:151",
+      "status": "open",
+      "evidence": [
+        "app/jobs/base.rb:148-153",
+        "app/services/post_alerter.rb:138-140",
+        "lib/freedom_patches/translate_accelerator.rb:24-29,67-68",
+        "config/initializers/i18n.rb:21"
+      ],
+      "equivalent_path": "app/controllers/application_controller.rb:159",
+      "before_after": "Before and after: the job thread's locale loads on its first translate call, and nothing loads the fallback locales. Only requests load them.",
+      "visible_effect": "Emails and notifications built in a job show 'translation missing' for a key absent from the user's locale, even when :en has it.",
+      "failure_mode": "Visible 'translation missing' text in the sent output. No error is logged.",
+      "open_question": "Does i18n 0.7.0's Simple backend return nil for a fallback locale that was never loaded? The accelerator's override of load_translations suggests so, but I did not read the gem source.",
+      "candidates": [
+        "i18n-0.7.0 lib/i18n/backend/simple.rb (gem source, outside the repo)"
+      ],
+      "evidence_checked": false
+    },
+    {
+      "action": "Translation LRU cache stores results for no-argument keys",
+      "location": "lib/freedom_patches/translate_accelerator.rb:72",
+      "status": "closed",
+      "evidence": [
+        "lib/freedom_patches/translate_accelerator.rb:37,39-43,69,71-75",
+        "config/initializers/i18n.rb:17"
+      ],
+      "before_after": "Before: the fallback chain did not depend on the site setting. After: the chain includes SiteSetting.default_locale, but the cache key does not.",
+      "visible_effect": "After an admin changes default_locale, cached keys keep the fallback text from the old default until eviction (300 entries) or a restart.",
+      "failure_mode": "Silent wrong-language text. No error or log.",
+      "evidence_checked": false
+    },
+    {
+      "action": "Pluralization and fallbacks are included earlier in boot, since i18n.rb sorts before inflections, logster and oj",
+      "location": "config/initializers/i18n.rb:4-9",
+      "status": "closed",
+      "evidence": [
+        "config/initializers/i18n.rb:4-9,21,24"
+      ],
+      "equivalent_path": "config/initializers/pluralization.rb",
+      "before_after": "Before: pluralization.rb (deleted) loaded late, after the other initializers. After: i18n.rb loads earlier, but no other initializer calls I18n, so the order change has no visible effect.",
+      "visible_effect": "None found.",
+      "failure_mode": "None found.",
+      "evidence_checked": false
+    }
+  ],
+  "summary": "Reviewed the seven files in this part. The config removals are consistent: the new initializer sets fallbacks for every environment, and nothing else in the repo sets them. Two defects are worth fixing in this PR. First, the fallback locales are only loaded in the request filter, so background jobs and with_locale render \"translation missing\" when a key is absent from the user's locale; this gap predates the PR, but the PR is the server-side fallback feature. Second, the translation LRU cache key omits the site default locale, which now feeds the fallback chain, so cached text can go stale after an admin changes it. I also flagged that fallbacks now apply in development and test, which the PR body does not mention, and that the PR adds no test for the new behaviour. The job-path contract stays open because I did not read the i18n 0.7.0 gem source. pluralization.rb is deleted at head, and its contents now live in i18n.rb.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 46,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 20,
+      "costUsd": 0.040502609999999994
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "728845d008f06828630a632e5c7d67e11bf15deb"
+  },
+  "execution": {
+    "costUsdEstimate": 0.25355841,
+    "usage": {
+      "input": 28,
+      "output": 52306,
+      "cacheRead": 369900,
+      "cacheWrite": 82156
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 20,
+    "durationMs": 262507,
+    "stop": "complete",
+    "notices": [
+      "Contract \"I18n.t misses fall back through I18n.fallbacks (user locale, site default, :en)\": evidence not verified: config/initializers/i18n.rb:9,17,24 is not path:line.",
+      "Contract \"Background jobs and I18n.with_locale look up keys with fallbacks, but ensure_loaded! is never called on that path\": evidence not verified: lib/freedom_patches/translate_accelerator.rb:24-29,67-68 is not path:line.",
+      "Contract \"Translation LRU cache stores results for no-argument keys\": evidence not verified: lib/freedom_patches/translate_accelerator.rb:37,39-43,69,71-75 is not path:line.",
+      "Contract \"Pluralization and fallbacks are included earlier in boot, since i18n.rb sorts before inflections, logster and oj\": evidence not verified: config/initializers/i18n.rb:4-9,21,24 is not path:line."
+    ]
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.21305580000000002,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "app/controllers/application_controller.rb",
+        "line": 159,
+        "title": "Background jobs and with_locale never load the fallback locales",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "pre-existing",
+        "originReason": "In the base, production already had Rails fallbacks enabled, and jobs set the locale in the same way without loading the :en fallback, so the same missing-load gap existed for jobs.",
+        "originEvidence": [
+          {
+            "snapshot": "base",
+            "path": "config/environments/production.rb",
+            "line": 29
+          },
+          {
+            "snapshot": "base",
+            "path": "app/jobs/base.rb",
+            "line": 151
+          }
+        ],
+        "reason": "Jobs set I18n.locale on their worker thread (app/jobs/base.rb:151) without calling I18n.fallbacks.ensure_loaded!. The accelerator's translate loads only config.locale (translate_accelerator.rb:68), and load_translations does nothing without arguments (24-29), so fallback locales stay unloaded unless something else already loaded them. @loaded_locales is shared by the whole process, so the default locale usually gets loaded by an earlier job, which lowers the real-world impact.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/jobs/base.rb",
+            "line": 151
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 68
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 62
+          },
+          {
+            "snapshot": "head",
+            "path": "app/services/post_alerter.rb",
+            "line": 138
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/application_controller.rb",
+            "line": 159
+          }
+        ],
+        "outcome": "moved",
+        "severityAfter": "consider"
+      },
+      {
+        "id": "c2",
+        "path": "lib/freedom_patches/translate_accelerator.rb",
+        "line": 72,
+        "title": "Translation cache key ignores the fallback chain",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "Before this change, fallbacks used Rails' static default (config.i18n.fallbacks = true). Making the chain depend on SiteSetting.default_locale is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 17
+          },
+          {
+            "snapshot": "base",
+            "path": "config/environments/production.rb",
+            "line": 29
+          }
+        ],
+        "reason": "The cache key on line 72 contains only key, config.locale and backend.object_id. The new fallback chain also depends on SiteSetting.default_locale (i18n.rb:17), and nothing clears @cache when that setting changes; the only reload! is the accelerator's own definition. Cached fallback strings can therefore go stale after the default locale changes, and in multisite they can leak between sites with different defaults.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 72
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 39
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 17
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "config/initializers/i18n.rb",
+        "line": 24,
+        "title": "Fallbacks now apply in development and test, which the PR does not mention",
+        "topic": "question",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The unconditional initializer is added by this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 24
+          }
+        ],
+        "reason": "In the base, config.i18n.fallbacks = true appeared only in production.rb, profile.rb and the cloud66 production.rb. In the head, none of those lines remain, and the new initializer sets I18n.fallbacks unconditionally, so fallbacks now also apply in development and test.",
+        "checked": [
+          {
+            "snapshot": "base",
+            "path": "config/environments/production.rb",
+            "line": 29
+          },
+          {
+            "snapshot": "base",
+            "path": "config/environments/profile.rb",
+            "line": 32
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 24
+          },
+          {
+            "snapshot": "head",
+            "path": "config/application.rb",
+            "line": 98
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "config/initializers/i18n.rb",
+        "line": 20,
+        "title": "No spec covers the fallback list or ensure_loaded!",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The untested code is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 12
+          }
+        ],
+        "reason": "No spec mentions ensure_loaded!, FallbackLocaleList or I18n.fallbacks; a repo-wide grep finds them only in the initializer, the controller and the accelerator. spec/integrity/i18n_spec.rb only checks for missing translations in the active locale and YAML structure.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/integrity/i18n_spec.rb",
+            "line": 21
+          },
+          {
+            "snapshot": "head",
+            "path": "config/initializers/i18n.rb",
+            "line": 20
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/freedom_patches/translate_accelerator.rb",
+            "line": 62
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

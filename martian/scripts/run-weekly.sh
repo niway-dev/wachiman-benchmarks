@@ -8,13 +8,14 @@
 #   QUEUES         review queues in parallel (default 2: two Opus sessions at a time)
 #   JUDGE_BATCH    judge calls in flight (default 8)
 #   EXTRA_ENV      extra settings for the reviews, e.g. "AGENT_REVIEW_X=1" (an arm)
+#   WACHIMAN_ARGS  extra `wachiman local` flags, e.g. "--result-version 2" (v1.10.0 on: keeps the verifier's verdicts)
 #   RAM_GB         RAM disk size for snapshots (default 6; two Discourse snapshots need about 4)
 # Needs: the installed `wachiman`, ~/.wachiman/claude-personal signed in, ANTHROPIC_API_KEY unset.
 set -u
 LABEL=$1; MODEL=${2:-claude-opus-5-5}; EFFORT=${3:-high}
 HERE=${0:A:h:h}                                   # martian/
 W=${MARTIAN_WORK:-$HOME/.cache/wachiman-martian}
-QUEUES=${QUEUES:-2}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}
+QUEUES=${QUEUES:-2}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}; WACHIMAN_ARGS=${WACHIMAN_ARGS:-}
 JM=anthropic/claude-opus-4-5-20251101; JD=anthropic_claude-opus-4-5-20251101
 PROFILE=$HOME/.wachiman/claude-personal
 RUN=$W/runs/$LABEL; DEST=$HERE/runs/$LABEL
@@ -23,7 +24,7 @@ log() { echo "$(date +%H:%M:%S) $*" | tee -a $RUN/run.log; }
 [ -n "${ANTHROPIC_API_KEY:-}" ] && { echo "unset ANTHROPIC_API_KEY first"; exit 2; }
 [ -d $W/repos ] && [ -d $W/martian-upstream ] && [ -x $W/venv/bin/python ] || { echo "cache missing: see README bootstrap"; exit 2; }
 mkdir -p $RUN/reviews $RUN/wt
-log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, queues $QUEUES ${EXTRA_ENV:+extra: $EXTRA_ENV}"
+log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, queues $QUEUES ${EXTRA_ENV:+extra: $EXTRA_ENV} ${WACHIMAN_ARGS:+args: $WACHIMAN_ARGS}"
 
 # 1. RAM disk for wachiman's snapshots (the laptop disk is too slow: see the 2026-11-07 report)
 RAM=/Volumes/martianram
@@ -46,7 +47,7 @@ review_queue() {
       env -u ANTHROPIC_API_KEY TMPDIR=$RAM/tmp AGENT_REVIEW_MODEL=$MODEL AGENT_REVIEW_EFFORT=$EFFORT \
         AGENT_REVIEW_BUDGET_USD=10 ${=EXTRA_ENV} \
         wachiman local --repo-dir $wt --base $base --format json --profile isolated:personal \
-        --max-depth 1000 --output $out/$n.json 2> $out/$n.stderr
+        --max-depth 1000 ${=WACHIMAN_ARGS} --output $out/$n.json 2> $out/$n.stderr
       log "review $repo $n attempt $attempt exit $? $(( $(date +%s) - s ))s"
     done
     git -C $W/repos/$repo worktree remove --force $RUN/wt/$repo-$n 2>/dev/null

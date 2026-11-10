@@ -1,0 +1,774 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-67876-flat` of sentry-67876-flat against f3b740199ef0b8057c2c68a377fd3b4d42346deb (merge-base f3b7401)",
+    "repository": {
+      "name": "sentry-67876-flat"
+    },
+    "base": {
+      "sha": "f3b740199ef0b8057c2c68a377fd3b4d42346deb",
+      "ref": "f3b740199ef0b8057c2c68a377fd3b4d42346deb"
+    },
+    "head": {
+      "sha": "b807cdbdfdb7d0fa3ff3f0402fe8744ff4700adf",
+      "ref": "pr-67876-flat"
+    },
+    "title": "pr-67876-flat",
+    "description": "GitHub OAuth Security Enhancement",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/github/integration.py",
+      "src/sentry/web/frontend/pipeline_advancer.py",
+      "tests/sentry/integrations/github/test_integration.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/github/integration.py",
+      "src/sentry/web/frontend/pipeline_advancer.py",
+      "tests/sentry/integrations/github/test_integration.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 412,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "OAuth state is a public constant, not a per-session nonce",
+      "body": "The check `request.GET.get(\"state\") != pipeline.signature` accepts a value that anyone can compute. `pipeline.signature` is `md5_text(*pipe_ids)` over the view class names (src/sentry/pipeline/base.py:129-133), so every install uses the same value (the new test hard-codes it at tests/sentry/integrations/github/test_integration.py:235). The sibling OAuth view generates `secrets.token_hex()` per start, binds it with `pipeline.bind_state(\"state\", ...)` and compares it on callback (src/sentry/identity/oauth2.py:245-252, 325). Because the value is fixed, a callback with `state=<md5>`, a GitHub `code` belonging to an attacker, and an `installation_id` the attacker supplies is accepted in a victim's browser that has an install pipeline open (installation_id is bound from the GET at line 397-399). The sender check at line 503 then passes for an installation the attacker owns, which links that installation to the victim's org. This is the login-CSRF protection the PR adds, and it does not protect. Fix: generate `state = secrets.token_hex()`, bind it before the GitHub redirect, and compare with `pipeline.fetch_state(\"state\")` at line 412, as oauth2.py does. Confidence is medium because the attack needs the victim to have an open pipeline.",
+      "origin": "introduced",
+      "originReason": "OAuthLoginView and its state check are new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/integrations/github/integration.py",
+          "line": 402
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "`pipeline.signature` is the md5 of the pipeline view class paths (pipeline/base.py:132-133). It is the same for every session, and the test hard-codes it (test_integration.py:235). So the state check at integration.py:412 has no per-session nonce, and a forged callback carrying that constant passes it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 402
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 412
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/pipeline/base.py",
+            "line": 133
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 235
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 503,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Reinstall identity check raises KeyError when the Integration has no `sender`",
+      "body": "`integration.metadata[\"sender\"][\"login\"]` raises KeyError whenever the row has no `sender` key. The sibling endpoint guards this case (src/sentry/integrations/github/installation.py:44-45 returns 404 when `sender` is missing). `sender` is often missing: it is written only when the webhook's state carries it (integration.py:376-377; `sender` is not bound anywhere else in the github package), and the pipeline's `ensure_integration` replaces the whole metadata dict on finish (src/sentry/integrations/pipeline.py:34, 42). So the sender is dropped the first time an install completes, and test_basic_flow asserts that metadata after a pipeline run has no sender (tests/sentry/integrations/github/test_integration.py:303-310). The row also outlives a Sentry-side removal: deleting an OrganizationIntegration does not touch the Integration (src/sentry/deletions/defaults/organizationintegration.py:24-34), and the reinstall tests delete the Integration by hand before retrying (tests/sentry/integrations/github/test_integration.py:359-365). Reinstalling a GitHub installation after it was removed from an org therefore reaches line 503 with no sender and returns an unhandled 500. Fix: read the login with `.get` (for example `integration.metadata.get(\"sender\", {}).get(\"login\")`) and treat a missing value as the invalid-request error, so the check fails closed. Separately, the sender is discarded on first finish, so the check protects only the first install. Confidence is medium: I did not read the Sentry-side uninstall endpoint, which is where the row would have to persist.",
+      "origin": "introduced",
+      "originReason": "The unguarded metadata lookup was added by this diff; the base went straight to next_step.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/integrations/github/integration.py",
+          "line": 503
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "Only the installation webhook binds `sender` (webhook.py:202-208). The pipeline finish calls build_integration on pipeline state, which has no sender, and ensure_integration then overwrites metadata (pipeline.py:34,42,93,132). test_basic_flow confirms the sender is gone after an install. So on a later reinstall where the Integration row still exists, `integration.metadata[\"sender\"][\"login\"]` raises KeyError. installation.py:44 guards exactly this case.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 503
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 376
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/pipeline.py",
+            "line": 42
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/webhook.py",
+            "line": 204
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/installation.py",
+            "line": 44
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 303
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 482,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Identity check is skipped when no Integration row exists yet",
+      "body": "When `Integration.objects.get(external_id=installation_id)` raises DoesNotExist, line 482 returns `pipeline.next_step()` without the sender comparison that runs only at lines 501-505. The row is then created by build_integration, which writes no `sender` (integration.py:376-377), so nothing records who installed it. In a normal install the webhook creates the row first with the sender (src/sentry/integrations/github/webhook.py:201-210), so the gap is the window before that webhook is processed and any deployment where the installation webhook is not delivered. Is that window acceptable, or should the pipeline also check the installer when no row exists?",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "When no Integration row exists, line 482 returns next_step() before the sender comparison at 501-505 runs. The installer's identity is therefore never checked on that path.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 481
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 501
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/webhook.py",
+            "line": 201
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 423,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "OAuth token exchange and /user lookup have no error handling",
+      "body": "`safe_urlopen` at line 423 is outside any try block. `safe_urlopen` calls `session.request` (src/sentry/http.py:106-114), which raises on connection errors and timeouts. The sibling wraps the same call and returns a pipeline error for connection, SSL and JSON failures (src/sentry/identity/oauth2.py:286-314, 342). Separately, `get_user_info` at line 434 calls `raise_for_status()` (src/sentry/identity/github/provider.py:9-16), so a 401 or 5xx from GitHub's /user raises here too. Either way the user gets an unhandled 500 and the pipeline is not advanced. A user who cancels on GitHub comes back with `error=access_denied` and no `code`; the code still sends an empty code and goes down the same path. Fix: wrap the token request and the /user call the way oauth2.py does, and return `error(request, self.active_organization)` on failure.",
+      "origin": "introduced",
+      "originReason": "The OAuth exchange code is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/integrations/github/integration.py",
+          "line": 423
+        }
+      ],
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "safe_urlopen at line 423 is outside any try block, and session.request can raise (http.py:106). get_user_info calls raise_for_status (provider.py:16) and is also unwrapped at line 434. Network errors or a non-2xx response from /user therefore propagate as unhandled exceptions. The cancel case is the exception: with no code, GitHub returns no access_token and line 431 handles it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 423
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 434
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/http.py",
+            "line": 106
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/identity/github/provider.py",
+            "line": 16
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/integrations/github/test_integration.py",
+      "line": 379,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "test_installation_not_found no longer reaches the 404 path it is named for",
+      "body": "The first request now stops at the OAuth redirect (integration.py:401-409). The second request sends a wrong state, so the only response it can produce is the state-check error (integration.py:412-413). The assertion at line 396 therefore checks the invalid-request text, and the test no longer reaches build_integration's 404 IntegrationError (integration.py:353-357). The old assertion for \"The GitHub installation could not be found.\" was removed and nothing replaces it. Fix: send a request with the correct code and state before asserting the 404 message, so the test reaches the installation lookup.",
+      "origin": "introduced",
+      "originReason": "The diff replaced the 404-message assertion with the invalid-request assertion.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "tests/sentry/integrations/github/test_integration.py",
+          "line": 396
+        }
+      ],
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The test sends state `ddd023d...`, which differs from the pipeline signature `9cae5e...`, so line 412 returns the generic invalid-request error. The test never reaches build_integration's 404 branch (integration.py:355-356), and the assertion for that 404 message was dropped.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 392
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 396
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 412
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 356
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "outside"
+    },
+    {
+      "path": "tests/sentry/integrations/github/test_integration.py",
+      "line": 359,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test covers the positive identity check or reinstall with a row that has no sender",
+      "body": "No test creates the row through the installation webhook with a matching sender and asserts a successful install, so the success path of the new check is untested. Only the negative case is covered (test_github_user_mismatch). test_github_installed_on_another_org deletes the Integration before its retry (lines 359-365), which removes the state where the new line 503 runs. Add a test that installs through the webhook with a matching sender and expects success, and one that reinstalls with a row lacking `sender` and expects the invalid-request error rather than an exception.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c6",
+        "status": "supported",
+        "reason": "The only test that sends the installation webhook is test_github_user_mismatch, which uses a mismatched sender (lines 415-417). test_github_installed_on_another_org deletes the Integration before retrying (359-365). No test covers a matching-sender success or a reinstall onto a row without sender.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 417
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 365
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "outside"
+    },
+    {
+      "path": "src/sentry/integrations/github/integration.py",
+      "line": 494,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Reinstall now rejects a non-active Integration row that the old code accepted",
+      "body": "Before this change, an existing row with no OrganizationIntegration went straight to `pipeline.next_step()` whatever its status (old lines 481-492). Line 494 adds `status=ObjectStatus.ACTIVE`, so a row in another status now gets the generic invalid-request error. Is that the intended outcome for non-active rows, and can one of those statuses occur for an installation id that is being reinstalled? The PR does not mention this behavior change.",
+      "origin": "introduced",
+      "originReason": "The ACTIVE status filter is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/integrations/github/integration.py",
+          "line": 495
+        }
+      ],
+      "verification": {
+        "candidateId": "c7",
+        "status": "supported",
+        "reason": "In the base, an existing row with no OrganizationIntegration bound state and went to next_step whatever its status (base lines 428-430). The head adds `status=ObjectStatus.ACTIVE` at line 495 and returns an error for any other status, which is a real behaviour change.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 495
+          },
+          {
+            "snapshot": "base",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 429
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Start GitHub install: redirect to github.com/login/oauth/authorize with a state value",
+      "location": "src/sentry/integrations/github/integration.py:397-409",
+      "status": "open",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:397-409",
+        "src/sentry/identity/oauth2.py:245-256",
+        "src/sentry/pipeline/base.py:129-133",
+        "tests/sentry/integrations/github/test_integration.py:233-236"
+      ],
+      "equivalent_path": "src/sentry/identity/oauth2.py:245-256",
+      "before_after": "The sibling (OAuth2LoginView.dispatch) generates a random state with secrets.token_hex(), binds it to the pipeline, and binds the request subdomain (oauth2.py:245-254). The new path binds the pipeline's MD5 signature as the state (integration.py:402), binds no state key, and binds no subdomain.",
+      "visible_effect": "The browser goes to GitHub's authorize page with state=9cae5e88803f35ed7970fc131e6e65d3 in every install (the test hard-codes this value).",
+      "failure_mode": "No failure on the start itself. The state value is public, so the callback check does not bind the callback to this session.",
+      "open_question": "Does skipping the subdomain binding break installs on customer domains? The callback URL is built without a url_prefix (integration.py:404-406), and the advancer only redirects to the org subdomain when a subdomain is bound (pipeline_advancer.py:54-61).",
+      "candidates": [
+        "src/sentry/web/frontend/pipeline_advancer.py",
+        "src/sentry/identity/oauth2.py:253-254"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "OAuth callback: check state, exchange the code for a token, fetch /user, bind the login",
+      "location": "src/sentry/integrations/github/integration.py:411-439",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:411-439",
+        "src/sentry/identity/oauth2.py:282-314",
+        "src/sentry/identity/oauth2.py:316-353",
+        "src/sentry/http.py:103-117",
+        "src/sentry/identity/github/provider.py:7-17"
+      ],
+      "equivalent_path": "src/sentry/identity/oauth2.py:316-353 (OAuth2CallbackView.dispatch) and oauth2.py:282-314 (exchange_token)",
+      "before_after": "The sibling compares the state with fetch_state(\"state\") (oauth2.py:325), wraps the token request in try/except for SSL, connection and JSON errors, and returns pipeline.error(...) on failure (oauth2.py:286-314, 335, 342). The new path compares with pipeline.signature (line 412), sends the token request outside any try (line 423), and calls get_user_info, which raises on HTTP errors (line 434). On success it binds the login and advances.",
+      "visible_effect": "Success: the pipeline advances to the installation step. Failure: an error dialog for the handled cases, or an unhandled 500 for exceptions.",
+      "failure_mode": "A connection error, timeout or SSRF block on the token request, or a 401/5xx on /user, raises out of the view. The pipeline is not advanced, nothing is logged, and the user has to restart the install. A GitHub cancel (error=access_denied, no code) takes the same path with an empty code.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Installation step: fall back to the installation_id bound in pipeline state when the callback has none",
+      "location": "src/sentry/integrations/github/integration.py:448-455",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:448-455",
+        "src/sentry/integrations/github/integration.py:501-507"
+      ],
+      "before_after": "Before: a missing installation_id in GET redirected to the GitHub app page (old integration.py:447-448). Now the value falls back to the state bound earlier (integration.py:448-450). If neither is present, the view still redirects to the app page (integration.py:451-452).",
+      "visible_effect": "A callback that has no installation_id in GET (for example the OAuth callback) continues into the pending-deletion and another-org checks instead of redirecting to GitHub.",
+      "failure_mode": "None new. If the bound value is stale, the checks run against it; the sender check at line 503 is what guards it.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Reinstall guard: an existing Integration row with no OrganizationIntegration is checked against the authenticated GitHub user",
+      "location": "src/sentry/integrations/github/integration.py:493-507",
+      "status": "open",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:493-507",
+        "src/sentry/integrations/github/installation.py:34-45",
+        "src/sentry/integrations/pipeline.py:32-44",
+        "src/sentry/integrations/github/integration.py:359-377",
+        "tests/sentry/integrations/github/test_integration.py:303-310",
+        "src/sentry/deletions/defaults/organizationintegration.py:24-34"
+      ],
+      "equivalent_path": "src/sentry/integrations/github/installation.py:34-45 (GitHubIntegrationsInstallationEndpoint.get)",
+      "before_after": "The sibling filters on status=ACTIVE and returns 404 when \"sender\" is missing from metadata (installation.py:34-45). The new code filters on status=ACTIVE too (line 494) but indexes integration.metadata[\"sender\"][\"login\"] directly (line 503), with no missing-key guard.",
+      "visible_effect": "A reinstall of an installation whose row lacks sender returns a 500 page.",
+      "failure_mode": "KeyError is raised and not caught, so the user sees an error page and the install does not complete. The row is not changed.",
+      "open_question": "Does a Sentry-side uninstall leave the Integration row in ACTIVE status with no OrganizationIntegration? The deletion task only removes the OrganizationIntegration (organizationintegration.py:24-34); I did not read the uninstall endpoint that schedules it.",
+      "candidates": [
+        "src/sentry/api/bases/organization_integrations.py",
+        "src/sentry/models/integrations/integration.py:87-95"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Install when no Integration row exists for the installation id: continue without the identity check",
+      "location": "src/sentry/integrations/github/integration.py:475-482",
+      "status": "open",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:475-482",
+        "src/sentry/integrations/github/integration.py:376-377",
+        "src/sentry/integrations/github/webhook.py:201-210"
+      ],
+      "before_after": "Before: the same early next_step() (old integration.py:481-482 binds the id and continues). The new check only runs when a row exists (lines 493-507), so this branch keeps the old behavior.",
+      "visible_effect": "The install continues, and build_integration creates a row with no sender.",
+      "failure_mode": "The identity of the installer is never recorded for this row. If the webhook arrives later, its ensure_integration call writes the sender.",
+      "open_question": "Is the webhook always processed before a user can reach this step, and is a deployment without installation webhooks acceptable?",
+      "candidates": [
+        "src/sentry/integrations/github/webhook.py:186-210"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Direct install from GitHub (setup_action=install, no pipeline): redirect to the installation picker",
+      "location": "src/sentry/web/frontend/pipeline_advancer.py:37-48",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/web/frontend/pipeline_advancer.py:37-48"
+      ],
+      "equivalent_path": "src/sentry/web/frontend/pipeline_advancer.py:37-44 before this change (the FORWARD_INSTALL_FOR list check)",
+      "before_after": "Before: the same condition, checked with `provider_id in FORWARD_INSTALL_FOR`. After: `provider_id == \"github\"`. The module-level constant is removed; a grep of the repository found no other reference to it. Same behavior.",
+      "visible_effect": "Unchanged: redirects to the integration installation page for the installation id.",
+      "failure_mode": "No change in this diff. The existing reverse() call at lines 46-48 raises if installation_id is None; that line is not part of this diff.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New pipeline view list: OAuth step added before the installation step",
+      "location": "src/sentry/integrations/github/integration.py:343-344",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/github/integration.py:343-344",
+        "src/sentry/pipeline/base.py:129-133",
+        "src/sentry/web/frontend/pipeline_advancer.py:50-52"
+      ],
+      "equivalent_path": "src/sentry/identity/oauth2.py:94-106 (OAuth2Provider.get_pipeline_views, the pattern of an OAuth view ahead of the callback)",
+      "before_after": "The signature is an MD5 of the view class names (pipeline/base.py:129-133). Adding a view changes the signature, so a pipeline started before the deploy no longer matches.",
+      "visible_effect": "Installs that were in progress during the deploy return the generic invalid-request message and are redirected to /.",
+      "failure_mode": "The in-flight install stops at the validity check. The user has to start again.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed the three files of this part. Three defects matter most. (1) The new OAuth `state` check compares against `pipeline.signature`, an MD5 of the view class names that is the same for every install, so it gives no CSRF protection (security, fix). (2) The reinstall identity check indexes `metadata[\"sender\"]` directly, and `sender` is often missing (the pipeline's own `ensure_integration` drops it), so a reinstall can raise KeyError and return a 500 (bug, fix; medium confidence because I did not read the uninstall endpoint). (3) The GitHub token exchange and `/user` lookup have no error handling, unlike the sibling OAuth view, so GitHub or network failures become unhandled 500s (bug, fix). Also: `test_installation_not_found` no longer reaches the 404 path it is named for, and the new tests do not cover the positive identity check or the no-sender reinstall. The `pipeline_advancer.py` change is behavior-neutral. I did not build or run anything.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 297,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 29,
+      "costUsd": 0.20858314
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f3b740199ef0b8057c2c68a377fd3b4d42346deb"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5864763399999999,
+    "usage": {
+      "input": 48,
+      "output": 60658,
+      "cacheRead": 1583666,
+      "cacheWrite": 155158
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 29,
+    "durationMs": 370410,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.3778932,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "src/sentry/integrations/github/integration.py",
+        "line": 412,
+        "title": "OAuth state is a public constant, not a per-session nonce",
+        "topic": "security",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "OAuthLoginView and its state check are new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 402
+          }
+        ],
+        "reason": "`pipeline.signature` is the md5 of the pipeline view class paths (pipeline/base.py:132-133). It is the same for every session, and the test hard-codes it (test_integration.py:235). So the state check at integration.py:412 has no per-session nonce, and a forged callback carrying that constant passes it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 402
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 412
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/pipeline/base.py",
+            "line": 133
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 235
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "src/sentry/integrations/github/integration.py",
+        "line": 503,
+        "title": "Reinstall identity check raises KeyError when the Integration has no `sender`",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The unguarded metadata lookup was added by this diff; the base went straight to next_step.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 503
+          }
+        ],
+        "reason": "Only the installation webhook binds `sender` (webhook.py:202-208). The pipeline finish calls build_integration on pipeline state, which has no sender, and ensure_integration then overwrites metadata (pipeline.py:34,42,93,132). test_basic_flow confirms the sender is gone after an install. So on a later reinstall where the Integration row still exists, `integration.metadata[\"sender\"][\"login\"]` raises KeyError. installation.py:44 guards exactly this case.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 503
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 376
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/pipeline.py",
+            "line": 42
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/webhook.py",
+            "line": 204
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/installation.py",
+            "line": 44
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 303
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "src/sentry/integrations/github/integration.py",
+        "line": 482,
+        "title": "Identity check is skipped when no Integration row exists yet",
+        "topic": "question",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "When no Integration row exists, line 482 returns next_step() before the sender comparison at 501-505 runs. The installer's identity is therefore never checked on that path.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 481
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 501
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/webhook.py",
+            "line": 201
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "src/sentry/integrations/github/integration.py",
+        "line": 423,
+        "title": "OAuth token exchange and /user lookup have no error handling",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The OAuth exchange code is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 423
+          }
+        ],
+        "reason": "safe_urlopen at line 423 is outside any try block, and session.request can raise (http.py:106). get_user_info calls raise_for_status (provider.py:16) and is also unwrapped at line 434. Network errors or a non-2xx response from /user therefore propagate as unhandled exceptions. The cancel case is the exception: with no code, GitHub returns no access_token and line 431 handles it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 423
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 434
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/http.py",
+            "line": 106
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/identity/github/provider.py",
+            "line": 16
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "tests/sentry/integrations/github/test_integration.py",
+        "line": 379,
+        "title": "test_installation_not_found no longer reaches the 404 path it is named for",
+        "topic": "tests",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The diff replaced the 404-message assertion with the invalid-request assertion.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 396
+          }
+        ],
+        "reason": "The test sends state `ddd023d...`, which differs from the pipeline signature `9cae5e...`, so line 412 returns the generic invalid-request error. The test never reaches build_integration's 404 branch (integration.py:355-356), and the assertion for that 404 message was dropped.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 392
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 396
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 412
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 356
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c6",
+        "path": "tests/sentry/integrations/github/test_integration.py",
+        "line": 359,
+        "title": "No test covers the positive identity check or reinstall with a row that has no sender",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The only test that sends the installation webhook is test_github_user_mismatch, which uses a mismatched sender (lines 415-417). test_github_installed_on_another_org deletes the Integration before retrying (359-365). No test covers a matching-sender success or a reinstall onto a row without sender.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 417
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/sentry/integrations/github/test_integration.py",
+            "line": 365
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c7",
+        "path": "src/sentry/integrations/github/integration.py",
+        "line": 494,
+        "title": "Reinstall now rejects a non-active Integration row that the old code accepted",
+        "topic": "question",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The ACTIVE status filter is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 495
+          }
+        ],
+        "reason": "In the base, an existing row with no OrganizationIntegration bound state and went to next_step whatever its status (base lines 428-430). The head adds `status=ObjectStatus.ACTIVE` at line 495 and returns an error for any other status, which is a real behaviour change.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 495
+          },
+          {
+            "snapshot": "base",
+            "path": "src/sentry/integrations/github/integration.py",
+            "line": 429
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

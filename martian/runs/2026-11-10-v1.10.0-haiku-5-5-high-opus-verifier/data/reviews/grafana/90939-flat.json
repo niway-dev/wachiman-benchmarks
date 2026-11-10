@@ -1,0 +1,306 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "No re-check after taking the write lock, so queued cold-start requests each re-read the manifest",
+      "body": "The fast path (lines 41-47) returns only when the cache is populated. When it is empty, every concurrent caller falls through to `entryPointAssetsCacheMu.Lock()` at line 48 and then unconditionally runs `readWebAssetsFromFile` (line 60) and overwrites the cache (line 69). The caller that wins the lock has already filled the cache, but the callers queued behind it do not look at it again, so they each re-read and re-parse `assets-manifest.json` one after another. Before this change the same duplicate reads happened, but in parallel; now they are serialized, so the latency of the N-th queued request grows with N. A second check of `entryPointAssetsCache` after the Lock (keeping the dev-mode reload) would make the queued callers return the already-built result.",
+      "origin": "introduced",
+      "originReason": "The diff adds the exclusive lock, and that lock is what makes the duplicate reads run one after another. Before, they ran in parallel without a lock.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/api/webassets/webassets.go",
+          "line": 48
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "No second check of entryPointAssetsCache after Lock() at line 48. Every caller that missed the RLock fast path re-reads the manifest at line 60 while holding the exclusive lock, so cold-start callers end up reading it one after another. The cost is only paid once at startup, so the impact is small.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 41
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 48
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 60
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 69
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 69,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "On a manifest read error the cache stays nil, so every request takes the exclusive lock and re-reads the file",
+      "body": "When `readWebAssetsFromFile` fails (for example the build has no `public/build/assets-manifest.json`), `result` is nil, line 69 stores nil, and line 70 returns the error. Because the cache is nil, the next request misses the fast path and again takes the exclusive write lock at line 48 to read the file. Before this change those requests ran concurrently and each failed on its own; now all page requests (index.go:82 and frontendsettings.go:62 both call GetWebAssets) queue behind one write lock that is held across file I/O. The error is still returned to the caller, so nothing is hidden, but the failure now serializes unrelated requests. This is a cost issue, not a wrong result.",
+      "origin": "introduced",
+      "originReason": "Retrying on every call after an error already happened in the base. Doing those retries one at a time under a lock is new, caused by the Lock this diff adds.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/api/webassets/webassets.go",
+          "line": 48
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "When the read fails, result is nil, so line 69 stores nil in the cache. Every later call misses the fast path and takes the write lock to retry the file I/O, which serializes callers in index.go:82, frontendsettings.go:62 and recovery.go:141.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 59
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 70
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/index.go",
+            "line": 82
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/frontendsettings.go",
+            "line": 62
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GetWebAssets is called on each index page or frontend settings request, and now takes an RWMutex around the global entryPointAssetsCache",
+      "location": "pkg/api/webassets/webassets.go:40",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:40-49",
+        "pkg/api/webassets/webassets.go:54-70",
+        "pkg/api/webassets/webassets.go:99",
+        "pkg/api/dtos/index.go:51-61",
+        "pkg/api/index.go:82-85",
+        "pkg/services/licensing/oss.go:32-34",
+        "pkg/setting/setting.go:1934-1940"
+      ],
+      "equivalent_path": "pkg/api/index.go:82 and pkg/api/frontendsettings.go:62 (the same call before this change, which had no lock); pkg/middleware/recovery.go:141 also calls it and ignores the error",
+      "before_after": "Before: the non-dev fast path read the global pointer with no lock, and a cold cache was filled by concurrent unlocked file reads. After: the pointer is read under RLock and released before use; a cold or dev-mode load holds the exclusive Lock across manifest file I/O (and CDN fetch, if enabled), with a deferred Unlock so a panic still releases it. The returned pointer is shared, but no caller mutates it: SetContentDeliveryURL is called only on the fresh result before it is published (webassets.go:64, webassets.go:99; dtos/index.go:51-61).",
+      "visible_effect": "The same asset list and URLs are rendered into index.go's IndexViewData.Assets (index.go:82-85). Only latency changes for concurrent cold-start requests and for requests during a missing-manifest error.",
+      "failure_mode": "A read error is returned to index.go:82-84, which returns it to the caller; it is not hidden. Each failed request re-reads the file and repeats the error while the cache stays nil (webassets.go:69-70), and the requests queue on the write lock. No state persists past the request, so the rest of the session is not left in a bad state. The cache is never published half-built, because the pointer is assigned only after the load completes.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed pkg/api/webassets/webassets.go. The change adds a sync.RWMutex around the global entry-point asset cache. The locking is memory-safe: the pointer read is guarded, the write lock is released by defer, the published struct is never mutated after publication, and no re-entrant call to GetWebAssets exists. There is no correctness or security defect. Three consider-level findings are about performance: the write lock lacks a re-check after acquisition (so queued cold-start callers re-read the manifest), a missing manifest serializes all requests behind file I/O, and the lock spans the dead-today CDN fetch, which waiters cannot cancel.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.01129495
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.08924554999999999,
+    "usage": {
+      "input": 18,
+      "output": 11145,
+      "cacheRead": 124028,
+      "cacheWrite": 32720
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 99140,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.0779506,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "pkg/api/webassets/webassets.go",
+        "line": 48,
+        "title": "No re-check after taking the write lock, so queued cold-start requests each re-read the manifest",
+        "topic": "perf",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The diff adds the exclusive lock, and that lock is what makes the duplicate reads run one after another. Before, they ran in parallel without a lock.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 48
+          }
+        ],
+        "reason": "No second check of entryPointAssetsCache after Lock() at line 48. Every caller that missed the RLock fast path re-reads the manifest at line 60 while holding the exclusive lock, so cold-start callers end up reading it one after another. The cost is only paid once at startup, so the impact is small.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 41
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 48
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 60
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 69
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "pkg/api/webassets/webassets.go",
+        "line": 69,
+        "title": "On a manifest read error the cache stays nil, so every request takes the exclusive lock and re-reads the file",
+        "topic": "perf",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "Retrying on every call after an error already happened in the base. Doing those retries one at a time under a lock is new, caused by the Lock this diff adds.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 48
+          }
+        ],
+        "reason": "When the read fails, result is nil, so line 69 stores nil in the cache. Every later call misses the fast path and takes the write lock to retry the file I/O, which serializes callers in index.go:82, frontendsettings.go:62 and recovery.go:141.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 59
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/webassets/webassets.go",
+            "line": 70
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/index.go",
+            "line": 82
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/api/frontendsettings.go",
+            "line": 62
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}
