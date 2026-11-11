@@ -1,0 +1,96 @@
+{
+ "pr": "cal.com-8330",
+ "checkout": "/tmp/audit-wt/cal.com-8330",
+ "audit_ids": [
+  0,
+  1,
+  3,
+  4,
+  6,
+  7,
+  8
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 133,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Busy times are skipped for every slot inside a date override",
+   "body": "`checkIfIsAvailable` returns `true` at lines 133-135 as soon as `dateOverrideExist` is set and the slot was not excluded. That return happens before the `busy.every(...)` check at line 153, so for a fixed host (or a loose host, via the branch at lines 513-518) a slot inside a date override is offered as available even when a calendar event or booking covers it.\n\nTrace: fixed host, date override 14:00-18:00 on day D (`getUserAvailability.ts:215-224` gives start/end as Dates), a Google Calendar event 14:00-15:00 on D. `getSlots` (`packages/lib/slots.ts:112-125`) does not look at busy times, so the 14:00 slot reaches `checkIfIsAvailable` via `slots.ts:488-493`, passes the date-override check, returns `true` at line 134, and is returned to the booker. Before this PR the busy check ran for every slot.\n\nFix: do not return early. When an override covers the slot, skip only the weekly working-hours check and fall through to `busy.every`."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 106,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "A second date-override row on the same day removes every slot of that day",
+   "body": "`dateOverrides.find(...)` returns the first override for which the callback is truthy. The callback returns `true` for any override on the same day that does not contain the slot (lines 117-125). Each slot is therefore checked against each row on its day, and any row that does not contain it excludes it.\n\nTwo rows on one date, A 14:00-16:00 and B 18:00-20:00 (IST organizer): the 14:00 slot is inside A but is before B, so B returns `true` and the slot is excluded. The 18:00 slot is inside B but after A, so A returns `true` and it is excluded. The whole day shows no slots. `getUserAvailability.ts:215-224` returns one entry per availability row without merging rows with the same date, so this input reaches the check.\n\nFix: for the slot's day, take the overrides on that day; exclude the slot only when none of them contains it (`some`, not `find`)."
+  },
+  {
+   "id": 2,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 139,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Working-hours check removes every slot for a host with two ranges on one weekday",
+   "body": "`getWorkingHours` emits one entry per availability row (`packages/lib/availability.ts:92-100`), and `getUserAvailability` returns them unmerged (`packages/core/getUserAvailability.ts:210,229`). The new check at lines 138-148 uses `find` and returns `true` when any same-weekday entry does not contain the slot's start. A host with 09:00-12:00 and 13:00-17:00 on Monday therefore has every Monday slot excluded: 10:00 is inside the first entry, but the second entry makes `find` return `true`.\n\nThis applies to all fixed hosts (personal events too, since `isFixed` is true when there is no `schedulingType`, line 369) and to loose hosts (lines 513-518).\n\nSecond defect in the same block: `end` (line 142) is computed from `slotStartTime`, not `slotEndTime`, so the upper bound checks only the slot start.\n\nFix: the containment test must use `some` over the same-day entries, using both slot start and end. Alternatively, drop this block: `getSlots` already limits slots to working hours (`packages/lib/slots.ts:88-90`). Add a test for a split day."
+  },
+  {
+   "id": 3,
+   "path": "packages/lib/slots.ts",
+   "line": 207,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Override day selection compares the organizer wall-clock value with invitee-day instants",
+   "body": "The filter at lines 206-208 keeps an override when `dayjs.utc(override.start)` falls inside the invitee's day. `override.start` is the organizer's wall-clock time stored as UTC (`getUserAvailability.ts:215-224`, same convention as `getWorkingHours`), not the absolute instant. The PR's new minute conversion (lines 211-225) corrects the time of day, but the day is still chosen with the raw value.\n\nExample: organizer Asia/Kolkata, invitee at UTC+2, override 23:00 IST on day D. The absolute instant is D 17:30Z, which is D 19:30 for the invitee. The invitee's day D window is [D-1 22:00Z, D 22:00Z), and the raw value D 23:00Z is outside it, so the override is dropped from day D. The invitee's day D+1 window includes it, and the minute math produces 19:30 on D+1 (wrong day).\n\nFix: convert to the absolute instant before the day filter (raw start minus the organizer offset, as in `checkIfIsAvailable`), then filter on that."
+  },
+  {
+   "id": 4,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 110,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Override date match uses the server's local timezone while the slot uses UTC",
+   "body": "Lines 109-111 format `dayjs(date.start).add(...)` in the process's local timezone and compare it with `slotStartTime.format(...)`, which is UTC (`time.utc()` at line 100). The two agree only when the server runs in UTC. On a server in a negative-offset zone, a shifted override start between 00:00 and about 05:00 UTC formats as the previous day, so the override applies to the wrong UTC day.\n\nFix: call `.utc()` before `format` on the shifted value. Relevant only if the server is not pinned to UTC."
+  },
+  {
+   "id": 5,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 114,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Comparison of two Dayjs objects with === is always false",
+   "body": "`dayjs(date.start).add(...) === dayjs(date.end).add(...)` compares object identity, so it is always false and the branch at lines 114-116 never runs. It was probably meant to catch zero-length overrides. Compare with `.isSame(...)` or `valueOf()`, or delete the branch and state how zero-length overrides should behave."
+  },
+  {
+   "id": 6,
+   "path": "packages/lib/slots.ts",
+   "line": 212,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Date round-trips through toString(); a missing timeZone silently uses the system zone",
+   "body": "Lines 212-213 build the value with `dayjs(override.start.toString())`. `Date#toString` drops milliseconds and the parse goes through a locale string. Use `dayjs(override.start)`.\n\n`.tz(override.timeZone)` (line 212) with an undefined `timeZone` falls back to the local zone without an error, so an override that lacks a timezone would be converted with the wrong offset and nothing would report it. Today `getSchedule` always sets `timeZone` (`viewer/slots.ts:413`), and no other caller passes overrides (the team components pass none), so this is latent. Consider making the field required on the override type or guarding it."
+  },
+  {
+   "id": 7,
+   "path": "packages/types/schedule.d.ts",
+   "line": 13,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "The @see points at a getWorkingHours signature that no longer exists",
+   "body": "Line 13 says `getWorkingHours(timeZone: string, availability: Availability[])`. The function in `packages/lib/availability.ts:62-67` takes `relativeTimeUnit: { timeZone?: string; utcOffset?: number }` as its first argument. This was already out of date before the PR, but the PR edits this file and the reference should match."
+  },
+  {
+   "id": 8,
+   "path": "apps/web/test/lib/getSchedule.test.ts",
+   "line": 788,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "The new test only covers the timezone case; the three regressions are not tested",
+   "body": "The added assertion (lines 788-804) checks one fixed-host override in Asia/Dhaka. Nothing exercises: busy times on an override day (finding at slots.ts:133), two override rows on the same date (slots.ts:106), or a weekday with two working-hours rows (slots.ts:139). Each of these would have failed in a test. Add one case for each."
+  }
+ ]
+}

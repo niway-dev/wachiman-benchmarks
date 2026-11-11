@@ -50,6 +50,5 @@ read the benchmark's reference data. Inputs come from `scripts/audit_inputs.py <
 - "Serious" mixes two sources: goldens were not audited and count as serious whatever their severity; audited FP count
   as serious only when the auditor traced a failing path. The AUC figures inherit that asymmetry.
 - Two repositories of five (85 of 177 FP). Discourse, Grafana and Keycloak are not audited.
-- Only Opus findings were audited. Nothing here says whether the Haiku reviewer's 331 FP are real defects, minor or
-  wrong.
+- The Haiku reviewer's findings are audited separately, on Cal.com only: [haiku/README.md](haiku/README.md).
 - Cost is not reported by the tool (Codex subscription).

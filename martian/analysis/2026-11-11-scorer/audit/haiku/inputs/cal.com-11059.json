@@ -1,0 +1,180 @@
+{
+ "pr": "cal.com-11059",
+ "checkout": "/tmp/audit-wt/cal.com-11059",
+ "audit_ids": [
+  0,
+  7,
+  9,
+  10,
+  11,
+  12,
+  14,
+  15,
+  16,
+  17
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 96,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Salesforce getClient uses prisma without importing it",
+   "body": "`prisma.credential.update` at line 96 has no `prisma` import. The import block (lines 1-20) has none, and a search of the salesforce folder finds none. Every Salesforce service construction runs `getClient` (constructor, line 57). After the refresh POST it throws a ReferenceError, which also fails type-check. Every Salesforce calendar call then rejects. Add `import prisma from \"@calcom/prisma\";`."
+  },
+  {
+   "id": 1,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 15,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Sync gate strips and overwrites stored refresh tokens",
+   "body": "The branch at line 15 checks only the flags. refreshOAuthTokens.ts:5 also requires a user id. With CALCOM_CREDENTIAL_SYNC_ENDPOINT set, two cases take `minimumTokenResponseSchema` (lines 5-11): user credentials refreshed through the endpoint, and team/org credentials refreshed directly with the provider. That schema keeps only access_token, because z.object strips the other keys. The placeholder at lines 25-27 then sets refresh_token to the literal string \"refresh_token\". Callers persist the result: zoomvideo/lib/VideoApiAdapter.ts:104-124 (refresh_token at 120, expiry NaN at 122), office365calendar/lib/CalendarService.ts:263-270 (spread over the stored key), googlecalendar/lib/CalendarService.ts:97-101 (key replaced, expiry_date dropped). No error is raised. Fix: apply the minimum schema only to a response that came from the endpoint, and never persist the placeholder."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 26,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Placeholder refresh_token is applied in default mode too",
+   "body": "Lines 25-27 run whatever the flags say. In default mode, office365calendar/lib/CalendarService.ts:264 spreads the parsed data over the stored credential. refreshTokenResponseSchema makes refresh_token optional (line 56). If Microsoft omits it, the stored refresh_token becomes the literal \"refresh_token\" and the next refresh fails. Leave the stored value untouched when the response has no refresh_token, instead of writing a placeholder. Confidence is medium because it depends on Microsoft omitting refresh_token; the optional schema suggests the authors expected that."
+  },
+  {
+   "id": 3,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 8,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Computed schema keys collapse; expiry check and passthrough are not implemented",
+   "body": "Lines 8 and 10 use `[z.string().toString()]` and `[z.string().optional().toString()]` as computed keys. Both stringify to the same value, since a zod schema object has no meaningful toString. The second key then replaces the first, so the `z.number()` expiry check the comment at line 7 describes is never applied. Only access_token is required. node_modules is not in the snapshot, so I could not confirm the installed zod version. Intended result: `z.object({ access_token: z.string() }).passthrough()`, plus an explicit expiry check if one is wanted."
+  },
+  {
+   "id": 4,
+   "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+   "line": 15,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Sync branch returns a raw fetch Response that callers read as provider results",
+   "body": "In sync mode the function returns the endpoint's fetch Response (line 15). Callers read provider-shaped fields from it. googlecalendar/lib/CalendarService.ts:94-95 reads `res?.data`, which is undefined, so the TypeError is swallowed at lines 103-108, which return the stale auth. zoho-bigin/lib/CalendarService.ts:96 reads `.data.error` and throws outside any try. zohocrm/lib/CalendarService.ts:217 has the same read, caught and logged at 238-240. hubspot/lib/CalendarService.ts:192 reads `.expiresIn` and writes the Response object to the key at 198. The Lark caller (larkcalendar/lib/CalendarService.ts:84) parses the endpoint body as Lark's envelope. Fix: make the sync branch return each provider's shape, or move the switch into each caller."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
+   "line": 93,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Zoho Bigin passes the credential id as the user id to the sync endpoint",
+   "body": "`refreshOAuthTokens(..., credentialId)` at line 93 passes credentialId into the parameter named userId (refreshOAuthTokens.ts:3, 11). The endpoint then receives calcomUserId equal to the credential row id, which is a different user in general. Once the response-shape issue is fixed, the returned tokens would be written into this credential at lines 102-109. biginAuth receives the whole credential (line 51), so pass credential.userId through as the other services do."
+  },
+  {
+   "id": 6,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 106,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Salesforce connection is built from the pre-refresh token",
+   "body": "The refresh response is parsed into `accessTokenParsed.data` and saved (lines 90-99). The Connection still uses `credentialKey.access_token` and `credentialKey.instance_url` (lines 105-106), which are the values from before the refresh. The first request therefore goes out with the old token. Use `accessTokenParsed.data.access_token` and `.instance_url`. Whether jsforce's own refresh rescues the first call cannot be checked from the repo, because the options passed at lines 101-108 are top-level rather than an oauth2 object."
+  },
+  {
+   "id": 7,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 75,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "Salesforce refreshes the token on every service construction",
+   "body": "The refresh POST and credential write run unconditionally inside getClient, which runs for every constructor call (line 57). Before this PR the stored token was used directly. Refresh only when the stored token is stale, as zohocrm's isTokenValid does."
+  },
+  {
+   "id": 8,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 86,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "statusText check and dead branch in the Salesforce refresh",
+   "body": "`response.statusText !== \"OK\"` (line 86) depends on the reason phrase, not the status. Use `response.ok`, and put Salesforce's error/error_description body into the HttpError message. Lines 92-94 are unreachable: parseRefreshTokenResponse throws instead of returning success:false (parseRefreshTokenResponse.ts:21-23)."
+  },
+  {
+   "id": 9,
+   "path": "packages/app-store/office365calendar/lib/CalendarService.ts",
+   "line": 262,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Invalid Office 365 refresh responses lose their diagnostics",
+   "body": "The removed block logged the zod issues and the Microsoft payload. The parse helper now throws a generic Error (parseRefreshTokenResponse.ts:21-23), and the `tokenResponse.success &&` guard at line 264 is always true. Log the payload before throwing, or restore the previous logging."
+  },
+  {
+   "id": 10,
+   "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+   "line": 6,
+   "severity": "fix",
+   "topic": "docs",
+   "title": "Sync endpoint contract in the comment does not match the callers",
+   "body": "Line 7 says the endpoint should return only the access token and expiry date. Callers need more. Teams video (office365video/lib/VideoApiAdapter.ts:84-95) writes the whole body as the stored key, so a response without refresh_token deletes it. Webex (webex/lib/VideoApiAdapter.ts:49-55, 88) requires refresh_token. Google and Lark expect the provider envelope (see the sync-branch finding). An endpoint built from this comment breaks those integrations. Document the exact response shape per provider, or make the callers tolerant of missing fields."
+  },
+  {
+   "id": 11,
+   "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+   "line": 8,
+   "severity": "consider",
+   "topic": "security",
+   "title": "Sync request carries no shared secret",
+   "body": "The POST to CALCOM_CREDENTIAL_SYNC_ENDPOINT (lines 8-14) sends calcomUserId and appSlug with no authentication header. The webhook added in this PR requires a shared secret for the reverse direction (apps/web/pages/api/webhook/app-credential.ts:24-29). If the endpoint returns tokens for any calcomUserId it receives, anyone who can reach it can fetch them. Send a secret header and document it."
+  },
+  {
+   "id": 12,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 25,
+   "severity": "consider",
+   "topic": "security",
+   "title": "Webhook secret compared with !==",
+   "body": "The comparison at lines 24-27 is a plain string comparison, not constant time. The repo's cron routes use the same pattern (apps/web/pages/api/cron/syncAppMeta.ts:19), so this matches convention. crypto.timingSafeEqual on equal-length buffers would be stricter."
+  },
+  {
+   "id": 13,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 31,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Malformed body and decrypt failures return 500",
+   "body": "`parse` at line 31 throws ZodError. symmetricDecrypt and JSON.parse at lines 57-59 throw on a wrong key length or bad ciphertext. None of these is caught, so the caller gets an unhandled 500 instead of a 400. Use safeParse and return 400, and wrap the decrypt step in try/catch."
+  },
+  {
+   "id": 14,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 62,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "findFirst then create can duplicate credentials",
+   "body": "Two concurrent deliveries for the same user and app can both see no row (lines 62-92) and both create one. Check whether the Credential table has a unique constraint on (userId, appId). I did not check the Prisma schema."
+  },
+  {
+   "id": 15,
+   "path": "packages/lib/constants.ts",
+   "line": 103,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "APP_CREDENTIAL_SHARING_ENABLED is a string, and sync depends on the webhook secret",
+   "body": "`process.env.X && process.env.Y` yields a secret string or undefined, not a boolean (lines 103-104), though the name suggests a boolean. refreshOAuthTokens.ts:5 and parseRefreshTokenResponse.ts:15 use this flag as the switch for endpoint sync, so enabling sync also requires the webhook secret and the encryption key. Wrap in `!!(...)` and document the coupling."
+  },
+  {
+   "id": 16,
+   "path": "turbo.json",
+   "line": 207,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "CALCOM_WEBHOOK_SECRET is out of order in globalEnv",
+   "body": "Line 207 comes after CALENDSO_ENCRYPTION_KEY (line 206), while the rest of the list is alphabetical. Move it before CALENDSO_ENCRYPTION_KEY."
+  },
+  {
+   "id": 17,
+   "path": ".env.example",
+   "line": 240,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "CALCOM_CREDENTIAL_SYNC_ENDPOINT has no description",
+   "body": "Unlike the variables around it, this one has no comment. It should say what Cal.com POSTs (form fields calcomUserId and appSlug, no auth header) and what the endpoint must return. Given the response-shape issues in refreshOAuthTokens, the comment is needed."
+  }
+ ]
+}
