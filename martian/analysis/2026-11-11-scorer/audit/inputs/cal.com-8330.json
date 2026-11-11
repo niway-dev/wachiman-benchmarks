@@ -1,0 +1,86 @@
+{
+ "pr": "cal.com-8330",
+ "checkout": "/tmp/audit-wt/cal.com-8330",
+ "audit_ids": [
+  0,
+  1,
+  4,
+  5,
+  6,
+  7
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 133,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Slots inside a date override skip the busy check, so booked times show as free",
+   "body": "When any override falls on the slot's date and the slot is inside it, `if (dateOverrideExist) return true;` returns before the `busy.every(...)` check at line 153. The fixed-host and round-robin paths spread `...schedule` / `...userSchedule` (lines 488-493, 513-518), which carry both `dateOverrides` and `busy`. So on any day with a date override, the organizer's existing bookings, calendar events and buffers are all ignored, and invitees can book times that are already taken (double booking). Instead of returning true here, fall through to the busy check."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 139,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Working-hours check drops a slot if any one range for that day doesn't contain it",
+   "body": "`workingHours.find(...)` returns true (slot unavailable) as soon as one entry for that weekday doesn't contain the slot. `getWorkingHours` (packages/lib/availability.ts:76-111) returns several entries per weekday in two cases: the user has split hours (e.g. 9-12 and 13-17), or their hours cross UTC midnight. For example, 09:00-17:00 in America/Los_Angeles becomes 17:00-23:59 on day d plus 00:00-01:00 on day d+1. A slot at 18:00Z on Tuesday then fails the Tue 00:00-01:00 entry and is removed. Users in those situations lose most or all of their slots, with no error. The check has to ask whether no matching entry contains the slot, e.g. `!workingHours.some(wh => wh.days.includes(day) && start >= wh.startTime && end <= wh.endTime)`, and it should run only when there are entries for that day."
+  },
+  {
+   "id": 2,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 142,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`end` is computed from slotStartTime, not slotEndTime",
+   "body": "`const end = slotStartTime.hour() * 60 + slotStartTime.minute();` repeats the start time, so `end > workingHour.endTime` never catches a slot that starts inside working hours but runs past their end. It should use `slotEndTime`."
+  },
+  {
+   "id": 3,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 114,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Two Dayjs objects compared with `===` are never equal, so this branch is dead",
+   "body": "`dayjs(...) === dayjs(...)` compares two freshly created objects by reference, so it is always false. The 'unavailable all day' case (start == end) is never caught here. A slot starting exactly at the override's start/end instant is then counted as inside the override and, because of line 133, returned as available. Use `.isSame(...)` or compare `.valueOf()`."
+  },
+  {
+   "id": 4,
+   "path": "packages/trpc/server/routers/viewer/slots.ts",
+   "line": 110,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Override day is matched by UTC date, not the organizer's local date",
+   "body": "The override start is shifted to its real UTC instant and then compared with `slotStartTime.format(\"YYYY MM DD\")`, which is also UTC. Take an organizer in UTC-8 with an override on Jan 3, 09:00-17:00 local (17:00Z Jan 3 to 01:00Z Jan 4). Normal working-hour slots on Jan 2 local evening fall on UTC Jan 3, match the override day, sit outside it, and are removed. Slots on Jan 4 00:00-01:00Z, which belong to the override day, don't match and go through the plain working-hours path. The date comparison should be done in `organizerTimeZone`."
+  },
+  {
+   "id": 5,
+   "path": "packages/lib/slots.ts",
+   "line": 219,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Converted override minutes wrap at midnight, so the override is silently dropped",
+   "body": "`.hour() * 60 + .minute()` after adding `offset` wraps modulo one day. If the shifted override crosses the invitee's midnight (e.g. organizer UTC-8 override 09:00-17:00 seen by a UTC invitee: start 1020, end 60), `endTime < startTime`. `buildSlots` then skips the range (`if (start >= end) continue;`, line 68), while the working hours for that user were already spliced out at lines 228-243. The invitee sees no slots that day. The active-override filter at line 207 also still selects the day using the organizer's wall-clock time stored as UTC, not the converted instant."
+  },
+  {
+   "id": 6,
+   "path": "packages/lib/slots.ts",
+   "line": 212,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Parsing `Date.toString()` output and an optional `override.timeZone`",
+   "body": "`dayjs(override.start.toString())` re-parses the engine-specific `Date.toString()` format. `dayjs(override.start)` gives the same instant without the string round-trip. `override.timeZone` is optional in `TimeRange` (packages/types/schedule.d.ts:5). When it is missing, `.tz(undefined)` falls back to the default/server zone, so the offset depends on where the code runs (this file also runs client-side, per the comment at lines 146-147)."
+  },
+  {
+   "id": 7,
+   "path": "apps/web/test/lib/getSchedule.test.ts",
+   "line": 788,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "New test doesn't cover the new checkIfIsAvailable branches",
+   "body": "The added case only repeats the IST override scenario for a +6:00 invitee. It has no booking on the override day, so it can't catch busy times being ignored there. It has a single working-hours range per day, so it can't catch the split / UTC-midnight-straddling hours regression. A case with a booking inside the override, and one with a negative-offset organizer, would exercise the logic this PR adds."
+  }
+ ]
+}

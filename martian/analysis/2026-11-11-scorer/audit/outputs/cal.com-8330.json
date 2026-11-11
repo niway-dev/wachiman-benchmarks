@@ -1,0 +1,59 @@
+{
+  "pr": "cal.com-8330",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "A slot on an override day can be returned as available without checking overlapping busy intervals.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:215-230 returns both dateOverrides and busy, and packages/trpc/server/routers/viewer/slots.ts:483-493 passes both into the fixed-host availability check. For an ordinary non-seat, single-host UTC event with a future 09:00-17:00 override and a busy interval at 10:00-11:00, packages/lib/slots.ts:205-245 and :85-124 generate the 10:00 candidate without consulting busy times. The override matches at packages/trpc/server/routers/viewer/slots.ts:109-124 and returns true at :133-134 before the overlap rejection at :153-176. With no selected-slot reservations, the later filter at :525-591 does not run, so the booked time is included in the returned availability; this establishes incorrect advertised availability independently of whether booking creation performs another validation.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "The new working-hours check rejects a valid slot whenever another range for the same weekday does not contain its start.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a single-host UTC schedule with Monday 09:00-12:00 and 13:00-17:00 and no overrides, packages/lib/availability.ts:76-99 preserves both ranges, packages/core/getUserAvailability.ts:210-230 returns them, and packages/core/getAggregateWorkingHours.ts:17-19 preserves them for a personal event. packages/lib/slots.ts:178-203 and :85-124 generates a valid Monday 10:00 slot from the morning range. The fixed-host caller at packages/trpc/server/routers/viewer/slots.ts:483-493 passes both original ranges to the check, whose find at :139-150 accepts the afternoon entry as evidence of unavailability because 600 < 780. Thus every slot in either disjoint range is rejected by the other range; this is not prevented by slot generation.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Matching an override by its shifted UTC calendar date applies it to slots on the wrong organizer-local day.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:215-223 stores override wall-clock hours on the override date as UTC fields. On a UTC server, take an Asia/Kolkata organizer and invitee, daily regular hours 20:00-23:59, and a January 3 override 02:00-04:00: packages/lib/slots.ts:205-207 does not select that override for the January 2 invitee day, so :178-203 and :85-124 generate the valid January 2 22:00 local candidate (16:30Z). In packages/trpc/server/routers/viewer/slots.ts:107-113, shifting the override by -330 minutes gives January 2 20:30Z and incorrectly matches that candidate's UTC date. Its 17:30Z end is before the shifted override start, so :117-130 removes a valid slot on the preceding local day; the fixed-host caller at :488-493 supplies the required timezone and override.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "Converting override endpoints into minutes of day loses midnight overflow and can remove all availability for the day.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For an America/Los_Angeles organizer in winter with a future January 3 09:00-17:00 override, packages/core/getUserAvailability.ts:215-223 supplies endpoints January 3 09:00Z and 17:00Z, and packages/trpc/server/routers/viewer/slots.ts:410-415 supplies the organizer timezone. For a Europe/London invitee in winter, packages/lib/slots.ts:205-223 selects the override and adds 480 minutes, producing startTime 1020 and endTime 60 rather than preserving the next-day endpoint. Lines :228-245 remove this host's regular availability and replace it with that reversed range, which buildSlots skips at :60-68, leaving no January 3 slots even though 17:00-24:00Z contains valid availability. The active-day selection at :207 also indeed precedes timezone conversion, but the endpoint-wrap failure alone establishes the new defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The override conversion unnecessarily reparses Date.toString() and accepts an optional timezone that can default to the runtime zone.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/lib/slots.ts:212-214 does reparse Date.toString(), and packages/types/schedule.d.ts:1-6 permits an omitted timeZone, making direct Date parsing and an explicit fallback sensible defensive changes. However, the production scheduling caller explicitly adds timeZone to every override at packages/trpc/server/routers/viewer/slots.ts:410-415, using the schedule/event/user timezone resolved at packages/core/getUserAvailability.ts:201. The client-side team callers at packages/features/ee/teams/components/TeamAvailabilityTimes.tsx:35-42 and packages/features/ee/teams/components/v2/TeamAvailabilityTimes.tsx:39-46 do not pass overrides, and apps/web/test/lib/slots.test.ts likewise supplies none. No concrete current caller with a missing override timezone or a Date.toString() parsing failure was established, so this is a low-impact robustness concern rather than a demonstrated availability defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The added timezone test omits busy-on-override and split or midnight-crossing working-hours regression scenarios.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/test/lib/getSchedule.test.ts:746-766 configures one IST host and no bookings, and the added invocation at :788-804 only changes the invitee timezone to Asia/Dhaka. Consequently it cannot distinguish the premature successful override return at packages/trpc/server/routers/viewer/slots.ts:133-134 from a correct busy check at :153, nor does it exercise disjoint normal hours or UTC-midnight overflow. Strictly, the fixture at apps/web/test/lib/getSchedule.test.ts:110-126 has both regular and dated availability entries with nonempty days, so the comment's single-range wording is imprecise; the override branch still bypasses the normal-hours check for the asserted day. The coverage gap is real, but a missing regression test is minor under the audit rubric.",
+      "confidence": "high"
+    }
+  ]
+}
