@@ -7,7 +7,7 @@ golds (goldens this finding was the best match of), fp (judged a false positive)
 import csv, glob, json, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARTIAN = os.path.abspath(os.path.join(HERE, '..', '..', '..'))      # .../martian
+MARTIAN = os.environ.get('MARTIAN_DIR') or os.path.abspath(os.path.join(HERE, '..', '..', '..'))      # .../martian
 WL = list(csv.DictReader(open(MARTIAN + '/worklist.tsv'), delimiter='\t'))
 RUNS = {'opus': '2026-11-07-v1.9.0-opus-5-5', 'haiku': '2026-11-07-v1.9.0-haiku-5-5-high'}
 FIX = '2026-11-11-keycloak-range-fix'
@@ -19,7 +19,8 @@ CONF = {'high': 0, 'medium': 1, 'low': 2}
 
 def _review(datadir, row):
     b = datadir + '/reviews/' + row['repo'] + '/'
-    fs = glob.glob(b + row['branch_suffix'] + '.json')
+    sfx = row['branch_suffix']
+    fs = glob.glob(b + sfx + '.json') or glob.glob(b + sfx + '-flat.json') or glob.glob(b + sfx.replace('-flat', '') + '.json')
     return json.load(open(fs[0])) if fs else None
 
 
