@@ -269,7 +269,62 @@ F1 58.8.
 - FP is not filtered by profile: a style or test comment costs precision even
   under the Core profile.
 
-## 12. Open items
+## 12. Can Haiku's false positives be filtered cheaply? [computed, recall is a lower bound]
+
+H1 = Haiku arm 1. H2 = the Haiku reviewer of the v1.10.0 run, as proposed (415
+findings, before verifier drops), used as an independent second Haiku sample.
+O = Opus alone. "Echo" as in section 6. "Lost" and "FP rem." are against each
+row's own baseline.
+
+| Rule | Kept | TP | FP | R | P | F1 | H+C | Goldens lost | FP removed | FP per golden lost |
+|---|---|---|---|---|---|---|---|---|---|---|
+| H1 baseline | 421 | 111 | 314 | 64.2 | 26.1 | 37.1 | 47 | 0 | 0 | — |
+| H1 echoed by H2 ±5 | 289 | 94 | 198 | 54.3 | 32.2 | 40.4 | 38 | 17 | 116 | 6.8 |
+| H1 echoed by H2 ±10 | 309 | 98 | 214 | 56.6 | 31.4 | 40.4 | 40 | 13 | 100 | 7.7 |
+| H1 echoed by H2, same file | 369 | 103 | 269 | 59.5 | 27.7 | 37.8 | 41 | 8 | 45 | 5.6 |
+| H2 echoed by H1 ±10 (vs H2) | 304 | 97 | 210 | 56.1 | 31.6 | 40.4 | 42 | 9 | 92 | 10.2 |
+| hybrid: blocker/fix kept, consider/info need H2 ±10 | 334 | 105 | 233 | 60.7 | 31.1 | 41.1 | 45 | 6 | 81 | 13.5 |
+| drop tests/docs topic at consider/info | 337 | 107 | 234 | 61.8 | 31.4 | 41.6 | 46 | 4 | 80 | 20.0 |
+| drop confidence low/medium | 260 | 82 | 182 | 47.4 | 31.1 | 37.5 | 29 | 29 | 132 | 4.6 |
+| drop confidence low only | 405 | 109 | 300 | 63.0 | 26.7 | 37.5 | 46 | 2 | 14 | 7.0 |
+| drop hedge words (79 hit) | 342 | 96 | 250 | 55.5 | 27.7 | 37.0 | 41 | 15 | 64 | 4.3 |
+| drop test-file paths (71 hit) | 350 | 102 | 250 | 59.0 | 29.0 | 38.9 | 45 | 9 | 64 | 7.1 |
+| drop shortest quartile of text | 317 | 88 | 231 | 50.9 | 27.6 | 35.8 | 43 | 23 | 83 | 3.6 |
+| drop longest quartile of text | 316 | 74 | 245 | 42.8 | 23.2 | 30.1 | 28 | 37 | 69 | 1.9 |
+| best script combo (fitted): tests/docs + conf low/medium | 190 | 78 | 116 | 45.1 | 40.2 | 42.5 | 28 | 33 | 198 | 6.0 |
+| hybrid + tests/docs drop | 283 | 101 | 186 | 58.4 | 35.2 | 43.9 | 44 | 10 | 128 | 12.8 |
+| echo ±10 + tests/docs drop | 258 | 94 | 167 | 54.3 | 36.0 | 43.3 | 39 | 17 | 147 | 8.6 |
+| H1 echoed by O ±10 | 234 | 97 | 143 | 56.1 | 40.4 | 47.0 | 43 | 14 | 171 | 12.2 |
+| O echoed by H1 ±10 (vs O) | 213 | 104 | 120 | 60.1 | 46.4 | 52.4 | 45 | 6 | 54 | 9.0 |
+
+No cheap filter brings Haiku to Opus alone (F1 48.1). A second Haiku sample
+echoes 214 of H1's 314 FP: the false positives are reproducible, not random.
+
+Split sample for "hybrid + tests/docs drop": A (Cal.com + Sentry) F1 34.6 →
+42.9; B (Grafana + Discourse + Keycloak) F1 39.5 → 44.8.
+
+The findings a vote would set aside ("needs human verification" bucket, ±10):
+
+| Bucket | Findings | Matched a golden | H+C goldens | FP |
+|---|---|---|---|---|
+| H1 not echoed by H2 | 112 | 12 (13 goldens) | 7 | 100 |
+| O not echoed by H1 | 60 | 5 (6 goldens) | 2 | 54 |
+| H1 not echoed by O | 187 | 14 goldens | 4 | 171 |
+
+H1 ∪ H2: 120 goldens (50 H+C), 827 findings. H1 ∩ H2: 97 goldens (42 H+C).
+Review cost for 50 PRs: H1 $8.98, H2 reviewer about $7.52, O $25.01.
+
+## 13. Keycloak rows corrected (branch `fix/martian-keycloak-ranges`)
+
+`fetch.sh` assumed PR #1 of every benchmark fork is the reviewed PR; in two
+forks Dependabot opened PR #1 first. Re-run of the two PRs with v1.9.0, Opus
+5.5 high, same judge route: 7 of 9 goldens, 4 of 6 H+C, 3 FP, $1.47 review and
+$0.81 judge. Opus 50-PR totals with the two rows replaced: R 63.6 → 67.6,
+P 38.7 → 39.8, F1 48.1 → 50.1, Core F2 55.7 → 58.4, H+C 47 → 51 of 66. The
+Haiku and v1.10.0 runs share the bad rows and were not re-run. Details in
+`martian/runs/2026-11-11-keycloak-range-fix/` on that branch.
+
+## 14. Open items
 
 - No replicates of any configuration.
 - The two Keycloak PRs above.
