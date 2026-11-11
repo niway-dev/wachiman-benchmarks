@@ -1,0 +1,32 @@
+{
+  "pr": "sentry-67876-flat",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "The new OAuth login step lets token-exchange transport errors and user-info failures escape instead of returning the integration failure response.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a callback with the valid state, src/sentry/integrations/github/integration.py:412-423 calls safe_urlopen before entering its try block; src/sentry/http.py:106-116 directly performs the request without catching transport exceptions, so an exhausted timeout or connection failure propagates. Alternatively, after a successful token exchange, integration.py:434 invokes get_user_info without a handler, and src/sentry/identity/github/provider.py:9-17 raises for a /user HTTP 401 or 500 response. src/sentry/pipeline/base.py:190-196 and src/sentry/web/frontend/pipeline_advancer.py:63-64 dispatch without catching those exceptions, producing an unhandled error rather than the failure template whose postMessage is at src/sentry/templates/sentry/integrations/github-integration-failed.html:12-15. This failure path is introduced by the new OAuthLoginView.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "When no Integration row exists, installation setup skips the new installer identity check and can link an installation without verifying the OAuth user's access.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/integrations/github/integration.py:475-482 immediately advances when the supplied installation ID has no Integration row, bypassing the authenticated-user comparison at :500-505. For a real app installation whose webhook has not created its row, an unrelated GitHub user can complete OAuth and supply that ID: build_integration at :351-379 fetches installation metadata with the app client (:308-312), not the user's token, and src/sentry/integrations/pipeline.py:132,225-227 creates the integration and links the Sentry organization. There is no subsequent user-access check on that path. However, the supplied diff and the parent version of integration.py:403-405 show the same unconditional missing-row advance before this PR, so this is a pre-existing authorization gap and is real-minor under the brief's explicit rule.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "test_installation_not_found now exits on an invalid OAuth state and no longer exercises the installation API's 404 handling.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/integrations/github/test_integration.py:379-396 stubs an installation 404 but sends state ddd023d87a913d5226e2a882c4c4cc05 and only asserts the generic invalid-request message. The same test class establishes the new signature as 9cae5e88803f35ed7970fc131e6e65d3 at :233-243, and src/sentry/integrations/github/integration.py:412-413 returns immediately on the mismatch, before either token exchange or installation lookup. Thus the stubbed 404 and the specific IntegrationError at integration.py:353-356 are never exercised by this test. This is a coverage regression rather than a demonstrated production failure.",
+      "confidence": "high"
+    }
+  ]
+}

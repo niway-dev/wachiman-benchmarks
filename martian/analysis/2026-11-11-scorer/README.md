@@ -26,6 +26,12 @@ sets aside, against 9 FP per known bug for proximity.
 52 of 66 High+Critical on 50 PRs, against Opus R 67.6, P 39.8, F1 50.1 and 51 of 66. Recall and High+Critical are now
 equal; the gap is precision (26.4 against 39.8), as the earlier analysis found.
 
+**Later the same day, an audit changed how to read Experiment A.** An independent model checked 85 of the 177 judge
+FP (Cal.com and Sentry): 34 are real defects the golden set lacks, 47 are true but minor, 2 are wrong. Against that
+wider label the score does separate serious from minor (AUC 0.83 for both scorers, 0.78 for Wachiman severity, 0.63
+for the Haiku echo). Experiment A's numbers stand as measured against the judge; its conclusion "the score does not
+help" holds only for matching the golden list. See [audit/README.md](audit/README.md).
+
 ## Status of each claim
 
 - **[computed]**: from the stored JSON of the runs plus the new scorer outputs, by `scripts/analyze.py`.

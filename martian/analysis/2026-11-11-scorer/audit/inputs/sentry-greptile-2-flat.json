@@ -1,0 +1,94 @@
+{
+ "pr": "sentry-greptile-2-flat",
+ "checkout": "/tmp/audit-wt/sentry-greptile-2-flat",
+ "audit_ids": [
+  4,
+  5,
+  6,
+  7,
+  8
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/api/paginator.py",
+   "line": 838,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "OptimizedCursorPaginator crashes on datetime keys, so `optimized_pagination=true` returns 500 on any non-empty audit log",
+   "body": "The audit log endpoint uses this paginator with `order_by=\"-datetime\"` (organization_auditlogs.py:80). `get_item_key` calls `math.floor`/`math.ceil` on the raw `datetime` value, which raises TypeError. `build_cursor` calls the key on the first result whenever the cursor has no value (cursors.py:121-122), and also at cursors.py:137 and :197, so the first page fails with a 500 whenever there is at least one row. `value_from_cursor` also returns the raw integer cursor value, which `build_queryset` then compares against the datetime column (paginator.py:119-126). `DateTimePaginator` converts in both directions (paginator.py:233-241). Fix: subclass `DateTimePaginator`, or copy its `get_item_key`/`value_from_cursor`."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/api/paginator.py",
+   "line": 877,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Negative-offset branch slices a Django queryset with a negative index, which raises instead of paginating",
+   "body": "`Cursor.from_string` accepts a cursor like `0:-5:0` (cursors.py:58-59). With advanced features on, `queryset[start_offset:stop]` gets a negative start, and Django rejects that with a ValueError (\"Negative indexing is not supported\"). `paginate` only catches `BadPaginationError` (base.py:540-541), so the client gets a 500, not a 400. The comments say this \"enables access to data beyond normal pagination bounds\" and that the ORM \"handles negative slicing automatically\". Both are false. The branch can never return results. Remove it, or reject negative offsets with `BadPaginationError`."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+   "line": 71,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`organization_context.member` can be None, and `is_superuser` ignores whether the superuser session is active",
+   "body": "`RpcUserOrganizationContext.member` is typed `RpcOrganizationMember | None` (organizations/services/organization/model.py:346). A caller who passes `OrganizationAuditPermission` without membership (e.g. active staff who isn't a superuser) gets an AttributeError when `request.user.is_superuser` is False. That makes the whole endpoint return 500, even without `optimized_pagination`, because line 71 runs on every request. Elsewhere Sentry checks `is_active_superuser(request)`, not the raw `user.is_superuser` flag. Guard with `member is not None` and use the active-superuser helper."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/api/paginator.py",
+   "line": 179,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "Comment says BasePaginator now allows negative offsets; the code only clamps them for next cursors",
+   "body": "Line 182 only clamps negative offsets to 0 for non-prev cursors. Prev cursors pass the offset through unchanged, as they did before, and Django still rejects a negative slice. This affects every `Paginator`/`DateTimePaginator` endpoint. The comment claims a bidirectional negative-offset optimization that doesn't exist. Reword it to describe the clamp. The same applies to the comment added at src/sentry/utils/cursors.py:26-27."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 62,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Span eviction is silent and hardcoded to 1000, and `max_segment_spans` is now dead",
+   "body": "Before, `_load_segment_data` dropped a segment over `max_segment_spans` and emitted `spans.buffer.flush_segments.segment_span_count_exceeded` plus an error log. Now the Lua script `zpopmin`s the oldest spans past a literal 1000. It emits no metric, returns nothing, and logs nothing, so lost spans can't be seen. `SpansBuffer.max_segment_spans` (buffer.py:150,158) is no longer read anywhere (grep finds no other use), so configuring it has no effect. Pass the limit as an ARGV from `self.max_segment_spans`, and return the evicted count so `process_spans` can emit a metric."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/spans/buffer.py",
+   "line": 197,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Switching `span-buf:s:*` from SET to ZSET breaks on keys left over from before the deploy",
+   "body": "Set keys written by the previous version stay in Redis for up to `redis_ttl` (3600s by default, buffer.py:151). On those keys, `ZADD` here, `ZCARD`/`ZUNIONSTORE` in add-buffer.lua:46-53, and `ZSCAN` in `_load_segment_data` (buffer.py:434) all fail with WRONGTYPE. The pipelines raise on the first error, so both the process consumer and the flusher crash-loop until the old keys expire or are flushed. If the plan is to drain or clear the buffer before deploying, say so in the PR. Otherwise add handling, e.g. a `TYPE` check, or a new key prefix."
+  },
+  {
+   "id": 6,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 47,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "ZUNIONSTORE sums scores for duplicate payloads, which distorts eviction order",
+   "body": "ZUNIONSTORE's default aggregate is SUM. If the same payload is in both sets (e.g. a redelivered span), its score becomes twice its end timestamp. It then sorts as the newest span and is never evicted by `zpopmin`. Add `AGGREGATE MAX` to both calls (lines 47 and 53)."
+  },
+  {
+   "id": 7,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 30,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Redirect depth limit cut from 10000 to 1000, and the comment explaining it was removed",
+   "body": "The PR description doesn't mention this change. Segment trees deeper than 1000 levels will now be split, not joined. The removed comment documented exactly that trade-off. Keep the comment and state the new limit, or explain why 1000 is enough."
+  },
+  {
+   "id": 8,
+   "path": "tests/sentry/spans/test_buffer.py",
+   "line": 126,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "No test for the new eviction behavior",
+   "body": "The tests only add `end_timestamp_precise=1700000000.0` everywhere. None of them push more than 1000 spans into a segment, and none use differing timestamps to check that the oldest-ending spans are the ones evicted. The core behavior of the PR is untested."
+  }
+ ]
+}
