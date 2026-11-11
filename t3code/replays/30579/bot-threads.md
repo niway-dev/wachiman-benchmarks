@@ -1,0 +1,19 @@
+# Reference bot threads: pingdotgg/t3code#30579
+
+Original PR: https://github.com/pingdotgg/t3code/pull/30579 (feat(web): add pull request comments to the chat), merged 2026-11-06.
+
+Replay: base `d51bc58f5e05123a416a3737ac4bce42d1d76b7c`, head `a8ae50f4ae8434bfc8259e9d4a0986ee8967ae71`.
+
+These are the CodeRabbit (`coderabbitai`) and Macroscope (`macroscopeapp`) threads raised on the replay head or on a later commit of the PR: 9 of the PR's 9 threads. They are the reference that Wachiman's findings on the replay are compared with. "Claim" is the thread's own headline. "Our verdict" comes from [`batches/2026-11-06/chunk-04.md`](../../batches/2026-11-06/chunk-04.md) (Track A, row T#), as verdict (outcome). The chunk row says whether that verdict was checked in code or judged from the thread text.
+
+| T# | bot | bot severity | path:line | commit | claim | our verdict | url |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | macroscopeapp | High | `apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx:687` | a8ae50f4 | Clicking “Add to chat” does nothing for comments present only in `detail.reviewThreads`: `buildPullRequestTimeline(detail)` normalizes them into `events`, but this callback searches only `detail.comments`, leaving `comme | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463007279) |
+| 2 | macroscopeapp | High | `apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx:1078` | a8ae50f4 | When two repositories have pull request `#42`, adding a comment from the second repository skips its PR reference if the composer already contains the first repository’s `#42`; the agent then receives the remark alongsid | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463007289) |
+| 3 | macroscopeapp | High | `apps/web/src/components/pullRequest/pullRequestDetail.logic.ts:699` | a8ae50f4 | `readableBody` drops the rest of a remark—and subsequent lines—when ` | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463007294) |
+| 4 | coderabbitai | Minor | `apps/web/src/components/pullRequest/pullRequestDetail.logic.ts:709` | a8ae50f4 | Return `null` when parsing removes the entire body. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463055053) |
+| 5 | coderabbitai | Minor | `apps/web/src/components/pullRequest/pullRequestDetail.logic.ts:1157` | a8ae50f4 | Scope comment chip IDs to the pull request. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463055058) |
+| 6 | coderabbitai | Minor | `apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx:1079` | a8ae50f4 | Compare pull request URLs when checking for an existing reference. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463055061) |
+| 7 | coderabbitai | Major | `apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx:1081` | a8ae50f4 | Add both chips without inserting inline prompt references. | wrong (disputed) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463055069) |
+| 8 | coderabbitai | Minor | `apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx:1047` | 64593653 | Keep a durable PR reference when a handoff chip already exists. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463221621) |
+| 9 | coderabbitai | Minor | `apps/web/src/components/pullRequest/pullRequestDetail.logic.ts:679` | ee55f44a | Preserve the fence’s blockquote scope. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/30579#discussion_r4463372923) |
