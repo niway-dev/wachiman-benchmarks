@@ -1,0 +1,126 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 2e86097 of t3code-fork against its parent (68be2f7)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "68be2f7b3273a642f3d48dc9fd723310f3fb5eef",
+      "ref": "68be2f7"
+    },
+    "head": {
+      "sha": "2e860972ae1740e0e82717a5fc2683513936188b",
+      "ref": "2e86097"
+    },
+    "title": "perf(server): a checkpoint capture starts 8 git processes instead of 10 (#21315)",
+    "description": "perf(server): a checkpoint capture starts 8 git processes instead of 10 (#21315)",
+    "author": "Joseph Vidal"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/vcs/GitVcsDriver.test.ts",
+      "apps/server/src/vcs/GitVcsDriver.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriver.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [],
+  "contracts": [
+    {
+      "action": "Checkpoint capture reads the common dir, the index path and whether HEAD exists from one combined `git rev-parse` instead of three separate calls",
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:834-870",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:793-800",
+        "apps/server/src/vcs/GitVcsDriver.ts:819-831",
+        "apps/server/src/vcs/GitVcsDriver.ts:852-869",
+        "apps/server/src/vcs/GitVcsDriver.test.ts:941-986",
+        "apps/server/src/vcs/GitVcsDriver.test.ts:988-1002",
+        "apps/server/src/vcs/GitVcsDriver.test.ts:1004-1039"
+      ],
+      "equivalent_path": "resolveGitCommonDir (rev-parse --git-common-dir, resolved against realPath(cwd)), hasHeadCommit (rev-parse --verify HEAD, non-zero exit means no HEAD), and the inline rev-parse --path-format=absolute --git-path index",
+      "before_after": "Before: three processes, and any non-zero exit from hasHeadCommit counted as 'no HEAD'. After: exit 0 means HEAD exists (4 lines including the trailing empty one), exit 1 means unborn HEAD (3 lines). Any other exit code, a line count that doesn't match (Git before 2.31 echoes --path-format, or a path contains a newline), or a non-empty last line falls back to the old separate commands. The fallback only calls hasHeadCommit when the exit code was neither 0 nor 1.",
+      "visible_effect": "No visible change. The checkpoint ref has the same tree and parent, and capture runs 2 fewer git processes. The tests count 9 commands for a committed HEAD where the fallback path runs 11, so the PR title's '8 instead of 10' is one off.",
+      "failure_mode": "Outside a repo, rev-parse exits 128, so headChecked is false and the code falls back to resolveGitCommonDir. That call fails without allowNonZeroExit and raises the same VcsProcessExitError (operation resolveGitCommonDir) as before. The test at GitVcsDriver.test.ts:988-1002 asserts this.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The combined rev-parse runs under the CHECKPOINT_CAPTURE_OPERATION label with allowNonZeroExit",
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:837-851",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/VcsProcess.ts:73-80",
+        "apps/server/src/vcs/VcsProcess.ts:279-284",
+        "apps/server/src/vcs/VcsProcess.ts:347-371"
+      ],
+      "equivalent_path": "Other capture commands that use the same operation label, e.g. config at GitVcsDriver.ts:923-928",
+      "before_after": "VcsProcess.run retries capture-labelled git commands only when the result is an error with retryable=true. Because allowNonZeroExit turns a non-zero exit into a result, exit 1 and 128 are never retried. The darwin fsync fallback also skips commands that pass allowNonZeroExit. The rev-parse metric now counts under the capture label instead of resolveGitCommonDir and hasHeadCommit.",
+      "visible_effect": "No user-visible change. Only metric attribution moves.",
+      "failure_mode": "A spawn failure surfaces as a VcsProcess error from execute, the same way it did for the old individual calls.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The index path from the combined rev-parse goes to fileSystem.stat and copyFile",
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:941-953",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:940-1021",
+        "apps/server/src/vcs/GitVcsDriver.ts:1022-1050"
+      ],
+      "equivalent_path": "The previous inline rev-parse --path-format=absolute --git-path index followed by stat and copyFile",
+      "before_after": "indexPath is undefined only in the fallback, and then the old rev-parse runs. Both paths are absolute and trimmed the same way. Errors inside this block are still turned into a full read-tree rebuild by Effect.orElseSucceed(() => false).",
+      "visible_effect": "No change.",
+      "failure_mode": "If stat or copyFile fails, reusedIndex is false and the index is rebuilt from HEAD, the same as before.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no defects. The single `git rev-parse --path-format=absolute --git-common-dir --git-path index --verify --quiet HEAD` reads its result from the exit code (0 means HEAD exists, 1 means HEAD is unborn) and from an exact line count. Anything unexpected falls back to the old separate commands: Git before 2.31, a path containing a newline, or a failure outside a repo. In that case errors keep the same shape (the resolveGitCommonDir VcsProcessExitError), and hasHeadCommit runs only when the HEAD check was inconclusive. The new tests cover the committed and unborn HEAD cases, the not-a-repo case and the newline fallback, and they check the resulting tree and parent. One small inaccuracy: the tests show 9 git commands for a committed HEAD against 11 on the old path, so the PR title's \"8 instead of 10\" is off by one. The rev-parse metric is now recorded under the capture operation label instead of resolveGitCommonDir and hasHeadCommit.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 178,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.5141418
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "68be2f7b3273a642f3d48dc9fd723310f3fb5eef"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5141418,
+    "usage": {
+      "input": 10,
+      "output": 7000,
+      "cacheRead": 139509,
+      "cacheWrite": 43275
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 86088,
+    "stop": "complete",
+    "notices": []
+  }
+}

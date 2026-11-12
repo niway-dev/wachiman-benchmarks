@@ -1,0 +1,156 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 36f91c4 of t3code-fork against its parent (7371925)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+      "ref": "7371925"
+    },
+    "head": {
+      "sha": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+      "ref": "36f91c4"
+    },
+    "title": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "description": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/ssh/src/tunnel.test.ts",
+      "packages/ssh/src/tunnel.ts"
+    ],
+    "reviewed": [
+      "packages/ssh/src/tunnel.ts",
+      "packages/ssh/src/tunnel.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/ssh/src/tunnel.ts",
+      "line": 720,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A managed server that is alive but permanently unresponsive can no longer be replaced by reconnecting",
+      "body": "The old branch killed the managed server when the 2s reuse probe failed and then launched a new one. The new branch (lines 711-723) waits up to 60s, then prints 'Retry the connection' and exits 1 without touching the server. If the server is wedged for good (deadlocked, or stuck in an unkillable state with its listener still open), every retry runs the same path and fails after about 60s. The only exits are a runner change (line 714) or an explicit disconnect, which runs the stop script at line 773. The message tells the user to retry, which cannot help in that case. Please confirm the desktop UI offers Disconnect or Stop after an ensureEnvironment failure. If it doesn't, either mention the stop path in the message or add a bounded escape, such as replacing the server after N consecutive not-ready exits.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/ssh/src/tunnel.ts",
+      "line": 1676,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Entry is removed from the map before an interruptible close",
+      "body": "`tunnels.delete(key)` is followed by `closeTunnelEntry(entry)` with nothing making the pair uninterruptible. disconnectEnvironment wraps the same pair in `Effect.uninterruptible` (lines 1782-1785). If the fiber is interrupted between the two calls, the entry is no longer in `tunnels`, so no later path closes it and its `ssh -N` forward and scope stay open. Before this change the entry stayed in the map and a later ensure would have closed it. Wrapping the delete and close in `Effect.uninterruptible`, as disconnect does, would remove the gap.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/ssh/src/tunnel.test.ts",
+      "line": 1222,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "The zombie tests depend on host behavior that the suite never checks",
+      "body": "The two zombie tests (lines 1201-1240 and 1282-1302) need `ps -o stat= -p` to report Z and a parent that never reaps. The first one asserts this before using it (line 1222). The handover test (line 1282) has no such check. If the parent is reaped, the test passes through a different path than the one its name says. `server_running` also falls back to plain `kill -0` where `ps -p` is unsupported, such as BusyBox, and no test covers that fallback.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Launch script: reconnect with a live managed server now waits for readiness and exits 1 instead of killing the server",
+      "location": "packages/ssh/src/tunnel.ts:711",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:898-923",
+        "packages/ssh/src/tunnel.ts:773-793"
+      ],
+      "equivalent_path": "Previous branch, which killed the managed server after one failed 2s reuse probe, then relaunched",
+      "before_after": "Before: not ready after 2s, kill, pick_port, relaunch. After: wait_ready for T3_READY_TIMEOUT_MS (60s), then print an error and exit 1 with the server, pid, port and managed files left in place.",
+      "visible_effect": "The SSH launch fails with the stderr message (surfaced through runSshCommand in launchOrReuseRemoteServer) rather than silently replacing the server and its agents.",
+      "failure_mode": "A permanently wedged server blocks every reconnect until a runner change or an explicit disconnect.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Timeout bound on the launch script: adopt probe, then managed-wait, then possibly the fresh-launch wait",
+      "location": "packages/ssh/src/tunnel.ts:676",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:51-66",
+        "packages/ssh/src/tunnel.ts:917-919",
+        "packages/ssh/src/tunnel.ts:676-723"
+      ],
+      "equivalent_path": "Outer timeout in launchOrReuseRemoteServer (line 917)",
+      "before_after": "The worst path is a 2s adopt probe, then a 60s managed wait that exits 1. A different path is a 2s probe, a pid wait of at most 2s, then a 60s fresh-launch wait. Each path is about 64s. The outer bound is 90s for a node-script runner (line 55) and 900s for an archive runner (line 65). The inner values are 2s reuse (line 66), 60s ready (line 54) and 1s probe (line 52).",
+      "visible_effect": "The outer timeout leaves room for the inner waits, so the script's own message is the one the user sees.",
+      "failure_mode": "None found. Only the node-script runner's headroom is small, about 26s, and it is not exceeded by these paths.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ensureTunnelEntry: delete the stale entry from the map before closing it",
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1587-1599",
+        "packages/ssh/src/tunnel.ts:1675-1677",
+        "packages/ssh/src/tunnel.ts:1780-1786",
+        "packages/ssh/src/tunnel.test.ts:499-550"
+      ],
+      "equivalent_path": "disconnectEnvironment at lines 1780-1786, which deletes the entry and closes it uninterruptibly, then runs the stop script explicitly",
+      "before_after": "The entry's scope finalizer (lines 1587-1599) runs the remote stop only when `tunnels.get(key) === tunnelEntry`. Deleting first makes it kill only the local forward. Before the change, closing a stale forward also ran the remote stop script and killed the server. The new test covers this: forwards 2, kills 1, stops 0, then 1 after disconnect.",
+      "visible_effect": "A dead SSH forward no longer stops the remote server and its agents.",
+      "failure_mode": "The delete and close are not atomic against interruption (reported as a finding).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The shell logic in the launch script and the `tunnels.delete` fix hold up. The new tests drive the real script, and I traced them against it without running anything. I found three smaller issues. First, a managed server that stays alive but unresponsive can no longer be replaced by reconnecting: the script now exits 1 and says 'Retry', which cannot help in that case. Second, `tunnels.delete` and `closeTunnelEntry` are not made uninterruptible together, so an interruption between them leaks the ssh forward. Third, the zombie-handling tests depend on `ps -p` and an unreaped parent, and the handover test does not check either. I did not check whether the desktop UI offers a Disconnect or Stop after a failed ensure.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 534,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.2993487
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "737192594f47d87f28b5f5a3fda3ef792a0d7972"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2993487,
+    "usage": {
+      "input": 12,
+      "output": 7888,
+      "cacheRead": 225367,
+      "cacheWrite": 49477
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 73744,
+    "stop": "complete",
+    "notices": []
+  }
+}
