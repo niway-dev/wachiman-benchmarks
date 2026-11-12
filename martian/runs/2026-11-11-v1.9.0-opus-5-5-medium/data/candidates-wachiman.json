@@ -1,0 +1,1690 @@
+{
+ "https://github.com/keycloak/keycloak/pull/37038": {
+  "wachiman": [
+   {
+    "text": "canManage() grants manage to admins that only have VIEW on all groups\n\n`canManage()` returns true when `hasPermission(null, VIEW, MANAGE)` matches, so an all-groups permission with only the `view` scope passes `requireManage()`. `GroupsResource.addTopLevelGroup` (GroupsResource.java:181) uses only `auth.groups().requireManage()`, which means a view-only admin can create top-level groups and move existing groups to the top level. The interface Javadoc (GroupPermissionEvaluator.java:72-77) repeats the same VIEW/MANAGE wording. Change the check to `hasPermission(null, AdminPermissionsSchema.MANAGE)`, the same as `canManage(GroupModel)` at line 79, and add a test that a VIEW-only all-groups admin gets 403 on POST /groups.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionsV2.java",
+    "line": 70,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "getGroupIdsWithViewPermission returns authz resource IDs, not group IDs\n\nIn V2, `AdminPermissionsSchema.getOrCreateResource` creates the resource with name = group id (AdminPermissionsSchema.java:109,121). Its `getId()` is a generated authz UUID. This loop passes `groupResource.getId()` to `hasPermission`, which looks the resource up with `findByName` (line 141). It also adds `getId()` to the result set. So the lookup never finds the group resource and falls back to the all-groups resource, and the returned IDs are not group IDs. V1 uses `resource.getName()` here (GroupPermissions.java:315).\n\nCallers pass this set as the group filter to `UsersResource.getUsersCount` (UsersResource.java:398,425,430) and set it as `UserModel.GROUPS` for the search (UsersResource.java:448-450, BruteForceUsersResource.java:147-149). An admin who can see users only through group view-members gets a wrong count, or an empty or wrong search result, with no error. Use `groupResource.getName()` in both places.\n\nI could not confirm that `findByType(server, \"Groups\", ...)` returns the per-group resources. `create(server, name, owner)` does not appear to set a type. If it doesn't, this method always returns an empty set, and the count endpoint is wrong either way. The tests only cover the list endpoint, where `toRepresentation` filters each user with `canView` again.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionsV2.java",
+    "line": 122,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "requireManageMembers Javadoc points to the wrong method\n\nThe Javadoc for `requireManageMembers` says it throws when `canManageMembership(GroupModel)` is false. It should name `canManageMembers(GroupModel)`. Also, `getGroupIdsWithViewPermission`'s `@return` (line 145) says \"Stream\", but the method returns a `Set`.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionEvaluator.java",
+    "line": 133,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/33832": {
+  "wachiman": [
+   {
+    "text": "Two providers with the same order are now picked silently, which can mean a non-FIPS provider in a FIPS setup\n\nBefore this change, finding more than one CryptoProvider threw an IllegalStateException. Now the list is sorted by `order()` and the first one is used. The only trace of the others is a debug log (lines 64-70). DefaultCryptoProvider, WildFlyElytronProvider and FIPS1402Provider all return 200, so when two of them are on the classpath together the stable sort leaves them in ServiceLoader (classpath) order. That is the same misconfiguration that used to fail at startup. In a FIPS deployment that accidentally ships crypto-default, the server can now start on the non-FIPS BouncyCastle provider without any visible warning. This affects every caller that relies on detection: `KeycloakApplication` (services/.../KeycloakApplication.java:89) and admin-cli `Globals` (Globals.java:44). Quarkus is not affected because it calls `setProvider` explicitly. Suggested fix: still throw when the two highest-ranked providers have the same `order()`, so only the authz-client fallback (100) can lose quietly. Logging the ignored providers at warn level would also help.",
+    "path": "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+    "line": 57,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Dead encoder calls in concatenatedRSToASN1DER\n\nLines 114-115 build two `ASN1Encoder` instances and throw them away. Lines 119-120 build the same values again. You can delete the two lines.",
+    "path": "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+    "line": 114,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Test only round-trips through the new code and never checks the DER against the JDK\n\nThe test decodes the JDK signature, re-encodes it with the new `ASN1Encoder` and decodes it again with the new `ASN1Decoder`. If the encoder and decoder share the same mistake, the test still passes. Call `Signature.initVerify(publicKey)` and `verify(asn1Des)` (or compare `asn1Des` with `sign`), which checks the produced DER against the JDK. Also, one default `KeyPairGenerator(\"EC\")` key (P-256 or P-384, depending on the JDK) is used for all three algorithms. So ES512 never runs with a P-521 key, where r and s are 66 bytes and can carry a leading sign byte, which is the case the padding and truncation in `integerToBytes` exist for. Generating a key on the matching curve for each algorithm would cover it.",
+    "path": "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+    "line": 56,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/40940": {
+  "wachiman": [
+   {
+    "text": "getSubGroupsCount now returns null, but the SPI says it never does\n\n`GroupModel.getSubGroupsCount()` is documented as \"Never returns {@code null}\" (server-spi/src/main/java/org/keycloak/models/GroupModel.java:296). This change returns `null` when the group was deleted from the database while its cached copy was still in use. In this repository the only caller is `GroupUtils.populateSubGroupCount` (services/src/main/java/org/keycloak/utils/GroupUtils.java:90). It passes the value to `setSubGroupCount(Long)`, so nothing breaks today. Extensions that rely on the documented contract and unbox the value would throw a new NPE instead. The cached adapter's other lazy loaders return an empty fallback when the group is gone (`Collections::emptySet` and `MultivaluedHashMap::new` in CachedGroup.java:55-57). Returning `0L` would match that and keep the contract. Otherwise, update the javadoc.",
+    "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+    "line": 275,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Reader thread is never joined, so the assertion can miss the failure it tests for\n\nRight after `deletedAll.set(true)`, the test checks `caughtExceptions` (line 157) without waiting for the reader thread. A request that is still running, which is exactly the one most likely to hit the concurrent delete, can add its exception after the check has passed. Nothing requires the reader to run at all either: if the 100 deletes finish before the thread's first request, the test passes without exercising the race. The thread also outlives the test. Keep a reference to the `Thread` and `join()` it before the assertion. Also consider waiting until at least one read has finished (a counter or latch) before you start deleting.",
+    "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+    "line": 155,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/keycloak-greptile/pull/1": {
+  "wachiman": [
+   {
+    "text": "Call to `isConditionalPasskeysEnabled()` with no arguments won't compile\n\nThe only declaration is `protected boolean isConditionalPasskeysEnabled(UserModel user)` at UsernamePasswordForm.java:160. Nothing in services declares a no-argument overload, and a grep for `isConditionalPasskeysEnabled(` finds only these four places. So `services` fails to compile. Even if you just pass `context.getUser()`, the check is still wrong, because of the inverted condition reported in the next finding.",
+    "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java",
+    "line": 47,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Passkey conditional UI is now only set up when a user is already set, so a normal first login loses passkeys\n\n`isConditionalPasskeysEnabled` returns `... && user != null`. Before this change, `fillContextForm` ran exactly when the user was *not* yet identified: in the `else` branch of `authenticate`, and in `challenge` behind `context.getUser() == null`.\n\nNow, on a fresh login (`context.getUser()` is null at line 115), `fillContextForm` is never called. The login page then has no WebAuthn challenge or `webauth` form, and passkey login is impossible. The new tests themselves expect `//form[@id='webauth']` on the first login page (PasskeysUsernamePasswordFormTest.java:196, :238), so they would fail.\n\nThe same applies to the error path at line 137: when the username is unknown, the user stays null and the passkey data is dropped. The PR's goal of also enabling passkeys during re-authentication needs the check to be just `webauthnAuth != null && webauthnAuth.isPasskeysEnabled()`, without the user condition. Re-authentication with a passkey is still safe without it: `WebAuthnAuthenticator.action` rejects a different user (WebAuthnAuthenticator.java:201-209), and `WebAuthnConditionalUIAuthenticator.shouldShowWebAuthnAuthenticators` returns false, so no credential list is leaked.",
+    "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java",
+    "line": 161,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Missing `@Override` on `shouldShowWebAuthnAuthenticators`\n\nThis method overrides `WebAuthnAuthenticator.shouldShowWebAuthnAuthenticators` (WebAuthnAuthenticator.java:128), but it has no `@Override`. If the base method is ever renamed, this override would silently stop applying, and the form would start listing the user's credentials during conditional login.",
+    "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java",
+    "line": 65,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Test name says the user has no passkey, but the test disables passkeys for the whole realm\n\n`reauthenticationOfUserWithoutPasskey` sets `setWebAuthnPolicyPasskeysEnabled(Boolean.FALSE)`. That means it never covers the case its name and the comment at line 304 describe: passkeys enabled for the realm, re-authenticating a user who has no passkey. Under the intended behaviour, that user would still see the conditional passkey UI. Either rename the test or add the realm-enabled case.\n\nSeparately, the `try { findElement(...); fail(...) } catch (Exception)` pattern at lines 291-296 and 312-317 only works because `AssertionError` is not an `Exception`. `Assert.assertThrows(NoSuchElementException.class, ...)`, as used in the organization test, would be clearer.",
+    "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java",
+    "line": 279,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/93824": {
+  "wachiman": [
+   {
+    "text": "A hung flusher process is never killed, so its replacement runs alongside it on the same shards\n\nProcesses are made with `self.mp_context.Process`, where `mp_context = multiprocessing.get_context(\"spawn\")` (lines 53, 105). That gives a `multiprocessing.context.SpawnProcess`. In CPython, `SpawnProcess` subclasses `BaseProcess` directly, not `multiprocessing.Process`, so `isinstance(process, multiprocessing.Process)` is always False and `process.kill()` never runs.\n\nThe old code called `self.process.kill()` with no condition. Now, in the `hang` case (line 236), the stuck process stays alive. `_create_process_for_shards` then starts a second process for the same shards (line 259), and both call `flush_segments`/`done_flush_segments` on the same Redis queues. That can produce the same segments twice. The stuck process is also leaked, and this repeats on every restart, up to `MAX_PROCESS_RESTARTS`.\n\nThe same check in `join` (line 346) means `terminate()` never runs either. Fix: check `isinstance(process, multiprocessing.process.BaseProcess)`, or `not isinstance(process, threading.Thread)`.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 254,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "join() stops looping once the deadline passes and skips the remaining processes\n\nWhen the deadline has passed, `break` leaves the loop. `terminate()` (line 347) never runs for that process or any process after it. The old code always terminated after the wait. Those processes are only stopped by the `stopped` flag, so a process that is stuck in Redis or Kafka keeps running past `join`. Use `continue`, or skip only the wait and still terminate each process (once the isinstance check at line 346 is fixed too).",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 341,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`spans.buffer.max-flush-segments` now applies per process, not per consumer\n\n`flush_segments` caps each shard at `ceil(max_flush_segments / len(self.assigned_shards))` (src/sentry/spans/buffer.py:382-384). Each per-process buffer now holds only its own shards, so each process can flush up to `max_flush_segments` per cycle. The whole consumer can flush `num_processes \u00d7 max_flush_segments`. If the option is meant as a consumer-wide limit, divide it by `num_processes`, or document the new meaning.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 93,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Cluster memory is queried once per process buffer on every submit\n\n`get_memory_info` returns `iter_cluster_memory_usage(self.client)` for the whole Redis cluster (src/sentry/spans/buffer.py:375-376), whatever the buffer's shards. Calling it for every buffer repeats the same INFO queries N times. `used` and `available` are each multiplied by N, so the ratio does not change. One call is enough, for example `next(iter(self.buffers.values())).get_memory_info()`.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 300,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Inconsistent metric tag key: `shards` here, `shard` elsewhere\n\n`spans.buffer.flusher.wait_produce` is tagged `shards`. The `produce` timer (line 185) and `segment_size_bytes` (line 195) use `shard`, so dashboards can't group these metrics by one key. Also, `shard_tag` is a comma-joined list, so the number of distinct tag values grows with the shard combinations.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 199,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Dead code: `_create_process_for_shard` and `if not process`\n\nNothing calls `_create_process_for_shard`. `if not process: continue` (line 222) never fires, because Thread and Process objects are always truthy. Remove both.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 127,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Docstring says one process per shard, but the CLI default is 1 process\n\nThe CLI defaults `--flusher-processes` to 1 (src/sentry/consumers/__init__.py:434). Shards are spread round-robin over `min(max_processes, len(shards))` processes (lines 60-66). Only when `max_processes` is None do you get one process per shard.",
+    "path": "src/sentry/spans/consumers/process/flusher.py",
+    "line": 32,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`time.sleep(0.1)` does nothing because the test patched `time.sleep`\n\nLine 15 sets `time.sleep` to `lambda _: None`. Since the test calls it as `time.sleep`, the patched version runs, so line 62 doesn't wait. The comment \"Give flusher threads time to process\" is false. Whether the flush happens before `join` sets `stopped` still depends on thread timing. To make this deterministic, poll until `messages` is non-empty, with a real deadline, e.g. a saved reference to the original sleep.",
+    "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+    "line": 62,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/5": {
+  "wachiman": [
+   {
+    "text": "zip(error_ids, events.values()) pairs error IDs with the wrong events\n\n`nodestore.backend.get_multi` (src/sentry/nodestore/base.py:174-209) removes duplicate ids, puts the uncached results first, and then appends cached hits with `items.update(cache_items)`. So `events.values()` is not in `error_ids` order once some ids are cached. It is also shorter than `error_ids` when there are duplicates. When that happens, `zip` gives an event's title, message and timestamp to a different error ID, and Seer receives the mismatched data. Nothing fails or logs. The fix is to look each one up by key: `data = events.get(Event.generate_node_id(project_id, event_id=eid))` for each `eid` in `error_ids`.",
+    "path": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py",
+    "line": 118,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Error timestamps (seconds) are compared with rrweb event timestamps (milliseconds)\n\n`fetch_error_details` takes `timestamp` from the error event's nodestore payload, which is a float in seconds. `gen_request_data` compares it with the top-level `timestamp` of each replay recording event, which rrweb stores in epoch milliseconds (`event_parser.py:182` passes it into the log text unchanged). A seconds value is always smaller than a milliseconds value, so every error is emitted before the first breadcrumb. The log Seer receives then also mixes the two units in its `at {timestamp}` text. The summary is told errors happened at the start of the session, and nothing reports the problem. Convert the error timestamp to milliseconds (`* 1000`) before sorting and comparing.",
+    "path": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py",
+    "line": 155,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Assemble analytics event is recorded before the feature-flag check\n\n`analytics.record(\"preprod_artifact.api.assemble\", ...)` runs before the `organizations:preprod-artifact-assemble` check. Requests that the endpoint then rejects are still counted as assemble events, which inflates the metric. Consider moving the call after the feature check, or after the request has been validated.",
+    "path": "src/sentry/preprod/api/endpoints/organization_preprod_artifact_assemble.py",
+    "line": 81,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "One invalid report drops the whole batch\n\nIf any report in the array fails validation, the endpoint returns 422 and none of the valid reports in the same POST are counted. Browsers batch reports from different pages, and the endpoint accepts report types it does not control, so one malformed entry loses every report sent with it. Consider skipping and logging the invalid entries and processing the rest.",
+    "path": "src/sentry/issues/endpoints/browser_reporting_collector.py",
+    "line": 115,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "age/timestamp mutual-exclusion check is skipped when either value is 0\n\n`validate_timestamp` and `validate_age` check truthiness: `self.initial_data.get(\"age\")` and `self.initial_data.get(\"timestamp\")`. A report with `age: 0` and a timestamp, or with `timestamp: 0` and an age, passes both checks even though it has both fields. A report with neither field also passes, because both fields are `required=False`. Consider checking `\"age\" in self.initial_data` instead, and requiring exactly one of the two fields in `validate()`.",
+    "path": "src/sentry/issues/endpoints/browser_reporting_collector.py",
+    "line": 52,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Flag-gated TableWidgetVisualization always renders empty\n\nWith `use-table-widget-visualization` enabled, every table widget renders `TableWidgetVisualization` with `columns={[]}` and empty `data`. `result.data`, `result.meta` and `fields` are all ignored, so any organization with the flag sees blank tables. If this is meant as scaffolding, consider passing the real result data through before the flag is turned on for anyone.",
+    "path": "static/app/views/dashboards/widgetCard/chart.tsx",
+    "line": 164,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Attribute keys query lost retry:false / staleTime:0 / refetchOnWindowFocus:false and the environment filter\n\nThe old `useApiQuery` call set `retry: false`, `staleTime: 0` and `refetchOnWindowFocus: false`. The new `useQuery` uses none of them, so it falls back to the app's QueryClient defaults. If those defaults include retries, a failing attributes endpoint now gets retried, and `isLoading` (which is now `isFetching`) stays true longer while that happens. The query also used to send `selection.environments`; `makeTraceItemAttributeKeysQueryOptions` leaves it out on purpose (useGetTraceItemAttributeKeys.tsx:50). That means the key list no longer narrows by the selected environment. Please confirm both changes are intended. If not, add the old options back to `useQuery`.",
+    "path": "static/app/views/explore/hooks/useTraceItemAttributeKeys.tsx",
+    "line": 50,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Custom renderer results that are falsy get replaced by the default\n\nBoth renderers fall back to the default with `if (cell)` (lines 32 and 71). The documented contract is that only `undefined` means \"use the fallback\", so a custom renderer that returns `0`, `''` or `null` on purpose gets overwritten by the default cell. Check `cell !== undefined` instead.",
+    "path": "static/app/views/dashboards/widgets/tableWidget/defaultTableCellRenderers.tsx",
+    "line": 32,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Story copy typo and missing spaces\n\n\"the the most basic example\" repeats \"the\". There is no space before `<code>tableData</code>` (line 28), and there are similar gaps around `<code>TabularData</code>` (line 58) and `<code>renderTableBodyCell</code>` (line 111), so the rendered text runs words together, e.g. \"requirestableData\".",
+    "path": "static/app/views/dashboards/widgets/tableWidget/tableWidgetVisualization.stories.tsx",
+    "line": 28,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "\"Project not found\" can show while projects are still loading\n\n`useProjectFromId` (static/app/utils/useProjectFromId.tsx:7-12) looks the id up in `useProjects().projects` and ignores the `fetching` state. Line 90 therefore shows the error alert any time the project list doesn't contain the replay's project yet. That includes the moment before the projects store has loaded, so the user sees a 'Project not found' error flash before the summary loads. Consider also reading `fetching` from `useProjects()` and showing the loading state until it finishes.",
+    "path": "static/app/views/replays/detail/ai/index.tsx",
+    "line": 90,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Tests use second-based breadcrumb timestamps, so they hide a seconds-vs-milliseconds mixup when errors are interleaved\n\n`gen_request_data` (src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py:153-155) compares `error_events[i][\"timestamp\"]` with the recording event's top-level `timestamp`. The error timestamp comes from nodestore event data (`data.get(\"timestamp\")`, line 115), which is in epoch seconds. The top-level `timestamp` on an rrweb recording event is in epoch milliseconds. These tests use seconds for the breadcrumbs (`1.5`/`2.0` here, and `float(now.timestamp())` at lines 188 and 254), so the interleaving looks correct. With real recordings, every error timestamp is about 1000\u00d7 smaller than every breadcrumb timestamp, so all errors are emitted before the first breadcrumb. Their `at ...` values are then in a different unit from the breadcrumbs' values. The summary sent to Seer comes out in the wrong order, and nothing reports it. Please build the fixtures with millisecond breadcrumb timestamps, as real segments have, and convert one side in `gen_request_data` (for example, multiply the error timestamp by 1000) so the ordering assertion tests the real case.",
+    "path": "tests/sentry/replays/test_project_replay_summarize_breadcrumbs.py",
+    "line": 290,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1": {
+  "wachiman": [
+   {
+    "text": "OptimizedCursorPaginator can't page a datetime key, so the optimized audit-log path returns 500\n\n`OptimizedCursorPaginator` copies the integer `Paginator.get_item_key`/`value_from_cursor`. The audit-log endpoint uses it with `order_by=\"-datetime\"` (organization_auditlogs.py:80).\n\n- **Item key:** `getattr(item, \"datetime\")` is a `datetime`, so `math.ceil(value)` raises `TypeError`. `build_cursor` calls the key on the results (line 904), so any `?optimized_pagination=true` request that returns at least one row fails with a 500.\n- **Cursor value:** `value_from_cursor` returns the raw millisecond integer. `build_queryset` then emits `datetime <= <int>`, comparing a timestamp column with an integer.\n\n`DateTimePaginator` (paginator.py:230-241) converts in both directions. Subclass `DateTimePaginator` or reuse its key and value methods, and add a test that exercises this path.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 840,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The negative-offset \"advanced feature\" can't work: Django querysets reject negative slices\n\nCursor offsets come straight from the client (`Cursor.from_string`, cursors.py:59), so `cursor=0:-5:0` reaches line 882 as `queryset[-5:...]`. Django `QuerySet.__getitem__` raises `ValueError(\"Negative indexing is not supported.\")` for that.\n\nThis is not a `BadPaginationError`, so `paginate` (base.py:540) does not turn it into a 400; the request fails with a 500. The comment's claims are false: the ORM does not \"handle negative slicing automatically\", and nothing gives \"access to data beyond normal pagination bounds\".\n\nRemove this branch, or reject negative offsets with a `BadPaginationError`.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 877,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "BasePaginator only clamps negative offsets on next-page cursors; prev cursors still crash\n\nThis change to the shared `BasePaginator.get_result` affects every subclass (`Paginator`, `DateTimePaginator`, and others).\n\n- **Next cursors:** a negative offset is clamped to 0.\n- **Prev cursors:** a negative offset is passed through unchanged. A client-supplied cursor such as `1:-1:1` still raises Django's negative-indexing `ValueError` and returns a 500.\n- **Unchanged check:** line 192 still compares against `offset`, not `start_offset`.\n\nThe comment says negative offsets are allowed and \"the underlying queryset will handle boundary conditions\"; neither is true. Clamp in both directions, or raise `BadPaginationError` for `offset < 0`, so a malformed cursor gets a 400.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 182,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The gate is not an admin check: has_global_access is open-membership access, and is_superuser skips active-superuser checks\n\nThe comment says the path is for \"authorized administrators\". It isn't restricted that way:\n\n- **`member.has_global_access`:** any member of an org with open membership has it. It is not an admin role.\n- **`request.user.is_superuser`:** Sentry elsewhere uses `is_active_superuser(request)`, which also requires an active superuser session. The bare flag skips that.\n\nThe queryset is already scoped to the organization, so no data crosses orgs today. If the path really needs a privilege gate, use the existing helpers. If it doesn't, drop the gate and the comment.",
+    "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+    "line": 71,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "OptimizedCursorPaginator duplicates BasePaginator.get_result and the docstring claims features it doesn't have\n\nApart from the broken negative-offset branch, `get_result` (lines 845-911) is a copy of `BasePaginator.get_result`. There is no \"optimized query path\" and no \"streamlined boundary handling\".\n\nThe comment added in cursors.py:26-27 is also wrong: the `Cursor` constructor has always accepted any integer offset, so the change there is comment-only. Once the datetime and negative-slice bugs are fixed, the class adds nothing over `DateTimePaginator`; consider removing it and the query flag.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 821,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/97529": {
+  "wachiman": [
+   {
+    "text": "New TotalDocs() log call reads the bleve cache map with no lock while the event goroutine can write to it\n\n`TotalDocs()` (pkg/storage/unified/search/bleve.go:144-149) loops over `b.cache` without taking `cacheMu`. This line calls it after the watch-event goroutine has already started (search.go:207-213). That goroutine's `handleEvent` \u2192 `getOrCreateIndex` \u2192 `BuildIndex` writes `b.cache[key]` (bleve.go:137-139). A write event for a namespace/resource that has no index yet, arriving during startup, can therefore hit a concurrent map read and write. In Go that is a fatal runtime error which crashes the process, not a panic you can recover. The metrics collector (bleve_index_metrics.go:96) has the same unlocked read. Fix: take `b.cacheMu.RLock()` inside `TotalDocs`.",
+    "path": "pkg/storage/unified/resource/search.go",
+    "line": 216,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Requests are no longer refused after Stop()\n\n`Stop` still sets `s.initErr` to \"service is stopping\" / \"service is stopped\" (lines 321, 328, 339). Before this change, every RPC called `s.Init(ctx)`, which returned that `initErr` once `once` had fired, so requests after shutdown failed with a clear error. This PR removes those calls from Create, Update, Delete, Read, List, Watch, Search, History, Origin, IsHealthy, PutBlob and GetBlob, and nothing reads `initErr` any more. During shutdown, requests now run against a backend whose lifecycle `Stop` has already run and whose `s.ctx` has been cancelled. IsHealthy also keeps reporting through diagnostics as if nothing happened. Fix: keep a cheap check of the stopped state (for example an atomic flag or reading `initErr`) at the top of the RPCs, or delete the now-dead `initErr` assignments in Stop if serving after Stop is intended.",
+    "path": "pkg/storage/unified/resource/server.go",
+    "line": 321,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Narrower lock lets two builds of the same key run at once\n\n`BuildIndex` used to hold `cacheMu` for the whole build, which serialized builds. Now only the map write is locked. Two `getOrCreateIndex` calls for the same key (the Search path and handleEvent) can both see a nil index and build at the same time. Each lists the whole resource, and the last write to `cache[key]` wins: the losing index is dropped, along with any events written into it while it was cached. For file-based indexes, both calls run `bleve.New` on the same directory. The TODO at search.go:288-290 already notes that a per-key guard is needed. A per-key singleflight would keep the parallel startup builds without duplicating work.",
+    "path": "pkg/storage/unified/search/bleve.go",
+    "line": 137,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Parallel init workers now write shared `err` and `totalBatchesIndexed` at the same time\n\nEach errgroup closure assigns the outer `err` (`_, _, err = s.build(...)`) and increments `totalBatchesIndexed`, with no synchronization. Now that `BuildIndex` no longer serializes on `cacheMu`, builds really overlap, so these are data races; `go test -race` will flag them. `totalBatchesIndexed` can also come out too low. Use a local `err :=` inside the closure and an atomic counter.",
+    "path": "pkg/storage/unified/resource/search.go",
+    "line": 190,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Is the postgres skip hiding a regression from the eager Init?\n\nThis PR makes `NewResourceServer` run `Init` right away: lifecycle init, a full search index build and the watcher (server.go:258). Before, Init ran lazily on the first request. The storage-server target now does that work inside `service.start` (sql/service.go:113). Did the postgres failure in Drone start with this change? If it did, skipping the test hides a startup problem (timeout or ordering) rather than a CI quirk. Please link a tracking issue for the TODO.",
+    "path": "pkg/server/module_server_test.go",
+    "line": 36,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/80168": {
+  "wachiman": [
+   {
+    "text": "MetricAlertDetectorHandler is now abstract and cannot be instantiated\n\n`MetricAlertDetectorHandler` now inherits from `StatefulDetectorHandler` with only `pass`. It leaves `counter_names`, `get_dedupe_value`, `get_group_key_values` and the new `build_occurrence_and_event_data` unimplemented, and all four are `@abc.abstractmethod` (src/sentry/workflow_engine/processors/detector.py:142-170). `MetricAlertFire.detector_handler` points to this class (grouptype.py:27), and `Detector.detector_handler` instantiates it with `group_type.detector_handler(self)` (models/detector.py:86). So any `metric_alert_fire` detector now raises `TypeError: Can't instantiate abstract class` the moment its handler is read. That aborts `process_detectors` for every detector in the batch. Before this change the handler returned `[]`. A search found no production caller of `process_detectors` yet, so this does not block the merge, but it is wrong as written. Either keep a concrete stub (implement the four members, returning empty or no-op values, with a TODO) or leave it on `DetectorHandler` until the real implementation lands. The `# TODO: This will be a stateful detector` comment on line 10 is also stale now.",
+    "path": "src/sentry/incidents/grouptype.py",
+    "line": 11,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Occurrence assertions only compare the hard-coded id, so they verify almost nothing\n\n`IssueOccurrence.__eq__` compares only `id` (src/sentry/issues/issue_occurrence.py:181-184). `build_mock_occurrence_and_event` always uses the same id (`eb4b0acf...`), so every `== DetectorEvaluationResult(..., result=occurrence, ...)` assertion passes no matter what fingerprint, type or priority the handler produced. This already hides a mistake in this diff: `TestEvaluateGroupKeyValue.test_dedupe` builds the expected occurrence for group key `\"val1\"` (line 536-538) but evaluates `\"group_key\"` (line 548), so the fingerprints differ (`<id>:val1` vs `<id>:group_key`) and the test still passes. Likewise, in `test_state_results_multi_group`, `occurrence` and `occurrence_2` are equal to each other, and so are `event_data` and `event_data_2`. The `assert_has_calls(..., any_order=True)` (line 206-222) therefore cannot tell group_1's occurrence from group_2's. Derive the id from the group key in the mock (e.g. a hash of the fingerprint), or compare `fingerprint` and `initial_issue_priority` explicitly. Then fix the `\"val1\"`/`\"group_key\"` mismatch.",
+    "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+    "line": 252,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Docstring still says evaluate returns a list\n\n`evaluate` now returns `dict[DetectorGroupKey, DetectorEvaluationResult]`, but the docstring still says it \"returns a list of `DetectorEvaluationResult`\".",
+    "path": "src/sentry/workflow_engine/processors/detector.py",
+    "line": 230,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/80528": {
+  "wachiman": [
+   {
+    "text": "Monitor context returns the raw config, so the `schedule_type` display label is never used\n\n`get_monitor_environment_context` makes a copy of the config at line 160 and puts the display label for `schedule_type` into that copy at line 162. Line 168 then returns `monitor_environment.monitor.config` instead of the copy, so the copy is thrown away and the event's monitor context still carries the integer `schedule_type`. The bug already existed and the move kept it as it was. Since the function now lives in its own module, this is an easy place to fix it: `\"config\": config,`. The serializer does the same transformation and uses its copy correctly (`src/sentry/monitors/serializers.py:240-242`).",
+    "path": "src/sentry/monitors/logic/incident_occurrence.py",
+    "line": 168,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/77754": {
+  "wachiman": [
+   {
+    "text": "`queued` default is set once, when the module is imported\n\n`queued: datetime = timezone.now()` runs a single time, when the class is defined. Every `AssignmentSource` built without an explicit `queued` (including every one from `from_integration`) then carries the worker process's import time, not the time the assignment was queued. The field is wrong from the start and will mislead anyone who later reads it for ordering or staleness. Use `queued: datetime = field(default_factory=timezone.now)`. `test_to_dict` only checks that `queued` is not None, so it cannot catch this.",
+    "path": "src/sentry/integrations/services/assignment_source.py",
+    "line": 18,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No test covers the deassign path when the source integration matches\n\nOnly `assign` is tested with a matching `assignment_source`. `deassign` got the same new parameter and is called that way from `sync_group_assignee_inbound` (src/sentry/integrations/utils/sync.py:96-99), but no test checks that an inbound unassign skips outbound sync to the same integration. Nothing checks either that a *different* integration still gets the outbound sync, which is the other half of the claim in `should_sync`'s comment.",
+    "path": "tests/sentry/models/test_groupassignee.py",
+    "line": 180,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`assignment_source` added to the abstract `sync_status_outbound` but nothing passes it\n\nNo caller in this PR passes `assignment_source` to `sync_status_outbound`, and subclasses already take `**kwargs`. So this signature change has no effect and suggests status-sync cycle prevention that doesn't exist yet. Either drop it or wire it through in the PR that uses it.",
+    "path": "src/sentry/integrations/mixins/issues.py",
+    "line": 416,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/95633": {
+  "wachiman": [
+   {
+    "text": "Strategy close() shuts down the factory-owned pool; after a rebalance every message is dropped and its offset committed\n\nThe factory builds one `FixedQueuePool` in `__init__` (result_consumer.py:133) and hands the same instance to every strategy it creates (result_consumer.py:254-259). On a partition revocation Arroyo calls `close()`/`join()` on the current strategy. `close()` then calls `self.queue_pool.shutdown()`, which shuts down every queue and stops every worker. `factory.queue_pool` is still set, so the next `create_with_partitions` passes `assert self.queue_pool is not None` and builds a new strategy on the dead pool. From then on, each `submit` calls `add_offset` and then `work_queue.put`, and the put raises `queue.ShutDown`. The `except Exception` at line 317 catches that, logs it, and marks the offset complete, so the commit loop commits it. The result is that every result after the first rebalance is skipped but still committed. That's silent data loss for uptime results. Fix: the strategy shouldn't shut down a pool it doesn't own. Either create the pool per strategy, or leave pool shutdown to `factory.shutdown()` only. On revoke, drain or clear the pool's state for the revoked partitions instead.",
+    "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+    "line": 338,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Arroyo `commit` is called from a background thread, including for partitions that may have been revoked\n\n`_commit_loop` runs on its own daemon thread and calls `commit_function`, which calls Arroyo's `Commit` callable (result_consumer.py:249-252). Every other strategy in this file calls `commit` from the consumer thread, inside `submit`/`poll`. Arroyo's StreamProcessor stores pending commit offsets in plain state and doesn't lock it, so this commit races with the main loop. Nothing in `OffsetTracker` clears revoked partitions either: after a revoke, offsets for partitions this consumer no longer owns can still be committed and can overwrite the new owner's progress. Collect the committable offsets in the tracker and call `commit` from `poll()` on the consumer thread instead.",
+    "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+    "line": 287,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Queues are unbounded, so there is no backpressure despite the docstring\n\n`queue.Queue()` is created with no `maxsize`, so `put` at line 212 never blocks. The strategy keeps accepting messages from Kafka as fast as the consumer can poll, no matter how far the workers fall behind. Under a processing slowdown (DB latency, a slow subscription) memory grows without limit until the process is OOM-killed. The docstring at line 253 claims \"Natural backpressure when queues fill up\". Fix: give the queues a `maxsize`, and when they are full, raise `MessageRejected` from `submit` so Arroyo pauses and retries the message.",
+    "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+    "line": 185,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Shutdown drops queued work and the final commit, and can block for up to about 100s\n\n`shutdown()` sets `worker.shutdown = True` before shutting the queues down with `immediate=False`. Workers check that flag at the top of each loop (line 129), so each one exits after its current item and abandons whatever is still queued; the non-immediate drain never happens. `close()` stops the commit thread (line 336) before the pool is drained, so offsets completed in the last second are never committed. Those messages get reprocessed after the restart or rebalance. On top of that, the workers are joined one after another with `timeout=5.0` each, so the worst-case shutdown is `num_queues` \u00d7 5s (100s with the default 20), plus 5s for the commit thread. During a rebalance that can exceed the poll interval. Fix: drain first (let the workers empty their queues), then do one final commit, and put a single deadline on the whole join instead of one per worker.",
+    "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+    "line": 234,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Commits stall permanently on any gap in Kafka offsets\n\n`get_committable_offsets` requires every integer offset in the range to have been seen. Kafka offsets aren't guaranteed to be contiguous: transaction control markers and compaction leave gaps. When the topic has such a gap, `highest_committable` stops before it forever, and commits for that partition stop while `all_offsets` keeps growing. Consider walking the sorted set of seen offsets instead of `range()`.",
+    "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+    "line": 89,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Racy assertion that the queues are non-empty right after submit\n\nThree worker threads are already running and consuming. They can drain all 10 trivial items before `get_stats()` runs, so `stats[\"total_items\"] > 0` fails intermittently. Block the processor with an Event while the stats are checked.",
+    "path": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+    "line": 200,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "test_preserves_order_within_group does not check order\n\nThe test only asserts `len(self.processed_results) == 5`. It should assert that the results arrive in offset order. Since every message has the same `subscription_id`, that means encoding the offset in the payload and comparing against it. The \"concurrent\" tests don't check concurrency either. None of the tests covers the close-then-recreate (rebalance) path where the shared pool breaks.",
+    "path": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+    "line": 312,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Error-handling test checks for the opposite of its docstring and passes only because the commit tick hasn't fired yet\n\nThe docstring says errors must not block commits for other messages. The assertion checks the opposite: that nothing is committed (`len(committed_offsets) == 0 or test_partition not in committed_offsets`). The implementation behaves like the docstring, not the assertion. `OrderedQueueWorker.run` calls `complete_offset` in `finally` even when the processor raises (`queue_consumer.py:144-149`). So once `_commit_loop` runs (it waits 1.0s per tick, `queue_consumer.py:276`), it commits {partition: 102}, which is 101 + 1 (`result_consumer.py:249-252`). The test leaves its wait loop as soon as both calls have happened, then sleeps 0.2s. That is normally well under 1s after the strategy starts, so the assertion only holds because the commit thread hasn't ticked yet. On a slow CI runner the processing can take longer than a second and the test fails. It also never checks the behaviour the docstring promises. Fix: wait for a commit, then assert `committed_offsets[test_partition] == 102`.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 1922,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Offset-gap test claims the code never commits past a gap, but the code does so on the next tick\n\nWith offsets 100, 102 and 103, the first `get_committable_offsets` returns 100 (commit 101). `mark_committed(100)` then drops 100 from `all_offsets`, leaving {102, 103} (`queue_consumer.py:100-105`). On the next tick, `start = max(last_committed + 1, min_offset) = max(101, 102) = 102`, so 102 and 103 become committable and 104 is committed (`queue_consumer.py:83-96`). The gap is skipped about one second after the first commit. The assertions \"Should not commit past the gap\" and `last_commit == 101` pass only because the test exits roughly 0.2s after the first commit, before the second tick. The test pins down a guarantee the implementation doesn't provide, and it fails whenever a second tick lands inside the wait window. Decide the intended semantics first. Kafka offsets can legitimately have gaps (compaction, transaction markers), so skipping is arguably correct. Then assert that behaviour across at least two commit ticks.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 1979,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Graceful-shutdown test only checks `queue_pool is None`; it never checks that queued work was drained\n\nThe test submits 5 results and only asserts that `factory.queue_pool` is reset. `FixedQueuePool.shutdown` sets `worker.shutdown = True` before calling `q.shutdown(immediate=False)` (`queue_consumer.py:233-238`). The worker loop is `while not self.shutdown` (`queue_consumer.py:129`), so a worker can exit with items still in its queue. This test would not notice if those items were dropped. Also, `result_processor` is not mocked here, unlike the sibling tests. The real processor runs on daemon worker threads after `send_result` has left its feature context, against the test's transactional DB. Consider mocking the processor and asserting it was called 5 times after `shutdown()`.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 2004,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "\"Concurrent subscriptions\" test doesn't test concurrency\n\nThe docstring says different subscriptions are processed concurrently, but the test only asserts `call_count == 2`. That duplicates `test_thread_queue_parallel`, and it would pass even if every result ran on a single worker. With `max_workers=2`, the two subscription IDs can also hash to the same queue (`hash(group_key) % num_queues`, `queue_consumer.py:202`). To test concurrency, block the first call on an Event and assert that the second call starts anyway. The subscriptions need to be chosen so they land on different queues.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 1820,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Strategy commit threads and worker threads leak across tests\n\nEach test calls only `factory.shutdown()`. Nothing calls `close()` on the returned `SimpleQueueProcessingStrategy`, so its `_commit_loop` thread keeps running for the rest of the test session, polling every second (`queue_consumer.py:270-276`, `335-338`). `factory.shutdown()` also isn't in a `finally`, so when an assertion fails, the worker threads leak too. Call `consumer.close()` (or `consumer.join()`) and `factory.shutdown()` in a `try/finally` or `addCleanup`.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 1731,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Kafka test: `KAFKA_TOPIC_OVERRIDES` has no effect, `if commits_made` is redundant, and the verify consumer leaks on failure\n\n`StreamProcessor` is given `Topic(test_topic)` directly, so the `override_settings(KAFKA_TOPIC_OVERRIDES=...)` block doesn't affect what the test exercises. `if commits_made:` is always true once `commit_count >= 1` has passed, so the guard only obscures the assertion. `verify_consumer.close()` runs only when every assertion passes; move it into the `finally` block.",
+    "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+    "line": 2061,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2": {
+  "wachiman": [
+   {
+    "text": "OptimizedCursorPaginator treats a datetime key as a number: every non-empty page returns 500\n\nThe audit log endpoint uses this paginator with `order_by=\"-datetime\"`. `get_item_key` calls `math.floor`/`math.ceil` directly on `getattr(item, 'datetime')`. That is a `datetime`, so it raises TypeError the first time `build_cursor` computes a key, which happens on any page with results. `value_from_cursor` also returns the raw cursor number, and `build_queryset` (paginator.py:119-126) then compares it to the datetime column. The paginator it replaces, `DateTimePaginator` (paginator.py:233-241), converts in both directions: `strftime('%s.%f') * 1000` and `datetime.fromtimestamp(value/1000)`. So any admin who sends `optimized_pagination=true` gets a 500, and cursors are not compatible between the two paths. Either subclass DateTimePaginator or reuse its key and value conversion.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 840,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Negative-offset branch cannot work and is described as reaching data 'beyond normal pagination bounds'\n\nDjango QuerySets reject negative slice indices with \"Negative indexing is not supported.\", so `queryset[start_offset:stop]` with `cursor.offset < 0` raises and the request returns a 500. Nothing is paginated. The comments say this is \"safe because permissions are checked at the queryset level\" and that it \"enables access to data beyond normal pagination bounds\", which describes an intent to bypass bounds. Remove the branch along with `enable_advanced_features`, and reject negative offsets in cursor parsing with a 400.",
+    "path": "src/sentry/api/paginator.py",
+    "line": 877,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "BasePaginator change keeps negative offsets for prev cursors, and its comment is wrong\n\nEvery paginator that inherits `BasePaginator.get_result` is affected. With `is_prev` set, a client-supplied negative offset (e.g. `cursor=0:-5:1`) still reaches `queryset[offset:stop]`, and Django raises on negative indexing, so the request returns a 500 instead of a 400. Before this change both directions raised the same way. Now only next cursors are clamped. The comment saying \"the underlying queryset will handle boundary conditions\" is false. Clamp in both directions, or raise `BadPaginationError` for `offset < 0`; `paginate` turns that into a ParseError (base.py:540-541).",
+    "path": "src/sentry/api/paginator.py",
+    "line": 182,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`organization_context.member` can be None, and `is_superuser` ignores whether superuser mode is active\n\nFor a non-superuser request with no org membership, `organization_context.member` is None, and `.has_global_access` raises AttributeError (I did not confirm that OrganizationAuditPermission lets such requests through, e.g. staff). The check also runs for every request, before `use_optimized` is tested. Evaluate it only when `use_optimized` is true and guard against None. Elsewhere Sentry checks `is_active_superuser(request)` rather than `request.user.is_superuser`. This only matters as long as the optimized path is kept (see the paginator findings).",
+    "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+    "line": 71,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Switching set to sorted-set breaks keys already in Redis during rollout (WRONGTYPE)\n\nBefore this change, `span-buf:s:*` keys were Redis sets (SADD/SSCAN). After deploy, `zadd` here, `zcard`/`zunionstore` in add-buffer.lua:46-53, and `zscan` at buffer.py:434 all fail with WRONGTYPE on any segment key written by the old code, until those keys expire (`set_timeout`/redis_ttl). An error in the pipeline makes `p.execute()` raise, so the consumer can crash-loop on those batches and the buffered segments are lost. Either use a new key prefix for the zset keys or handle the migration explicitly.",
+    "path": "src/sentry/spans/buffer.py",
+    "line": 197,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Oversized segments are now truncated silently, with no metric or log\n\nBefore this change, segments over `max_segment_spans` were dropped with the `spans.buffer.flush_segments.segment_span_count_exceeded` metric and an error log. Now `zpopmin` throws away the spans with the earliest end timestamps, and nothing records that it happened, so downstream sees incomplete segments with no signal. The limit of 1000 is also hard-coded here, while `SpansBuffer.max_segment_spans` (buffer.py:150,158) is now never read: it is dead config, and it no longer controls the limit. Pass the limit as an ARGV, and emit a metric or a return value when spans are evicted. Note too that `zunionstore` defaults to SUM, so a duplicate payload ends up with a doubled score.",
+    "path": "src/sentry/scripts/spans/add-buffer.lua",
+    "line": 62,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No test for the new 1000-span eviction or for OptimizedCursorPaginator\n\nThe test changes only add `end_timestamp_precise` to fixtures, all with the same value. No test covers a segment larger than 1000 spans, the order in which spans are evicted, or the new audit-log `optimized_pagination` path. A single endpoint test with that flag would have caught the datetime TypeError.",
+    "path": "tests/sentry/spans/test_buffer.py",
+    "line": 126,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3": {
+  "wachiman": [
+   {
+    "text": "Negated query `!event.type:error` counts as error-focused\n\n`_is_error_focused_query` does a plain substring check, so `!event.type:error` (every event *except* errors), `event.type:errors_foo`, or `message:\"event.type:error\"` all return True. On the discover dataset this applies `sum(sample_weight)` to queries that are mostly transactions. Transactions have no sample weight, so their counts come back as 0 or wrong, and nothing tells the user. Parse the query with the event-search parser, or at least reject a negated term, before you treat it as error-focused.",
+    "path": "src/sentry/api/helpers/error_upsampling.py",
+    "line": 137,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Hard-coded `as count` alias breaks `transformAliasToInputFormat=1`\n\nThe rewritten column always carries the alias `count`. The response serializer looks the value up by `resolve_axis_column(query_columns[0], ...)` (src/sentry/api/bases/organization_events.py:65-78). That gives `count` by default, but it returns the original `count()` when `transformAliasToInputFormat=1` (line 75-76). For those requests on allowlisted projects, the series key no longer matches the result column, so the chart shows empty or zero buckets and no error is raised. One option is to alias to `resolve_axis_column(column, ...)` of the original column; another is to keep the original column name as the alias.",
+    "path": "src/sentry/api/helpers/error_upsampling.py",
+    "line": 95,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "60s eligibility cache has no working invalidation\n\nThe comment on lines 50-53 says the allowlist is read fresh each time, but the result is cached for 60 seconds. `invalidate_upsampling_cache` is never called anywhere: the option system has no hook that calls it, and it would need every org/project-set combination to work anyway. So after the allowlist changes, counts flip between upsampled and raw for up to a minute. A single `options.get` call is cheap, so you could drop the cache, or else remove the dead invalidator and correct the docstrings.",
+    "path": "src/sentry/api/helpers/error_upsampling.py",
+    "line": 38,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "What does `sum(sample_weight)` give for events without a sample weight?\n\nThe comments say the schema guarantees `sample_weight` for every event in an allowlisted project. Events stored before the project was allowlisted, or sent by SDKs that set no client sample rate, may have a NULL `sample_weight`. `sum` skips NULLs, so those events would drop out of the count silently. Is there a default of 1 in the storage schema? If not, `sum(ifNull(sample_weight, 1))` would keep raw counts correct.",
+    "path": "src/sentry/search/events/datasets/discover.py",
+    "line": 1048,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Stray gitlink `sentry-repo` committed\n\nThis PR adds a submodule entry (`Subproject commit a5d2909...`), and the repository has no `.gitmodules`. It looks like an accidentally committed nested checkout, and it will confuse clones and CI. Remove it from the PR.",
+    "path": "sentry-repo",
+    "line": 1,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Eligibility check uses `dataset` instead of `scoped_dataset`, and RPC branch is dead\n\n`_get_event_stats` receives `scoped_dataset`, which the dashboard split factory sets to `errors` when the request dataset is `discover`. The check still passes the outer `dataset`, so a split errors query only gets upsampled if the user's query literally contains `event.type:error`. Separately, `_should_apply_sample_weight_transform` returns False for spans_rpc and ourlogs, so the transform in the `use_rpc` branch (lines 275-277) never runs. The `should_upsample`/`upsampling_enabled` duplication and the comments about \"query optimization\" don't describe what the code does.",
+    "path": "src/sentry/api/endpoints/organization_events_stats.py",
+    "line": 220,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Test creates the organization with `Organization.objects.create`\n\nCLAUDE.md (Common Gotchas #7) says to use the `self.create_*` helpers, not direct model creation. Use `self.create_organization(...)`.",
+    "path": "tests/sentry/api/helpers/test_error_upsampling.py",
+    "line": 21,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No test for negated queries or the cached path\n\n`test_is_error_focused_query` doesn't cover `!event.type:error`, which currently returns True. Nothing tests `is_errors_query_for_error_upsampled_projects` itself, including its caching. The endpoint tests don't cover `transformAliasToInputFormat=1`, multiple yAxis values, or topEvents with upsampling.",
+    "path": "tests/sentry/api/helpers/test_error_upsampling.py",
+    "line": 77,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/103633": {
+  "wachiman": [
+   {
+    "text": "Denial-cache test would pass without the denial cache\n\nThe comment says this cache entry grants access \"to prove this is not checked\", but it stores `\"dashboards:uid:dash1\": false`. `checkPermission` only allows on a truthy value (`scopeMap[t.scope(req.Name)]`, service.go:558), so this entry denies. The DB fallback then uses the empty `fakeStore` from `setupService` (service_test.go:1328) and denies too. If you removed the `permDenialCache` short-circuit (service.go:116-121), `resp.Allowed` would still be false, so the test never exercises the code it is named after. Set the value to `true`, or point the store at a permission that grants dash1, so the test fails without the denial-cache check.",
+    "path": "pkg/services/authz/rbac/service_test.go",
+    "line": 982,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Denial cache key is ambiguous when names contain `_`\n\n`name` and `parent` are joined with `_`, and resource and folder UIDs can contain underscores. So `name=\"a\", parent=\"b_c\"` and `name=\"a_b\", parent=\"c\"` both produce `..._a_b_c`. A cached denial for one resource can then deny a different resource for up to `shortCacheTTL` (30s), and nothing logs it. The collision can only cause false denials, never false grants. A separator that cannot appear in UIDs, or length-prefixing the parts, would remove the ambiguity.",
+    "path": "pkg/services/authz/rbac/cache.go",
+    "line": 31,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Denial cache undoes the new fallback-on-cached-deny for repeated checks\n\nThe new Check flow goes to the DB when the cached permissions deny (service.go:123-139), so a freshly granted permission is seen right away (the \"Fallback to the database on outdated cache\" test). After the first denial, though, `permDenialCache` is set for `shortCacheTTL` (30s, service.go:32). Every later check for the same user, action, name and folder then short-circuits to deny at service.go:117 without looking at the permission cache or the DB. A user who was just granted access and retries keeps getting denied for up to 30s. That is about the same staleness as before the change, so this is not a regression, but the asymmetry is worth deciding on deliberately. For example, a shorter TTL for denials, or a comment explaining the trade-off.",
+    "path": "pkg/services/authz/rbac/service.go",
+    "line": 154,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`cacheHit` field and its branches are now dead\n\nThe only case with `cacheHit: true` was removed, and `getUserPermissions` no longer reads the permission cache. So `cacheHit` is always false, and the branches at lines 367-369 and 388-390 never run. Remove the field and those branches.",
+    "path": "pkg/services/authz/rbac/service_test.go",
+    "line": 337,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/getsentry/sentry/pull/67876": {
+  "wachiman": [
+   {
+    "text": "KeyError when the existing Integration has no `sender` in its metadata\n\n`integration.metadata[\"sender\"][\"login\"]` assumes every Integration row has a `sender`. `build_integration` only sets it when `state` has a `sender` (integration.py:376-377). Only the installation webhook passes one (webhook.py:202-209). An Integration created through this pipeline has no `sender`; `test_basic_flow` asserts exactly that metadata (test_integration.py:303-310). `installation.py:44` already guards against a missing `sender`. If an org removes the integration in Sentry, its OrganizationIntegration goes away but the Integration row stays ACTIVE. Reinstalling the same GitHub installation then reaches this line and fails with a 500 instead of an error page. Use `integration.metadata.get(\"sender\", {}).get(\"login\")` and decide on purpose what should happen when the sender is unknown.",
+    "path": "src/sentry/integrations/github/integration.py",
+    "line": 503,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Network and HTTP errors in the OAuth exchange are not handled and become a 500\n\n`safe_urlopen` (line 423) runs outside the `try`, so a connection error or timeout escapes. `get_user_info` calls `resp.raise_for_status()` (identity/github/provider.py:16), so a revoked token or a 401/5xx from `api.github.com/user` raises `HTTPError`, and nothing catches it. In both cases the user gets a server error inside the install popup instead of the `github-integration-failed.html` page, which posts a failure to `window.opener`. Catch these errors and return `error(request, self.active_organization)`.",
+    "path": "src/sentry/integrations/github/integration.py",
+    "line": 434,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The installer check is skipped when the Integration row does not exist yet\n\nThe new check that the authenticated GitHub user matches the installer only runs when an Integration already exists (lines 493-505). If the installation webhook has not been processed yet, `Integration.DoesNotExist` goes straight to `next_step()`. `build_integration` then fetches the installation with the app's credentials and links it to the current org, and no sender is ever compared. Anyone who knows an `installation_id` before the webhook lands can still claim it. Consider checking the sender from `get_installation_info` (or the webhook state) on this path as well.",
+    "path": "src/sentry/integrations/github/integration.py",
+    "line": 482,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`redirect_uri` goes into the authorize URL without URL-encoding\n\nThe authorize URL is built with an f-string, so `redirect_uri` (an absolute URL that contains `:` and `/`) is not encoded. That works today only because the path has no `?`, `&` or `#`. Building the query with `urlencode({...})` would be more robust. The test at test_integration.py:233-236 asserts the exact unencoded string, so it would need updating too.",
+    "path": "src/sentry/integrations/github/integration.py",
+    "line": 408,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`test_installation_not_found` no longer tests a missing installation\n\nThe test now sends `state=ddd023d87a913d5226e2a882c4c4cc05`, which does not match the pipeline signature. The request fails at the state check (integration.py:412-413) and returns the default \"Invalid installation request.\". It never reaches `build_integration`'s 404 handling (integration.py:354-356), so the 404 stub is unused and the \"The GitHub installation could not be found.\" path has lost its coverage. Send the correct state through the OAuth step and keep asserting the not-found message.",
+    "path": "tests/sentry/integrations/github/test_integration.py",
+    "line": 396,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/32918": {
+  "wachiman": [
+   {
+    "text": "Cleanup removes the literal alias \"alias\", not the IDPs the test created\n\n`getCleanup().addCleanup(testRealm().identityProviders().get(\"alias\")::remove)` registers a removal of an IDP named `\"alias\"`, which never exists. The 20 IDPs created in the loop (`\"idp-alias-\" + i`) and `idp-alias-20` (line 425) never get removed by these cleanups. Capture the alias, e.g. `String alias = \"idp-alias-\" + i; ... get(alias)::remove`. Line 425 has the same problem.",
+    "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java",
+    "line": 381,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Changing the shared login predicate also changes the base IdentityProviderBean's federated-IDP list\n\n`getLoginPredicate()` is also what `IdentityProviderBean.federatedProviderPredicate()` returns (services/.../IdentityProviderBean.java:225-227), and `getFederatedIdentityProviders` filters on it (line 213). `OrganizationAwareIdentityProviderBean` already adds its own org/public check, so nothing changes there. But the base bean (used when organizations are off) now hides a user's linked IDP if it still has an `organizationId` and isn't `BROKER_PUBLIC`. For example, IDPs that were linked to orgs before the feature was turned off would disappear. If the cache only needs this clause for its invalidation decisions, you could add it to a cache-local predicate and leave the public SPI predicate alone.",
+    "path": "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+    "line": 254,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "remove() now always hits the database for the IDP, even when it is cached\n\nBefore this change, `idpDelegate.getByAlias(alias)` ran only when the alias key was invalid. Now it runs on every remove, even when the `else` branch already has `cached.getIdentityProvider()`. You could use the cached model (or `getByAlias`) for the login-invalidation check and only fall back to the delegate when nothing is cached. The cost is small: one extra query per removal.",
+    "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+    "line": 100,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/94942": {
+  "wachiman": [
+   {
+    "text": "enableSqlExpressions returns false on every path, so the feature-flag check does nothing\n\nBoth branches return `false`, so the `IsEnabledGlobally(FlagSqlExpressions)` call (line 195) has no effect, and the inverted `enabled := !...` name points the wrong way. Turning on `sqlExpressions` still gives \"sqlExpressions is not implemented\", which is what the PR wants. But a reader will take this for a flag gate with a bug in it. Either drop the helper and return the error directly in `case QueryTypeSQL` (with a comment saying SQL expressions are disabled until a new engine lands), or write it as `return false // disabled: no SQL engine`.",
+    "path": "pkg/expr/reader.go",
+    "line": 194,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The legacy node path is not gated and reports a misleading 'invalid sql' error\n\nOnly `ExpressionQueryReader.ReadQuery` checks `enableSqlExpressions`. The legacy `TypeSQL` branch in `pkg/expr/nodes.go:159-160` calls `UnmarshalSQLCommand` \u2192 `NewSQLCommand` \u2192 `sql.TablesList`, which now always fails because the stub `RunCommands` returns \"not implemented\". The user gets the BadRequest `sql-invalid-sql` / \"error reading SQL command\", and a Warn \"invalid sql query\" is logged, which suggests their SQL is malformed. Consider returning the same \"sqlExpressions is not implemented\" error early in `NewSQLCommand` or `UnmarshalSQLCommand`, so both paths fail the same way and the message is accurate.",
+    "path": "pkg/expr/sql_command.go",
+    "line": 30,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "DB.TablesList stub is unused\n\nNothing calls the `TablesList` method on `DB`. The only callers use the package-level `sql.TablesList` (`pkg/expr/sql_command.go:30`, `pkg/expr/sql/parser_test.go`), and that function goes through `RunCommands`. The method sits next to the package function of the same name, which is confusing. Remove it unless a planned interface needs it.",
+    "path": "pkg/expr/sql/db.go",
+    "line": 12,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/90939": {
+  "wachiman": [
+   {
+    "text": "No second cache check after taking the write lock\n\nWhen the cache is still empty (first requests after startup, or after a load that failed), every caller that got `nil` under the RLock (41-43) waits on `Lock()` here. Each one then reads and parses `assets-manifest.json` again, one after another. Nothing checks whether an earlier holder has already filled the cache. Re-checking `cfg.Env != setting.Dev && entryPointAssetsCache != nil` right after line 49 and returning early would make the startup herd parse the manifest only once. This doesn't affect correctness: the result is the same either way.",
+    "path": "pkg/api/webassets/webassets.go",
+    "line": 48,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/80329": {
+  "wachiman": [
+   {
+    "text": "Debug logging left in at Error level, including every batch's full ID list\n\nEach batch callback logs twice with `r.log.Error`: once before the delete (534, 554, 576) and once after (537, 557, 579). The first call also includes the whole `ids` slice. That slice holds up to `AnnotationCleanupJobBatchSize` IDs, and the new test sets that to 32767. `untilDoneOrCancelled` (643-660) always runs one last batch that returns 0, so these Error lines fire on every cleanup cycle even when there is nothing to delete. That covers MaxAge and MaxCount for each annotation type, plus the tag cleanup. Together with the ticker going down to 1 minute in `cleanup.go:77`, this puts a steady stream of false error-level logs into production logs and alerting. The `\"err\", err` field at 534/554/576 is always nil because the error was checked just above. Remove these lines, or lower them to Debug and log only counts.",
+    "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+    "line": 534,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Cleanup ticker cut from 10 minutes to 1 minute; looks like a leftover from debugging\n\nThis ticker drives all eight cleanup jobs (lines 96-105), not only annotations: tmp files, snapshots, dashboard versions, images, annotations, user invites, short URLs and query history. Every Grafana instance would now run all of them 10\u00d7 as often. The per-run timeout is still `9 * time.Minute` (line 89), which was sized to fit inside the 10-minute interval and no longer matches. Nothing in the PR description explains the change. Restore `time.Minute * 10`, or make the interval a config setting and keep the timeout in line with it.",
+    "path": "pkg/services/cleanup/cleanup.go",
+    "line": 77,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Building the inline ID list with repeated Sprintf is quadratic\n\n`values = fmt.Sprintf(\"%s, %d\", values, v)` copies the whole growing string on every iteration. This path only runs when the batch size is above 999, so the batch can hold tens of thousands of IDs (the test uses 32767), and that is O(n\u00b2) copying per batch. Use a `strings.Builder` with `strconv.AppendInt`, or `strings.Join` over the formatted IDs.",
+    "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+    "line": 611,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "\"running the max count delete again\" no longer runs anything again\n\nEach subtest now creates its own data (line 116) and wipes the tables afterwards (120-127). This case therefore just inserts 9 annotations (3 per type) and checks that MaxCount=3 deletes nothing. The name still describes the old behaviour, where it ran a second time over the previous case's leftover state. That idempotence check is gone. Rename the case, or run `cleaner.Run` twice in one subtest so it still tests a second run.",
+    "path": "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+    "line": 83,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/90045": {
+  "wachiman": [
+   {
+    "text": "Background legacy writes inherit the request context and get cancelled when the handler returns\n\nAll four goroutines (Create l.51, Delete l.110, Update l.135, DeleteCollection l.163) build their 10s timeout as a child of the request `ctx`. `Create`/`Update`/... then return right away. The HTTP server cancels the request context once the handler finishes, and that cancels the child context too, so the legacy write races against cancellation and often gets aborted. Legacy storage then drifts from unified storage with nothing to show for it. Derive the goroutine context from `context.WithoutCancel(ctx)` (keeping the logger and identity values), then apply the timeout to that.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 51,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Failed legacy writes are no longer logged\n\nThe old code logged every legacy failure (`unable to create object in legacy storage`, `could not update object in legacy store`, ...). The goroutines now only call `recordLegacyDuration(err != nil, ...)` and throw the error away (l.56, l.113, l.140, l.165). If a legacy write fails or times out, no log line names the object or the cause. Add `log.Error(err, ...)` in each goroutine.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 56,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Legacy Update reapplies the raw objInfo instead of the object unified storage stored\n\nBefore this change, the legacy update got `&updateWrapper{upstream: objInfo, updated: obj}`, so legacy received exactly what unified storage stored. Mode 2 still does this (dualwriter_mode2.go:298, 313-316). Now the raw `objInfo` goes to legacy, so `UpdatedObject` runs the patch/transform a second time, against legacy's current copy. If the two stores differ, the results diverge. Patch-based objInfo may also not be safe to run twice, or concurrently with the response. Wrap `res` the way the old code did.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 139,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Legacy Create gets the original obj, concurrently with the response being encoded\n\nThe goroutine passes `obj` to `d.Legacy.Create`. Unified storage may have changed `obj` in place, or returned it as `created`, while the handler serializes the response. That is a possible data race. Legacy also never gets the name/UID that unified storage assigned, which mode 2 copies across with `enrichLegacyObject` (dualwriter_mode2.go:53). Consider passing a deep copy of `created`.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 55,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Duration metrics are recorded under the wrong store and label\n\nFour calls record against the wrong store or label:\n- Create (l.45) records a unified-storage failure with `recordLegacyDuration`.\n- Update (l.129) does the same.\n- Delete success (l.106) passes `name` where `options.Kind` belongs, so every object name becomes its own label value (cardinality blowup).\n- DeleteCollection's legacy goroutine (l.166) records with `recordStorageDuration`.\n\nThe dashboards that mode 3 rollout depends on will show wrong error rates and latencies for each store.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 45,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Delete puts the base logger in the context, not the enriched one\n\n`ctx = klog.NewContext(ctx, d.Log)` stores the logger without the name/kind/method fields. Every other method stores `log`.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+    "line": 97,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Tests never check the legacy write, and their names say otherwise\n\n`legacyStoreMock` and `storageMock` share one `mock.Mock`. So `setupLegacyFn` in the failing Create case (l.40-42) actually programs the unified-storage failure, and the success case named \"only in the unified store\" also sets up a legacy expectation. The legacy write runs in a goroutine and is never awaited or asserted (no `AssertExpectations`). These tests would pass even if mode 3 stopped writing to legacy entirely, and they would not catch the context-cancellation problem.",
+    "path": "pkg/apiserver/rest/dualwriter_mode3_test.go",
+    "line": 28,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/106778": {
+  "wachiman": [
+   {
+    "text": "Silence menu item does nothing in the new list\n\nWith only `promRule`, AlertRuleMenu now shows \"Silence notifications\" because `useGrafanaPromRuleAbilities` grants Silence (useAbilities.ts:323). The drawer, though, only renders when `rulerRuleType.grafana.alertingRule(rule)` is true. `rule` is undefined for every item that GrafanaRuleListItem renders (GrafanaRuleListItem.tsx:47), so clicking the item sets state and nothing shows up. SilenceGrafanaRuleDrawer needs only the uid (SilenceGrafanaRuleDrawer.tsx:21). Pass a uid from `promRule` when it is a Grafana alerting rule.",
+    "path": "public/app/features/alerting/unified/rule-list/components/RuleActionsButtons.V2.tsx",
+    "line": 104,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Pause and Delete are gone from the Grafana rule list\n\n`canPause` and `canDelete` can now come true from the prom-rule abilities. The menu items still require a ruler rule, though: `rulerRuleType.grafana.rule(rulerRule)` at line 123 and `canDelete && rulerRule` at line 165. GrafanaRuleListItem no longer passes `rule`, so the list view (group view and filter view) lost Pause and Delete for every Grafana-managed rule. Before this change it passed `rulerRule` and showed both. The updated test codifies this: it expects exactly 4 menu items (GrafanaGroupLoader.test.tsx:207). Either support these actions with a uid or identifier, or say in the PR that dropping them is intended.",
+    "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
+    "line": 123,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`key` dropped from GrafanaRuleListItem inside rules.map\n\nThe old `<GrafanaRuleLoader key={key} \u2026>` had a key. The replacement has none, while the datasource and unknown branches still pass `key={key}`. React will warn, and it will reconcile by index as the filter results stream in and change. Per-item state such as the open silence drawer or the clone redirect can then attach to the wrong rule. Add `key={key}`.",
+    "path": "public/app/features/alerting/unified/rule-list/FilterView.tsx",
+    "line": 157,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Rule view link no longer carries returnTo\n\nThe removed GrafanaRuleListItem built `href` with `createRelativeUrl(..., { returnTo: createReturnTo() })`. The new one drops `returnTo`, so after opening a rule from a filtered or grouped list, the viewer's back navigation no longer returns to the list with its filters. Restore the `returnTo` param.",
+    "path": "public/app/features/alerting/unified/rule-list/GrafanaRuleListItem.tsx",
+    "line": 40,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Prom-rule abilities exclude Grafana recording rules from Export/Pause/Restore\n\nThe ruler variant gated ModifyExport, Pause, Restore and DeletePermanently on `rulerRuleType.grafana.rule` (alerting or recording). The new variant uses `prometheusRuleType.grafana.alertingRule`, so Grafana recording rules lose Export in the list view. The comment at line 301 says \"All GrafanaPromRuleDTO rules are Grafana-managed\", which suggests `isGrafanaManaged = true` was the intent here.",
+    "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
+    "line": 324,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Permission-denied test does not exercise the prom-rule permission path\n\nIt sets folder access control to false only for update and delete, and then asserts just that Edit is absent. No test checks that Pause, Delete or Silence work from the list. That gap is how the regressions above slip through while the 4-item assertion passes.",
+    "path": "public/app/features/alerting/unified/rule-list/GrafanaGroupLoader.test.tsx",
+    "line": 148,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/107534": {
+  "wachiman": [
+   {
+    "text": "Ad hoc filters and variables get applied more than once per query (twice when splitting, three times when sharding)\n\n`runSplitQuery` now runs `datasource.applyTemplateVariables(query, request.scopedVars, request.filters)`. Each sub-request then goes through `datasource.runQuery` \u2192 `super.query`, and `DataSourceWithBackend` calls `applyTemplateVariables(q, request.scopedVars, request.filters)` on every target again (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185). On the shard path it happens three times: `runShardSplitQuery` (shardQuerySplitting.ts:52), then `runSplitQuery` on every shard sub-request (shardQuerySplitting.ts:163), then `super.query`. The updated test shows this: `applyTemplateVariables` is called 5 times for one target (shardQuerySplitting.test.ts:112), once up front and once for each of the 4 sub-requests.\n\n`addAdHocFilters` only skips duplicates when the filter goes into the stream selector (`labelExists`, modifyQuery.ts:494). If the query has a parser, for example `sum(count_over_time({app=\"x\"} | logfmt [$__auto]))` with the ad hoc filter `level=error`, the filter goes through `addFilterAsLabelFilter` (modifyQuery.ts:200-211). That function appends ` | level=\\`error\\`` every time and never checks for an existing copy. So Loki gets the filter repeated 2 or 3 times. The results don't change, but the query shown in Query Inspector is bloated. On top of that, `templateSrv.replace` now runs again on text that was already interpolated, including ad hoc filter values. A value that contains `$name` for an existing dashboard variable would get substituted on the later pass.\n\nSuggested fix: interpolate up front without ad hoc filters, i.e. call `applyTemplateVariables(query, request.scopedVars)` here and in `runShardSplitQuery`, and let `super.query` add `request.filters` once. Alternatively, interpolate only in `runShardSplitQuery`/`runSplitQuery` when they are the entry point, and don't do it again for shard sub-requests.",
+    "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+    "line": 299,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Shard targets are interpolated here and again inside runSplitQuery for every shard group\n\nThe targets returned here already have variables and ad hoc filters applied. They are passed through `interpolateShardingSelector` and handed to `runSplitQuery` (line 163), which now calls `applyTemplateVariables` on them again for every shard group. That second call adds nothing: the variables are already resolved, and the stream selector already includes the ad hoc filters. It just runs `templateSrv.replace` and the Lezer-based `addAdHocFilters` once more per sub-request. Interpolating only once along this path (see the finding on querySplitting.ts:299) removes the repeated work as well.",
+    "path": "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+    "line": 52,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The mocked `replace` ignores scopedVars, so the test can't catch how `$__auto` is really handled\n\nThe real `applyTemplateVariables` takes `__auto`/`__range` out of scopedVars so that the backend interpolates them (datasource.ts:1113). The mocked `replace` here swaps `$__auto` for `5m` without looking at scopedVars. The test therefore asserts a frontend-interpolated `[5m]`, which production doesn't produce from scopedVars. Two other gaps: the test never passes `request.filters`, so it can't detect the duplicated ad hoc filters, and the same applies to the copy at shardQuerySplitting.test.ts:84-101. Consider testing with a filter and with the real stripping of scopedVars, e.g. by asserting that `$__auto` stays in the query when `replace` honours the variables it is given.",
+    "path": "public/app/plugins/datasource/loki/querySplitting.test.ts",
+    "line": 78,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/79265": {
+  "wachiman": [
+   {
+    "text": "Wire can no longer satisfy ProvideAnonDBStore's new int64 parameter\n\n`pkg/server/wire.go:374-375` still registers `anonstore.ProvideAnonDBStore` and binds `anonstore.AnonStore` to it. The function now takes `deviceLimit int64`, and nothing in the wire set provides a bare `int64`. Wire generation fails with \"no provider found for int64\". Also, `AnonDeviceService` now builds its own store (impl.go:43), so nothing consumes that binding anymore, and wire would reject it as an unused provider even if the parameter were satisfied. Remove both lines from wire.go, or take the limit from `*setting.Cfg` inside the provider.",
+    "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+    "line": 52,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Device limit only blocks the first request; the local cache lets later requests through\n\n`tagDeviceUI` writes the device key to `localCache` (impl.go:87) before it calls `CreateOrUpdateDevice` (impl.go:93). When the store returns `ErrDeviceLimitReached`, the first request fails in `Authenticate` (client.go:45-46). Every later request from the same device ID within the 29-minute cache TTL hits the cache at impl.go:83-84, gets nil back, and is authenticated as anonymous. So a device over the limit only loses one request. Set the cache entry only after the write succeeds, or delete it when `ErrDeviceLimitReached` is returned.",
+    "path": "pkg/services/anonymous/anonimpl/impl.go",
+    "line": 144,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Count-then-insert is not atomic, so concurrent new devices can go over the limit\n\n`CreateOrUpdateDevice` counts active devices and then inserts in a separate statement, outside any transaction. Several new devices tagged at the same time (possibly on different Grafana instances) can each see `count < deviceLimit` and all insert. If `device_limit` is meant as a hard cap, do the check and the insert in one transaction or in one conditional insert statement.",
+    "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+    "line": 110,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Device tagging now runs on the request path\n\nTagging used to run in a background goroutine with its own 2-minute timeout. Now `TagDevice` runs synchronously on each anonymous request that misses the cache. With a limit set, that adds a `CountDevices` query plus an insert or update to the request's latency, and a slow database now delays anonymous page loads directly. The error is only needed when the limit is reached, so the extra queries could be skipped when `deviceLimit == 0`. That path doesn't run the count query today, but it still does the write synchronously.",
+    "path": "pkg/services/anonymous/anonimpl/client.go",
+    "line": 44,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "anonymousDeviceLimit is typed as `undefined` but the backend always sends a number\n\n`FrontendSettingsDTO.AnonymousDeviceLimit` is a plain `int64` (frontend_settings.go:195), so the payload always contains a number (0 when unset), never undefined. Without a type annotation, the class field `anonymousDeviceLimit = undefined` gets the type `undefined`. Consider `anonymousDeviceLimit: number | undefined = undefined`, or default it to `0` so it matches what the backend sends.",
+    "path": "packages/grafana-runtime/src/config.ts",
+    "line": 97,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/9": {
+  "wachiman": [
+   {
+    "text": "The translation cache key doesn't include the site default locale this fallback depends on\n\nThe fallback chain now depends on `SiteSetting.default_locale`, which is set per site. But the process-wide LRU cache in `lib/freedom_patches/translate_accelerator.rb:71-76` keys entries only on `key`, `config.locale` and `backend.object_id`. In a multisite process, take a key missing in `de`. A `de` user on site A (default `fr`) caches the French string, and a `de` user on site B (default `es`) is then served that French string. No error tells anyone. The same stale value also shows up on a single site after an admin changes `default_locale`, until the entry is evicted. Fix: add the default locale (or the joined `I18n.fallbacks[locale]` chain) to the cache key `k`.",
+    "path": "config/initializers/i18n.rb",
+    "line": 17,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Fallback locales are only preloaded in web requests\n\n`I18n.fallbacks.ensure_loaded!` only runs in `set_locale`. `I18n.translate` (`lib/freedom_patches/translate_accelerator.rb:68`) loads just `config.locale`. So code outside a controller (Sidekiq jobs, mailers, rake tasks) that switches to a non-default locale gets no site-default or `en` fallback until a request in that process has loaded those locales. It sees `translation missing` text instead, and the per-locale cache keeps it. Consider loading the whole fallback chain inside `translate`, e.g. `I18n.fallbacks[config.locale].each { |l| ensure_loaded!(l) }`.",
+    "path": "app/controllers/application_controller.rb",
+    "line": 159,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/grafana/grafana/pull/76186": {
+  "wachiman": [
+   {
+    "text": "TestLogger.FromContext drops everything logged through it\n\n`FromContext` returns a brand-new `TestLogger`. `LoggerMiddleware.logRequest` now logs only through `m.logger.FromContext(ctx).Info(...)` (logger_middleware.go:58). So if a test injects a `TestLogger`, its `InfoLogs` will never record the \"Plugin Request Completed\" call, and that log line can't be asserted. Returning `f` (or a logger that shares its `Logs` state) would keep the fake usable for this middleware.",
+    "path": "pkg/plugins/log/fake.go",
+    "line": 46,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No tests for the new middleware or the fields the logger middleware now gets from context\n\nThe `endpoint`, `pluginId`, `dsName`, `dsUID`, `uname` and `traceID` fields used to be added explicitly in `logRequest`. Now they only show up if `ContextualLoggerMiddleware` sits before `LoggerMiddleware` in `CreateMiddlewares` and the infra logger's context providers fill them in. There's no `contextual_logger_middleware_test.go` and no logger middleware test. Reordering the middlewares would silently strip these fields from the `grafana-data-egress` log line, and nothing would catch it. A test that checks `log.WithContextualAttributes` output for each endpoint (and that stream methods pass through) would cover this.",
+    "path": "pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go",
+    "line": 27,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10": {
+  "wachiman": [
+   {
+    "text": "Migration crashes when embed_category is unset (the default)\n\n`execute(...)[0]['id']` assumes the JOIN returns a row. `embed_category` defaults to '' (config/site_settings.yml before this change), so on most sites no `site_settings` row exists or no category matches. The result is empty, `[0]` is nil or raises, and the migration aborts. Line 15 has the same problem: `uncategorized_category_id` is only in `site_settings` if it was stored there explicitly. Check `cmd_tuples`/`ntuples` before indexing, and fall back to `SiteSetting.uncategorized_category_id` or a lookup in `categories`.",
+    "path": "db/migrate/20150818190757_create_embeddable_hosts.rb",
+    "line": 11,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Migrated hosts are not normalized and are interpolated into SQL\n\nThe old `allows_embeddable_host?` accepted entries like `http://eviltrout.com` or ones with paths, because it stripped the scheme and parsed with URI. This migration inserts the raw lines, which can keep a scheme, a path, a trailing `\\r` or spaces. `record_for_host` (app/models/embeddable_host.rb:17) compares only against `uri.host`, so these sites silently stop accepting embeds after the upgrade. The value is also interpolated straight into SQL: a quote breaks the migration. Strip the scheme, path and whitespace, and quote the value (`ActiveRecord::Base.connection.quote`).",
+    "path": "db/migrate/20150818190757_create_embeddable_hosts.rb",
+    "line": 25,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "before_validation raises on nil host\n\n`self.host.sub!` raises NoMethodError when `host` is nil, for example when the client omits `host` in `params[:embeddable_host]` (app/controllers/admin/embeddable_hosts_controller.rb:23). The result is a 500 instead of a validation error. Guard with `return if host.blank?` or use `self.host = host.to_s.sub(...)`.",
+    "path": "app/models/embeddable_host.rb",
+    "line": 6,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Case-insensitive lookup only lowercases one side\n\n`lower(host) = ?` is compared with `uri.host` as given, and the referer is not downcased. A referer with uppercase letters (`http://EvilTrout.com/`) never matches, even though the stored value would. Use `host.downcase`.",
+    "path": "app/models/embeddable_host.rb",
+    "line": 17,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Hosts with a port validate but can never match\n\nThe format regex accepts `example.com:8080`, and before_validation strips only the scheme and path, so the port is kept. `record_for_host` compares against `uri.host`, which never includes a port, so such a record never allows anything. Either drop the port from the regex or strip it before saving.",
+    "path": "app/models/embeddable_host.rb",
+    "line": 2,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unknown id gives a 500 on update/destroy\n\n`EmbeddableHost.where(id:).first` returns nil for a stale or unknown id. Then `host.destroy` or `save_host(nil)` raises NoMethodError. Use `find` (404) or `raise Discourse::NotFound`.",
+    "path": "app/controllers/admin/embeddable_hosts_controller.rb",
+    "line": 16,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Delete failure is silent\n\n`destroyRecord()` has no `.catch(popupAjaxError)`, unlike `save` at line 40. If the request fails, nothing tells the admin and the row stays as if the click did nothing.",
+    "path": "app/assets/javascripts/admin/components/embeddable-host.js.es6",
+    "line": 46,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`_ids` keys with null values crash hydration\n\nAny payload key ending in `_ids` is now treated as an array, and `obj[k].map` throws if the value is null or not an array. `hydrated || []` never applies, because `map` always returns an array. Guard with `(obj[k] || [])`.",
+    "path": "app/assets/javascripts/discourse/models/store.js.es6",
+    "line": 197,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "update action does nothing\n\n`update` only re-renders, and the client's `saveChanges` (admin-embedding.js.es6:6) sends `{}`. No template calls it. Remove both or implement them.",
+    "path": "app/controllers/admin/embedding_controller.rb",
+    "line": 9,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Fabricator file contents swapped\n\ncategory_fabricator.rb now defines `:embeddable_host`, and embeddable_host_fabricator.rb defines the category fabricators. It works only because all fabricators load, but finding them is confusing. Swap the contents back.",
+    "path": "spec/fabricators/category_fabricator.rb",
+    "line": 1,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Test name no longer matches what it tests\n\n`expandable_first_post?` no longer looks at embeddable hosts, so \"is false if embeddable_host is blank\" passes only because `embed_truncate` defaults to false and `has_topic_embed?` is false. Rename the test or remove it. The `Fabricate(:embeddable_host)` in the nested `before` is also irrelevant.",
+    "path": "spec/models/topic_spec.rb",
+    "line": 1403,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "find('fruit', 2) actually gets fruit 1\n\nThe pretender `/fruits/:id` always returns `fruits[0]` (create-pretender.js.es6:227), which is apple with color_ids [1,2]. The test asks for id 2 (banana, color_ids [3]) and asserts apple's colors, so it reads as if it checks banana. Request id 1, or make the pretender honour the id.",
+    "path": "test/javascripts/models/store-test.js.es6",
+    "line": 111,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Truncation no longer gated on hosts being configured\n\nBefore, `expandable_first_post?` was gated on `embeddable_hosts` being present. Now it no longer checks whether any host is configured. With embed_truncate on and no hosts, existing embedded topics still show as expandable.",
+    "path": "app/models/topic.rb",
+    "line": 869,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/7": {
+  "wachiman": [
+   {
+    "text": "Light-theme value for reply-history usernames swapped from 30% to 70%\n\nThe old value was `scale-color($primary, $lightness: 30%)`. The new light-theme argument is 70% and the dark-theme argument is `$secondary` 30%. The arguments are inverted compared with every other conversion in this PR, which maps N% on `$primary` to (100\u2212N)% on `$secondary`. `dark-light-choose` returns the first argument when `$primary` is darker (common/foundation/variables.scss:46-51), so on the default light theme the bold `.topic-meta-data h5 a` link becomes much paler. On dark themes it renders dim instead of light. Use `dark-light-choose(scale-color($primary, $lightness: 30%), scale-color($secondary, $lightness: 70%))`.",
+    "path": "app/assets/stylesheets/desktop/topic-post.scss",
+    "line": 291,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Light-theme value for .custom-message-length changed from 70% to 30%\n\nThe old value was `scale-color($primary, $lightness: 70%)`. The new code passes 30% for the light theme and `$secondary` 70% for the dark theme, which is the reverse of the PR's mapping. The desktop counterpart (desktop/modal.scss:94) uses 70%/30%. On light themes this hint text becomes much darker, and on dark themes it becomes bright rather than muted. Swap it to `dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%))`.",
+    "path": "app/assets/stylesheets/mobile/modal.scss",
+    "line": 102,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Topic-map h3 lightness changed from 20% to 50% on light themes\n\nThe old value was `scale-color($primary, $lightness: 20%)`. The new light-theme argument is 50%, so the light theme also changes, not only the dark one, and the PR description says nothing about that. The desktop equivalent (desktop/topic-post.scss:321) keeps 20%/80%. Use `dark-light-choose(scale-color($primary, $lightness: 20%), scale-color($secondary, $lightness: 80%))`.",
+    "path": "app/assets/stylesheets/mobile/topic-post.scss",
+    "line": 182,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Group member .name lightness changed from 30% to 50% on light themes\n\nThe old value was `scale-color($primary, $lightness: 30%)`. The new code uses 50%/50%, which makes the member name the same colour as `.title` directly below it (line 527). That removes the visual difference between name and title on the light theme. Keep 30% and use `dark-light-choose(scale-color($primary, $lightness: 30%), scale-color($secondary, $lightness: 70%))`. mobile/user.scss:497 has the same change.",
+    "path": "app/assets/stylesheets/desktop/user.scss",
+    "line": 522,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Group member .name lightness changed from 30% to 50% on light themes (mobile)\n\nThis is the same regression as desktop/user.scss:522. The old value was 30% on `$primary` and the new one is 50%/50%, so the name now matches `.title` (line 503). Use `dark-light-choose(scale-color($primary, $lightness: 30%), scale-color($secondary, $lightness: 70%))`.",
+    "path": "app/assets/stylesheets/mobile/user.scss",
+    "line": 497,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/8": {
+  "wachiman": [
+   {
+    "text": "Adding a user who is already a member raises a unique-index error (500)\n\n`group.add(user)` is `self.users.push(user)` (app/models/group.rb:272-274), and on a saved group that inserts a GroupUser row straight away. `group_users` has a unique index on `[group_id, user_id]` (db/migrate/20130416004933_group_users.rb:9). If an admin enters a username that is already in the group, or the same username twice, the insert raises `ActiveRecord::RecordNotUnique` and the request returns a 500. Any users earlier in the list are already added by then. The old `usernames=` path only added `expected - current`, so this didn't happen before. Skip users who are already members, e.g. `group.add(user) unless group.users.exists?(user.id)`, and `uniq` the username list.",
+    "path": "app/controllers/admin/groups_controller.rb",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "remove_member leaves the user's primary_group_id pointing at the group\n\nThe replaced `usernames=` deletion path ran `destroy_deletions` (app/models/group.rb:287-294). That destroyed each GroupUser and also ran `primary_group_id = NULL` for users whose primary group was this one. `group.users.delete(user_id)` skips both steps. A removed user keeps this group as their primary group, so its flair and title still show, and nothing tells the admin. Destroying the GroupUser row also keeps the `user_count` counter cache right (app/models/group_user.rb:2). Use `group.group_users.where(user_id: user_id).destroy_all` and clear `primary_group_id` the same way `destroy_deletions` does.",
+    "path": "app/controllers/admin/groups_controller.rb",
+    "line": 90,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "totalPages is off by one when user_count is an exact multiple of limit\n\n`Math.floor(user_count / limit) + 1` returns 2 for 50 members with limit 50, and 3 for 100. The pager shows an extra page, and `next` moves offset to `user_count` (line 33), which loads an empty member list. Use `Math.ceil(user_count / limit)`.",
+    "path": "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+    "line": 13,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Public group members page now silently shows only the first 50 members\n\nBefore this change, `/groups/:name/members` returned every member of non-automatic groups. Now it defaults to `limit 50` (app/controllers/groups_controller.rb:22), and the public route calls `model.findMembers()` with the model's default limit of 50 (app/assets/javascripts/discourse/models/group.js:10). This template has no pager, so any group with more than 50 members shows a truncated list with no sign that more exist. Add next/previous controls here, as in the admin template, or keep loading everything on this page.",
+    "path": "app/assets/javascripts/discourse/templates/group/members.hbs",
+    "line": 6,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "addMembers/removeMember have no failure handling, and the input is not cleared\n\nWhen `/admin/groups/:id/members` rejects (for example a 422 on an automatic group, or the 500 above), the promise rejects with no handler, so the admin sees nothing. On success the usernames stay in the selector (the TODO on line 62 says so). Add a rejection handler that shows the error, and reset `usernames` on success.",
+    "path": "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+    "line": 64,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Public members endpoint accepts an unbounded limit\n\nAnyone who can see the group can pass `limit=1000000` and get every member serialized in one request. Before, only automatic groups were paginated, and the default there was 200. Cap the limit, e.g. `[limit, 200].min`.",
+    "path": "app/controllers/groups_controller.rb",
+    "line": 22,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "remove_member automatic-group spec uses PUT while the route is DELETE\n\nThe route is `delete \"members\" => \"groups#remove_member\"` (config/routes.rb:49), but this spec sends `xhr :put`. It still passes because controller specs dispatch by action name and don't check the HTTP verb. Use `xhr :delete` so the spec matches the real request. No spec covers adding a user who is already a member, or `primary_group_id` after a removal.",
+    "path": "spec/controllers/admin/groups_controller_spec.rb",
+    "line": 115,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3": {
+  "wachiman": [
+   {
+    "text": "Block lookup is case-sensitive, so a change of letter case gets past it\n\n`should_block?` looks the address up with `where(email: email)`, which is an exact match. The value it receives is the raw `params[:email]`: `User.new_from_params` assigns it as typed (app/models/user.rb:87), and nothing on the way normalises it. On PostgreSQL, string equality is case-sensitive. If `bad@spammers.org` is blocked, a signup with `Bad@Spammers.org` gets through, and nothing logs or shows that it did. Normalise both sides: downcase the value when you store it and when you look it up (`Email.downcase` already exists and user.rb:127 uses it), or compare with `lower(email)`.",
+    "path": "app/models/blocked_email.rb",
+    "line": 12,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "A blocked signup bumps match_count twice\n\n`should_block?` writes to the database every time validation runs: it increments `match_count` and saves. `UsersController#create` validates the same user twice, once with `user.valid?` (app/controllers/users_controller.rb:168, which is evaluated before `SiteSetting.call_discourse_hub?`) and again inside `user.save` (line 172). So each signup attempt from a matching address adds 2 to `match_count`, and the stats come out wrong without any sign of it. Any other code path that calls `valid?` before `save` has the same problem. Either keep the counting out of the validator (have the validator only check, and record the hit once in the controller), or remember the result for each record. The increment is also a read-modify-write, so two concurrent attempts can lose an update; `update_all('match_count = match_count + 1')` avoids that.",
+    "path": "lib/validators/email_validator.rb",
+    "line": 13,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Any email error marks the address as \"invalid\" on the client\n\nThe client pushes the email into `rejectedEmails` for any error on `email`. That includes uniqueness (\"has already been taken\") and the domain whitelist/blacklist message, not just blocked addresses. After the first submit, `emailValidation` then reports that address as `user.email.invalid`, which tells the user the wrong thing when the real problem is that the address is already registered. A better option is to keep the server's reason for each rejected email and show that, or to only remember addresses that were blocked.",
+    "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+    "line": 274,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/5": {
+  "wachiman": [
+   {
+    "text": "Small-action edit/delete buttons no longer sit at the right edge of the row\n\n`.small-action` is now a flex container (line 264), so `.small-action-desc` becomes a flex item. A flex item without `flex-grow` is only as wide as its content. Before this change it was a block that filled the 755px row (desktop/topic-post.scss:730-733), with `padding-left: 4em` to clear the floated avatar. The delete and edit `<button>`s are inside `.small-action-desc` (templates/components/small-action.hbs:4-9) and keep `float: right` (topic-post.scss:306-310). They now float to the right edge of a box that has shrunk to fit its text, so on a short action like \"closed this topic\" they end up right beside the text, not at the right side of the post. Adding `flex: 1` (with prefixes, e.g. a `flex` mixin) to `.small-action-desc` keeps the old full-width layout. Time-gap items (components/time-gap.js.es6) share this component and stylesheet.",
+    "path": "app/assets/stylesheets/common/base/topic-post.scss",
+    "line": 264,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`-ms-align-items` is not a real property\n\nIE10 uses `-ms-flex-align`, which line 120 already emits. No browser has shipped `-ms-align-items`, so line 121 is dead output. Also, `-webkit-box-align` and `-ms-flex-align` take `start`/`end` where the modern syntax takes `flex-start`/`flex-end`. The mixin passes `$alignment` straight through, so it is only correct for `center`, `baseline` and `stretch`. Those are the only values used today, but a later `@include align-items(flex-start)` would quietly do nothing in the legacy syntaxes.",
+    "path": "app/assets/stylesheets/common/foundation/mixins.scss",
+    "line": 121,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6": {
+  "wachiman": [
+   {
+    "text": "website_name leaks the website that untrusted_attributes hides from anonymous viewers of TL0 users\n\n`website` is listed in `untrusted_attributes` (line 109), so `include_website?` returns false when `scope.restrict_user_fields?(object)` is true. That is the case for a TL0 user viewed by an anonymous visitor (lib/guardian/user_guardian.rb:58-59). `website_name` is a plain attribute and is not in that list. Its filter method is named `include_website_name` without the `?` (line 153), so the serializer never calls it. When the profile is restricted, `website_name` still computes from `object.user_profile.website` and is serialized. Before this change, the client built `websiteName` from `model.website`, so a hidden website stayed hidden. Now user.hbs:66-71 shows the host, or host+path, of a TL0 (often spam) account to anonymous visitors. That undoes the anti-spam restriction. Fix: add `:website_name` to `untrusted_attributes` and delete the misnamed `include_website_name` (the untrusted filter already checks `present?`). Also add `website_name` to the list in the TL0 spec at spec/serializers/user_serializer_spec.rb:11.",
+    "path": "app/serializers/user_serializer.rb",
+    "line": 43,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`include_website_name` is missing the `?`, so it is dead code\n\nActiveModel::Serializer only checks `include_<attr>?` methods (compare the generated `include_#{attr}?` at lines 9, 18 and 27). `include_website_name` without the `?` is never called, so `website_name` is always included, even when the website is blank or hidden. If the attribute moves into `untrusted_attributes` as suggested above, delete this method. Otherwise rename it to `include_website_name?`.",
+    "path": "app/serializers/user_serializer.rb",
+    "line": 153,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Same-length host comparison treats unrelated hosts under a shared public suffix as the same site\n\nThe branch at lines 144-146 drops the first label of both hosts and compares the rest. On a forum at `forum.co.uk`, the website `http://evil.co.uk/whatever` matches (`co.uk` == `co.uk`), so its full path is shown as if it were on the same site. It is display-only and the href is unchanged, but the rule doesn't do what its comment says. Comparing registrable domains, or limiting this to an exact parent-domain match like the `ends_with?` branch does, would avoid it.",
+    "path": "app/serializers/user_serializer.rb",
+    "line": 144,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No test for the sibling-subdomain branch, a blank website, or a TL0-anonymous viewer\n\nThe specs cover the exact-match, unrelated-host and parent-domain branches. They don't cover the `www.example.com` vs `forum.example.com` branch (line 144-146), a website with no host (e.g. `example.com` without a scheme, where `URI(...).host` is nil), or `website_name` being omitted for a TL0 user seen as anonymous. The last case would have caught the leak reported on line 43.",
+    "path": "spec/serializers/user_serializer_spec.rb",
+    "line": 76,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4": {
+  "wachiman": [
+   {
+    "text": "Unescaped embed URL goes into a raw-HTML post, so an anonymous visitor can store XSS\n\n`url` is interpolated into `<a href='#{url}'>#{url}</a>` with no escaping, and the post is created with `cook_method: raw_html`, so `Post#cook` returns `raw` as is (app/models/post.rb:133). The URL can come from an anonymous request: `EmbedController#best` passes `params[:embed_url]` to the RetrieveTopic job (embed_controller.rb:15), and `TopicRetriever` only checks that `URI(@embed_url).host` matches embeddable_host (topic_retriever.rb:15). `'` is a legal URI character, so a value like `http://<host>/?'onmouseover='alert(document.cookie)` passes that check. If the page answers 200, `import_remote` \u2192 `import` stores an attribute-injected `<a>`, which Nokogiri re-serializes as a real event handler (line 61-75). That HTML is then served from the forum's origin, both in the topic and in `embed/best` (`raw post.cooked`). Fix: escape the URL (`ERB::Util.html_escape`), and run raw_html content through a sanitizer before storing it.",
+    "path": "app/models/topic_embed.rb",
+    "line": 13,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "raw_html posts skip all sanitizing, and edits keep the flag\n\nWith `cook_method == raw_html`, `cook` returns `raw` verbatim. Feed items (poll_feed.rb:35, only `CGI.unescapeHTML`) and fetched pages are stored with no sanitizing, so any `<script>`, `<iframe>` or `on*` attribute in the feed or the embeddable site runs on the forum origin. The flag also stays set when the post is later edited through PostRevisor, so whoever can edit that post (its owner, or staff) can publish arbitrary HTML. Whitelist-sanitize the HTML when it is imported, or in this branch of `cook`.",
+    "path": "app/models/post.rb",
+    "line": 133,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The throttle is keyed per exact URL, so anonymous visitors can create topics without limit\n\nThe throttle is `retrieved:#{@embed_url}`, and `embed/best` takes requests from anyone whose Referer matches the host (embed_controller.rb:26; the Referer is client-controlled). Changing the query string (`?a=1`, `?a=2`, ...) gives a new key each time. Each new key costs one remote fetch, plus a full feed poll when polling is enabled (line 41). If the page answers, a new topic is created as embed_by_username, because TopicEmbed is unique on the raw embed_url string. Normalize the URL (strip the query and fragment) before checking and storing it, and add a global or per-IP rate limit.",
+    "path": "lib/topic_retriever.rb",
+    "line": 26,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The loading page reloads forever when retrieval can never succeed\n\nNothing bounds this wait. The page reloads every 30 s, and each reload hits `best` again, which enqueues another RetrieveTopic job (embed_controller.rb:15). Retrieval can fail for good in several ways: the host check fails (topic_retriever.rb:15), embed_by_username is not set (line 49-50), `open(url)` raises in `import_remote`, or `PostCreator` returns nil. In any of these cases the reader sees \"Loading Discussion...\" indefinitely, and one more job is queued every 30 s per open page. Cap the number of reloads, or show a failure state.",
+    "path": "app/views/embed/loading.html.erb",
+    "line": 8,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Disqus import no longer keeps the category or the original created_at\n\nThe `--category` option and the `created_at: Date.parse(t[:created_at])` it passed before were removed. Imported threads now land uncategorized and are dated at import time, with no warning. `import_remote` also fetches each `t[:link]` over the network, and any failure (404, timeout) raises and aborts the whole import partway through. Pass the category and created_at through `import` / `PostCreator` options, and rescue per-thread fetch errors.",
+    "path": "lib/tasks/disqus.thor",
+    "line": 148,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`<%- end if %>` turns the next template statement into the `if` condition\n\nERB compiles this to `end if` followed by the next generated statement, which here is the buffer append for the logo link on line 8. Ruby parses that as `(if/else block) if (append logo link)`. So the condition runs first, and the logo gets emitted before the header button, reversing the intended order. Use `<%- end %>`.",
+    "path": "app/views/embed/best.html.erb",
+    "line": 6,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Origin check is a substring match\n\n`discourseUrl.indexOf(e.origin) === -1` accepts any origin that is a prefix or substring of discourseUrl. For example, `https://forum.example.co` passes for `https://forum.example.com/`. Today it can only resize the iframe, but compare the parsed origin exactly.",
+    "path": "app/assets/javascripts/embed.js",
+    "line": 17,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "\"is 404 without an embed_url\" fails for a different reason than its name says\n\n`ensure_embeddable` runs before `params.require`, and embeddable_host is not set in this example, so the request is rejected for the missing host, not for the missing embed_url. Set a host and a valid referer so the example actually exercises `params.require`.",
+    "path": "spec/controllers/embed_controller_spec.rb",
+    "line": 8,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`force: true` added to an already-shipped migration\n\nEditing an existing migration has no effect on databases that already ran it. On any database where `top_topics` exists but the migration is re-run, it silently drops the table. Same pattern in create_topic_embeds. Drop `force: true` unless there is a specific reason for it.",
+    "path": "db/migrate/20131223171005_create_top_topics.rb",
+    "line": 3,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1": {
+  "wachiman": [
+   {
+    "text": "Second `downsize` definition replaces the 5-argument one and breaks emoji resizing\n\nRuby keeps only the last definition of a method name. So `downsize(from, to, dimensions, opts={})` at line 149 silently replaces `downsize(from, to, max_width, max_height, opts={})` at line 145, and the method now takes 3 or 4 arguments. `Jobs::ResizeEmoji#execute` still calls `OptimizedImage.downsize(path, path, 100, 100, opts)` with 5 arguments (app/jobs/regular/resize_emoji.rb:14). Every run of that job will now raise ArgumentError, so custom emoji are never downsized. Give the new method its own name (for example `downsize_to(from, to, dimensions, opts)`), or have the controller pass a geometry string through a separate method. Then remove the dead definition at lines 145-147.",
+    "path": "app/models/optimized_image.rb",
+    "line": 149,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Hard-coded 10 MB client limit ignores `max_attachment_size_kb`\n\n`validateUploadedFile` is called with `type` set to 'image' or 'attachment' (line 158). Before this change it used `max_<type>_size_kb`. Now both types are capped at a fixed 10 MB. Server-side downsizing only applies to images, yet attachments lose their configured limit too. If an admin set `max_attachment_size_kb` above 10 MB, the browser now rejects attachments the server would accept. If it is set below 10 MB, the alert no longer shows the real limit. Keep `Discourse.SiteSettings.max_attachment_size_kb` for attachments and use the 10 MB pre-downsize cap only when `type === 'image'`. The 413 message at line 246 also shows a hard-coded 10 MB. That number is not tied to any setting or web-server config, so users may be told the wrong limit.",
+    "path": "app/assets/javascripts/discourse/lib/utilities.js",
+    "line": 182,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Does `tempfile.size` see the downsized file after ImageOptim rewrites it?\n\nThe loop rereads `tempfile.size` after each `OptimizedImage.downsize(tempfile.path, tempfile.path, ...)`. `convert_with` runs `convert` and then `ImageOptim.new.optimize_image!(to)` (app/models/optimized_image.rb:160-165). If image_optim swaps in its result by renaming a new file over the path, the open Tempfile descriptor still points at the old, unlinked inode. In that case `tempfile.size` keeps returning the original size. The loop would then always run all 5 lossy passes, and `Upload.create_for` would get a stale size, or stale content if it reads from the descriptor. Have you checked that the size and content seen through `tempfile` change after a pass? Reading `File.size(tempfile.path)` would avoid depending on this.",
+    "path": "app/controllers/uploads_controller.rb",
+    "line": 66,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No tests for the new automatic downsizing path\n\nThe pull request adds a downsizing loop in `create_upload` and changes the `OptimizedImage` resize/downsize API, but adds no specs. A spec that uploads an oversized image, and one covering `Jobs::ResizeEmoji`, would have caught the `downsize` arity break.",
+    "path": "app/controllers/uploads_controller.rb",
+    "line": 63,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2": {
+  "wachiman": [
+   {
+    "text": "Crashes with a 500 when the user has no TopicUser row\n\n`TopicUser.find_by` returns nil when the user has never had a topic_users row for this topic. Line 107 then calls `tu.notification_level` on nil and raises NoMethodError. A notification email does not need that row to exist; a mention in a topic the user never opened is one example. So the link in the email can fail with a server error. Fall back to `TopicUser.change(current_user.id, topic_id, notification_level: ...)`, which creates the row when it is missing and also publishes the MessageBus level change, or handle nil explicitly.",
+    "path": "app/controllers/topics_controller.rb",
+    "line": 105,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "A GET request changes state, and each visit lowers the level one step\n\nThe action changes the user's notification level on a plain GET (config/routes.rb:440-441). There is no CSRF token, because `check_xhr` is skipped (line 32). The change also steps down each time: watching/tracking goes to regular, and regular goes to muted. Three problems follow. (1) Any other site can embed `<img src=\"/t/x/123/unsubscribe\">` and silently mute topics for a logged-in visitor. (2) Email link scanners and prefetchers fire the link without the user acting. (3) A user who opens the link twice, or reloads the page, ends up muted, not regular, and nothing tells them. Make the change idempotent: always set one target level (e.g. regular, or muted if already regular, but only through an explicit action). Better, show a confirmation page and apply the change through a POST/PUT.",
+    "path": "app/controllers/topics_controller.rb",
+    "line": 107,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Opening the unsubscribe route inside the app shows the message but changes nothing\n\nOnly the server action `topics#unsubscribe` changes the notification level. The Ember route's model hook only calls `PostStream.loadTopicView(params.id)`, which loads the topic view and never touches the unsubscribe endpoint. If the user reaches `/t/:slug/:id/unsubscribe` inside the app (an in-app link, or Back/Forward after a cached load), the page still says \"You will stop receiving notifications for <title>\", but the level is not changed. The user sees a wrong result with no warning. Either call the unsubscribe endpoint from the route (e.g. via `topic.details.updateNotifications`), or word the text so it does not claim a change happened.",
+    "path": "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6",
+    "line": 6,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The message says notifications stop even when the level only dropped to regular\n\nWhen the starting level is watching or tracking, the server sets it to regular (topics_controller.rb:107-108). At regular the user still gets notifications for mentions, quotes and replies. \"You will stop receiving notifications\" overstates what happened. Consider showing the level that was actually set. The property name `stopNotificiationsText` is also misspelled; the template uses the same spelling.",
+    "path": "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+    "line": 6,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "New controller action and toggle logic are untested\n\nThe only spec change adds `unsubscribe_url` to an existing builder spec. Nothing tests `TopicsController#unsubscribe`: the slug redirect, the watching\u2192regular and regular\u2192muted transitions, or the case with no TopicUser row.",
+    "path": "spec/components/email/message_builder_spec.rb",
+    "line": 172,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/22532": {
+  "wachiman": [
+   {
+    "text": "Deleting the cache never invalidates connectedCalendars, so the UI keeps showing a stale cache status\n\n`deleteCacheMutation` only shows a toast and calls the optional `onSuccess`. The disconnect mutation next to it invalidates `viewer.calendars.connectedCalendars` in `onSettled` (lines 61-64); this one invalidates nothing. In the event type Advanced tab (`packages/features/eventtypes/components/tabs/advanced/EventAdvancedTab.tsx:372-377`), `SelectedCalendarsSettingsWebWrapper` gets no `onChanged`, so nothing refetches. The query also uses `refetchOnWindowFocus: false`. The result: after a successful delete, the dropdown still shows \"Last updated: \u2026\" and the delete option, which tells the user the cache still exists. Fix: invalidate `utils.viewer.calendars.connectedCalendars` in this mutation's `onSettled`, as the disconnect mutation does.",
+    "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+    "line": 42,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Empty-data updateMany on every cache refresh, and the UI never reads its result\n\n`updateManyByCredentialId(this.credential.id, {})` runs a write on every `fetchAvailabilityAndSetCache` (webhooks and cron), relying on Prisma to bump `SelectedCalendar.updatedAt` from an empty `data`. I'm not sure Prisma issues an UPDATE at all when `data` is empty. Either way, the cache status the UI shows comes from `CalendarCache.updatedAt` (`calendar-cache.repository.ts:173-187`), and the `upsertCachedAvailability` upsert already sets that. Nothing in this PR reads the newly selected `SelectedCalendar.updatedAt`. Consider dropping this call, or setting `updatedAt: new Date()` explicitly if it is really needed.",
+    "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+    "line": 1024,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Cache timestamp is always formatted as en-US\n\n`new Intl.DateTimeFormat(\"en-US\", \u2026)` ignores the user's locale and profile time zone, while the label around it is translated. Consider using the locale from `useLocale()` (`i18n.language`) instead.",
+    "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+    "line": 89,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Cache status counts expired rows\n\n`getCacheStatusByCredentialIds` takes `_max(updatedAt)` over every CalendarCache row of the credential, including rows past `expiresAt`. So the UI can report a cache that is no longer used. Also, the migration backfills `updatedAt` with NOW() for legacy rows, so right after deploy every existing cache shows as \"updated\" at migration time. Consider filtering on `expiresAt > now()`.",
+    "path": "packages/features/calendar-cache/calendar-cache.repository.ts",
+    "line": 174,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Delete-cache action now appears where connection modification is disabled\n\nBefore, no action was rendered when `disableConnectionModification` was true (the event type Advanced tab). Now the dropdown renders there whenever a Google cache exists, and it offers the destructive \"Delete cached data\" action. Is exposing cache deletion on the event type page intended?",
+    "path": "packages/platform/atoms/selected-calendars/wrappers/SelectedCalendarsSettingsWebWrapper.tsx",
+    "line": 71,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Script only works on macOS and from one directory\n\n`sed -i ''` is BSD syntax: GNU sed treats `''` as a file name and fails. `ENV_FILE=\"../.env\"` is resolved against the current directory, not the script's location, so running the script from the repository root writes to the directory above the repository. Consider resolving the path from `$(dirname \"$0\")` and using a portable in-place edit.",
+    "path": "scripts/test-gcal-webhooks.sh",
+    "line": 68,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/8330": {
+  "wachiman": [
+   {
+    "text": "Slots inside a date override skip the busy-time check, so double bookings become possible\n\nWhen a slot falls on a date-override day and inside the override window, `dateOverrideExist` is true and the function returns `true` at line 134. It never reaches `busy.every(...)` at line 153. Existing bookings and calendar events on any day that has a date override stop blocking slots, so invitees can book over a meeting the host already has. Instead of returning `true` here, fall through to the busy check (skip only the working-hours check).",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 133,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Working-hours check rejects a slot that falls outside any one range for that day, not outside all of them\n\n`workingHours.find` returns true (slot rejected) as soon as one entry for the slot's weekday doesn't contain it. `getWorkingHours` (packages/lib/availability.ts:76-121) often emits several entries per weekday: one per availability range (e.g. 9-12 and 13-17), plus overflow entries when the organizer's local hours cross UTC midnight (lines 103-121). Any slot in one range lies outside the other, so every slot that day is removed. A UTC-8 organizer working 9-17 loses the 00:00-01:00 UTC part, and a split schedule loses every slot. The check should reject a slot only when no entry for that day contains it, i.e. `!workingHours.some(wh => wh.days.includes(day) && start >= wh.startTime && end <= wh.endTime)`.",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 139,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`end` is computed from the slot start, so slots running past the end of working hours are kept\n\n`end` uses `slotStartTime.hour()/minute()`, the same value as `start`. `end > workingHour.endTime` therefore never catches a slot that starts inside working hours but ends after them. Use `slotEndTime` here. A slot ending exactly at 00:00 also needs handling, since its minute value wraps to 0.",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 142,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "With multiple overrides on the same date, slots in all but one of them are rejected\n\n`dateOverrides.find` returns true (slot rejected) when an override on the slot's date doesn't contain the slot. With two overrides on one day (e.g. 09:00-12:00 and 14:00-17:00), a 15:00 slot lies outside the first one, so it is dropped even though the second override allows it. The slot should be rejected only when it fits none of the matching overrides.",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 106,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Override day is matched on the UTC calendar date (formatted in server-local time), not the organizer's date\n\n`dayjs(date.start).add(utcOffset, \"minutes\")` gives the override start as a real UTC instant. It is then formatted with `dayjs()`'s default (server-local) zone and compared to `slotStartTime.format(...)` in UTC. For an organizer far from UTC, the override's UTC date can differ from the organizer's date. Example: a UTC+10 override for Nov 12, 08:00-12:00, starts Nov 11 22:00 UTC. Every Nov 11 UTC slot, including the organizer's normal Nov 11 working hours, then counts as 'on the override date but outside it' and is removed. Overridden slots after UTC midnight are also not matched. On a server not running in UTC, the two `format` calls also use different zones. Compare dates in the organizer's time zone (e.g. `slotStartTime.tz(organizerTimeZone)` against the override's local date), or test the interval directly.",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 110,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`===` between two Dayjs objects is always false\n\nThese are two distinct Dayjs instances, so the zero-length-override branch can never run. If it is meant to treat `start == end` as 'unavailable all day', use `.isSame(...)`. Otherwise, remove it.",
+    "path": "packages/trpc/server/routers/viewer/slots.ts",
+    "line": 114,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/14943": {
+  "wachiman": [
+   {
+    "text": "An await in the catch block can throw and abort the whole cron batch\n\nBefore this change the catch only logged, so one failing reminder never stopped the loop. Now it calls `await prisma.workflowReminder.update(...)` with no protection. If that update rejects, the error leaves the `for` loop and the handler, and every reminder after this one goes unscheduled for that run. It can reject because the row was deleted at the same time (booking cancelled or rescheduled \u2192 Prisma P2025), or because of a DB hiccup, which is often what made the attempt fail in the first place. The update in the `else` at line 179 sits inside the `try`, so it falls into this same catch and is a second chance to throw. Either wrap the increment in its own try/catch, or use `updateMany({ where: { id }, data: { retryCount: { increment: 1 } } })`: it does not throw when the row is gone, and the atomic increment also avoids writing back a stale `reminder.retryCount + 1`.",
+    "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+    "line": 190,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "SMS reminders are silently deleted after two failed attempts, about 30 minutes apart\n\nThe cron runs every 15 minutes (`.github/workflows/cron-scheduleSMSReminders.yml:8`). The count goes up on every thrown error (line 195) and every falsy `scheduleSMS` result (line 184). Once `retryCount > 1`, the next run's `deleteMany` removes the row. So two failures in a row delete the reminder for good, even when its send date is days away, with only a `console.log` left behind. Failures that clear on their own lead here too: a Twilio outage, the `checkSMSRateLimit` throw (twilioProvider.ts:97-102), or a team or user that is only briefly locked (`scheduleSMS` returns undefined at twilioProvider.ts:92-95). Before this change those reminders were retried on every run until `scheduledDate` passed. Now the attendee or organizer just never gets the reminder, and nothing shows it. Raise the threshold, or delete only when the reminder can no longer be scheduled (for example, `retryCount` over the limit and `scheduledDate` close). And log or record the drop where someone can see it.",
+    "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+    "line": 38,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The retryCount delete branch has no method filter\n\nThe second `OR` branch deletes every `WorkflowReminder` with `retryCount > 1`, whatever its method (EMAIL, WHATSAPP, SMS). Right now only this SMS cron writes `retryCount`, so nothing else is affected yet. But the column is on the shared model, so the moment the email or WhatsApp crons start counting retries, this SMS job will delete their rows. Put `method: WorkflowMethods.SMS` on this branch as well.",
+    "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+    "line": 39,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/22345": {
+  "wachiman": [
+   {
+    "text": "Fragments are returned without outer parentheses, so a caller's added AND binds to only part of the OR\n\nThe org/team authorization fragments come out as `(A) OR (B)` (lines 171-174, 204-207). The eventType filter also comes out unwrapped: `(\"eventTypeId\" = x) OR (\"eventParentId\" = x)` (line 106). `getBaseConditions` returns the auth fragment as is (line 75), and `getAuthorizationConditions`/`getFilterConditions` are public. The point of this refactor is that callers splice the fragment into raw SQL. A caller that writes `WHERE ${base} AND \"createdAt\" >= ${start}` gets `(A) OR (B) AND createdAt >= \u2026`, which SQL reads as `A OR (B AND \u2026)`. Every team booking then skips the caller's date/status filter, the numbers come out wrong, and nothing reports an error. No caller exists yet, but this is the contract the next PR will build on. Fix: wrap every fragment the class returns, e.g. ``Prisma.sql`(${...})` ``, in the reduce results and in line 106.",
+    "path": "packages/lib/server/service/insightsBooking.ts",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unreachable branches in getBaseConditions\n\n`getAuthorizationConditions()` always returns a `Prisma.Sql` object, which is always truthy (it falls back to `NOTHING_CONDITION`, never null). Because of that, the `else if (filterConditions)` and final `else` branches can never run. Simplify to: `filterConditions ? Prisma.sql`(${auth}) AND (${filter})` : auth`.",
+    "path": "packages/lib/server/service/insightsBooking.ts",
+    "line": 74,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Looser public options type hides a missing teamId until runtime\n\nThe constructor used to accept the discriminated union, so `{ scope: \"team\" }` without `teamId` failed to compile. With `InsightsBookingServicePublicOptions`, that call compiles. The zod parse at line 62 then fails, `options` becomes null, and the service quietly returns `1=0` (no data) with no error. Keep the union type for the constructor, or log or throw when validation fails.",
+    "path": "packages/lib/server/service/insightsBooking.ts",
+    "line": 29,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Caching tests removed while the caching code remains\n\nThe `Caching` describe block was deleted, but `getAuthorizationConditions`/`getFilterConditions` still cache their results (insightsBooking.ts:83-95). No test covers that behaviour now. The `getBaseConditions` test also covers only the user scope. No test runs an org- or team-scope fragment against the database, which is where the `ANY(${array})` binding and OR precedence matter.",
+    "path": "packages/lib/server/service/__tests__/insightsBooking.integration-test.ts",
+    "line": 436,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/11059": {
+  "wachiman": [
+   {
+    "text": "Google credential key is overwritten with a safeParse result object\n\n`parseRefreshTokenResponse` returns the zod `safeParse` result (`{ success, data }`), not the parsed data (parseRefreshTokenResponse.ts:29). Line 97 assigns that wrapper to `key` and line 100 saves it as the credential key. The old code saved `googleCredentialSchema.parse(...)`, which is the data itself. After the first token refresh, every Google Calendar credential holds `{success:true,data:{...}}`, so the next `googleCredentialSchema.parse(credential.key)` (line 75) throws. This hits all Google Calendar users, not just setups with credential sharing on. Fix: use `.data` here, or have the helper return the data.",
+    "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+    "line": 97,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Computed keys built from `z.string().toString()` create a single literal key, not a wildcard\n\n`z.string().toString()` and `z.string().optional().toString()` both evaluate to \"[object Object]\". So the schema is `{access_token, \"[object Object]\": unknown}`. A `z.object` strips unknown keys by default, which means that in sync mode `data` contains only `access_token` plus the placeholder `refresh_token`. The expiry fields (`expires_in`, `expiry_date`), which the comment says should be kept, are dropped. Callers then persist credentials with no expiry. Use `z.object({ access_token: z.string() }).passthrough()`, or a `catchall`.",
+    "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+    "line": 8,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Placeholder refresh_token \"refresh_token\" is injected even when sync is off\n\nThe default runs on every path, not only in sync mode. In Office 365 Calendar, `refreshTokenResponseSchema.refresh_token` is optional (office365calendar/lib/CalendarService.ts:56), and the parsed data is spread over the stored credentials (line 264). When Microsoft omits a new refresh token, the real stored refresh token is replaced by the string \"refresh_token\" and saved (line 265-270). The next refresh then fails and the calendar stops working, with no visible error. Before this change, the old refresh token was kept. Apply the placeholder only in the sync branch, or skip it entirely when there is no refresh_token.",
+    "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+    "line": 25,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Sync branch returns a raw fetch Response, but several callers expect a different shape\n\nIn sync mode this returns a `fetch` `Response`. Google expects a gaxios response with `.data` (googlecalendar/lib/CalendarService.ts:94-95: `res?.data` is undefined, so `token.access_token` throws). Zoho Bigin and Zoho CRM read `tokenInfo.data.error` (zoho-bigin/lib/CalendarService.ts:96, zohocrm/lib/CalendarService.ts:217). HubSpot treats the result as a token object. So with credential sharing on, refresh is broken for these apps. Only the fetch-based adapters (Zoom, Office 365, Webex, Lark) work. Normalise the return value, for example by parsing the JSON once, and adapt each caller to it.",
+    "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+    "line": 15,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Credential id is sent as the user id to the sync endpoint\n\n`refreshOAuthTokens` takes a userId and posts it as `calcomUserId` (refreshOAuthTokens.ts:11). Here `credentialId` is passed instead (the argument from line 69). The external app is therefore asked for the tokens of whichever user has an id equal to this credential's id. That could return another user's tokens, which would be stored on this credential. Pass `credential.userId`. This method only receives the id and key, so the userId needs to be threaded through.",
+    "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
+    "line": 93,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "`prisma` is used but never imported\n\nThe file's imports (lines 1-20) do not include `@calcom/prisma`. The new `prisma.credential.update` call only resolves if a global `prisma` happens to exist. That global is set only for dev hot-reload caching, so in production `getClient` would throw a ReferenceError, and every Salesforce operation would reject. Add `import prisma from \"@calcom/prisma\"`.",
+    "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+    "line": 96,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Salesforce refreshes unconditionally, skips the sync path, and then ignores the new token\n\nEvery time `SalesforceCalendarService` is constructed, it calls the Salesforce token endpoint, even when the stored token is still valid. It calls `fetch` directly instead of `refreshOAuthTokens`, so credential sharing never applies to Salesforce. It also uses `statusText !== \"OK\"` (line 86), which fails on HTTP/2 responses where statusText is empty; `response.ok` would be the reliable check. Finally, the returned `jsforce.Connection` still uses `credentialKey.access_token` (line 106), the old token, not `accessTokenParsed.data.access_token`.",
+    "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+    "line": 75,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Malformed body or undecryptable keys produce an unhandled 500\n\n`schema.parse` (line 31) and `JSON.parse(symmetricDecrypt(...))` (line 57-59) throw on bad input, and nothing catches them. The parent app gets an opaque 500 instead of a 400. Use `safeParse`, and wrap the decrypt step in try/catch so it returns 400. The handler also accepts any HTTP method; it should reject everything except POST.",
+    "path": "apps/web/pages/api/webhook/app-credential.ts",
+    "line": 31,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Webhook secret compared with `!==`\n\nThe secret check is a plain string comparison, which is not constant-time. Consider `crypto.timingSafeEqual` on equal-length buffers, and handle the case where the header arrives as an array.",
+    "path": "apps/web/pages/api/webhook/app-credential.ts",
+    "line": 24,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Outgoing sync request carries no authentication\n\nThe POST to `CALCOM_CREDENTIAL_SYNC_ENDPOINT` sends only `calcomUserId` and `appSlug`, with no secret. The parent app cannot tell that the request comes from Cal.com, yet it answers with live access tokens. Consider sending `CALCOM_WEBHOOK_SECRET`, or a signature, in a header.",
+    "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+    "line": 8,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/7232": {
+  "wachiman": [
+   {
+    "text": "One failed SendGrid cancel stops every other cancellation, on every run\n\nThe whole loop sits inside one try. If `client.request` throws for any reminder (bad or expired batch_id, rate limit, a batch that was already cancelled), the loop exits. `Promise.all(workflowRemindersToDelete)` never runs, and because Prisma promises are lazy, none of the deletes queued so far run either. The failing row keeps `cancelled: true` and stays in the `lte now+1h` window until line 34 removes it once its send time has passed. Every 15-minute run hits it first and aborts again, so reminders for other cancelled bookings in that window are never cancelled and get sent. The only trace is a console.log. Put the try/catch around each reminder (cancel, then delete that row) so one bad batch only affects itself.",
+    "path": "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+    "line": 56,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Reminders due before the next cron run are no longer cancelled\n\nNon-immediate cancellation now only sets `cancelled: true`. The SendGrid cancel happens in the cron (scheduleEmailReminders.ts:44-64), which runs every 15 minutes (.github/workflows/cron-scheduleEmailReminders.yml:8). Take a booking cancelled at :05 whose reminder is scheduled with SendGrid for :10. The :00 run has already passed and the :15 run is too late, so the attendee gets a reminder for a booking that no longer exists. Before this change the batch was cancelled right away. This affects every non-immediate caller: handleCancelBooking.ts:488, bookings.tsx:490, and workflows.tsx:378 and :576. To fix it, cancel immediately when the reminder's `scheduledDate` falls before the next cron run, for example within the next hour, which matches the cron's own window. That means passing `scheduledDate` (or the reminder object) in.",
+    "path": "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts",
+    "line": 225,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Reminder cancellation is no longer awaited before the response\n\nBefore this change the reminder row deletes went into `prismaPromises` and were awaited. Now `deleteScheduledEmailReminder` and `deleteScheduledSMSReminder` are started inside `forEach` and never awaited, so the handler can respond before the `cancelled: true` update (or the Twilio cancel) finishes. On a serverless runtime that freezes after the response, that work can be lost, and the cron would then send the reminder for the cancelled booking. The same applies to bookings.tsx:489, which used to `await Promise.all(remindersToDelete)`. Collecting the promises and awaiting them with the other Prisma work fixes it.",
+    "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+    "line": 487,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "try/catch cannot catch errors from these un-awaited async calls\n\nBoth delete functions are async and are called without `await` inside `forEach`, so their rejections never reach this `catch`. Both functions already catch their own errors anyway, which makes this `log.error` dead code. Either drop the try/catch or collect the promises and `await Promise.all(...)` them inside it.",
+    "path": "packages/features/bookings/lib/handleNewBooking.ts",
+    "line": 964,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Why immediate SendGrid cancel on reschedule but deferred everywhere else?\n\nThis PR defers email cancellation to the cron on booking cancel and on requestReschedule (bookings.tsx:490), presumably to stay under SendGrid's limit on concurrently cancelled or paused batches. A normal reschedule here (and workflow or step deletion, workflows.tsx:214 and :521) still cancels immediately with `immediateDelete: true`. If that limit is the reason for the change, many reschedules at once could still hit it, and the cancel would fail silently (it is only logged), so the old-time reminder goes out. Also, the immediate path returns without deleting or flagging the row, so it stays until its time passes. Is the immediate cancel on reschedule intentional?",
+    "path": "packages/features/bookings/lib/handleNewBooking.ts",
+    "line": 968,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/14740": {
+  "wachiman": [
+   {
+    "text": "Team admins are rejected: admin check is ANDed with owner check\n\n`isTeamAdmin` already matches `role: ADMIN` OR `OWNER` (packages/lib/server/queries/teams/index.ts:264-283), and `isTeamOwner` matches only `OWNER` (286-295). Joining them with `&&` means only owners pass, so a team ADMIN who is not the organizer or an attendee gets FORBIDDEN. Use `isTeamAdmin(...)` alone (or `||`), as confirm.handler.ts:127-128 does.",
+    "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+    "line": 46,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Blacklist check is case-sensitive, so it can be bypassed\n\nThe blacklist entries are lowercased (line 71), but `guest` is not, and `z.string().email()` doesn't normalise case. `Blocked@Example.com` gets past the filter, is added as an attendee, and gets emailed. Lowercase `guest` before comparing it. The attendee de-dup on line 76 is case-sensitive too, so a differently-cased existing attendee gets added twice.",
+    "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+    "line": 77,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Emails use the raw `guests` input instead of the filtered `uniqueGuests`\n\n`sendAddGuestsEmails` uses its `newGuests` argument to pick who gets a fresh booking confirmation (email-manager.ts:541-542). Because the handler passes `guests`, an address that was already an attendee but is in the request again gets a second \"scheduled\" email instead of the \"guests added\" notice. Pass `uniqueGuests`.",
+    "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+    "line": 168,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Calendar update uses the caller's credentials, not the organizer's\n\nAn attendee or team owner who is not the organizer can call this. The EventManager is then built from `ctx.user`'s credentials, but `booking.references` point at the organizer's calendar credentials. So `updateCalendarAttendees` (packages/core/EventManager.ts:596-602) won't update the organizer's calendar event. The DB and emails will show the new guests, but the calendar invite won't. editLocation.handler.ts:97-100 has the same pattern. Consider loading the organizer's credentials (`booking.user`, which is already included at line 35).",
+    "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+    "line": 158,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The `unable_to_add_guests` fallback can never show\n\n`message` is a template literal that always contains at least `\": \"`, so `message || t(\"unable_to_add_guests\")` always uses `message`. Errors that have no code show up as `undefined: ...`.",
+    "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+    "line": 43,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Validation error and entered emails stay after the dialog closes or the add succeeds\n\n`isInvalidEmail` is only cleared by the Cancel button. After the user fixes the emails and adds them successfully (onSuccess, lines 36-41), or closes the dialog with the overlay or Esc (`onOpenChange={setIsOpenDialog}`), the red error and the typed values are still there the next time the dialog opens. Reset both state values whenever the dialog closes and on success.",
+    "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+    "line": 61,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/10600": {
+  "wachiman": [
+   {
+    "text": "A backup code plus any non-empty totpCode logs in without checking the password\n\nThe password is checked only when `!credentials.totpCode` (line 121). Before this change that was safe, because a non-empty `totpCode` sent you into the TOTP branch, which then had to validate. Now, when `backupCode` is present, the new branch at line 131 runs and the TOTP branch is skipped. A request to the credentials provider with `email`, `totpCode: \"x\"` and a valid `backupCode` therefore skips both the password check and the TOTP check. A single leaked backup code becomes a full one-factor credential for the account. Fix: always verify the password in the backup-code branch, or make the line 121 condition ignore `totpCode` when `backupCode` is set (e.g. `if (user.password && (!credentials.totpCode || credentials.backupCode))`).",
+    "path": "packages/features/auth/lib/next-auth-options.ts",
+    "line": 131,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Closing the backup-codes step with Escape or the overlay leaves the settings page showing 2FA as disabled\n\nOnce enable succeeds, the modal moves to `DisplayBackupCodes` and calls `onEnable()` only from the Close button (line 269). The parent's `onOpenChange` just toggles `enableModalOpen` (apps/web/pages/settings/security/two-factor-auth.tsx:64). Dismissing the dialog with Escape or an outside click therefore never runs `utils.viewer.me.invalidate()`, so the badge and switch still say 2FA is disabled even though it is on. `resetState()` is not run either, so reopening the modal shows the old backup codes step again. Call `onEnable`/invalidate as soon as enable succeeds, or handle `onOpenChange` inside the modal so it does the same as Close.",
+    "path": "apps/web/components/settings/EnableTwoFactorModal.tsx",
+    "line": 135,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Using up a backup code is read-modify-write and not atomic\n\nThe codes are read in the `findUnique` at line 73, checked in memory, and written back unconditionally. Two logins running at the same time with the same code both pass the check, so a \"single-use\" code can be used more than once. You could make the update conditional on the old ciphertext (`updateMany` with `where: { id, backupCodes: user.backupCodes }`, then require count === 1).",
+    "path": "packages/features/auth/lib/next-auth-options.ts",
+    "line": 149,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Throwing in an API route returns a 500 with no JSON body\n\nEverywhere else this handler returns `res.status(500).json({ error: ErrorCode.InternalServerError })`, for example line 23. The new missing-key path throws instead, so the client gets an unstructured 500. Return the JSON error to match the rest of the handler.",
+    "path": "apps/web/pages/api/auth/two-factor/totp/disable.ts",
+    "line": 51,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Component is named `TwoFactor`\n\nThe default export of BackupCode.tsx is called `TwoFactor`, the same name as the component in TwoFactor.tsx. That is confusing in stack traces and React DevTools. Rename it to `BackupCode`.",
+    "path": "apps/web/components/auth/BackupCode.tsx",
+    "line": 7,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/10967": {
+  "wachiman": [
+   {
+    "text": "Crash when the event has no destination calendar\n\n`const [mainHostDestinationCalendar] = evt.destinationCalendar ?? [];` sets the value to `undefined` when the user has no destination calendar. `handleNewBooking.ts:1063-1067` sets `destinationCalendar` to `null` in that case, and other callers set it to `[]`. Line 119 then reads `mainHostDestinationCalendar.integration` without optional chaining, so whenever the location is Google Meet, `EventManager.create` throws a TypeError for any user with no destination calendar set. The old code used `evt.destinationCalendar?.integration`, so this case fell back to Cal Video. Fix: use `mainHostDestinationCalendar?.integration`.",
+    "path": "packages/core/EventManager.ts",
+    "line": 119,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Organization slug logic is inverted\n\nThe old code was `...(!IS_TEAM_BILLING_ENABLED && { slug })`: the slug was set right away only when team billing was off, and with billing on it went into `requestedSlug` until payment. The new `...(IS_TEAM_BILLING_ENABLED ? { slug } : {})` reverses that. With billing on, the org gets its slug before anyone pays. With billing off, self-hosted orgs never get a slug at all. This change has nothing to do with destination calendars. Restore `!IS_TEAM_BILLING_ENABLED ? { slug } : {}`.",
+    "path": "packages/trpc/server/routers/viewer/organizations/create.handler.ts",
+    "line": 151,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Team members' calendars are dropped when the organizer has no destination calendar\n\nWhen neither the event type nor the organizer has a destination calendar, `evt.destinationCalendar` is set to `null` (line 1067). `evt.destinationCalendar?.push(...teamDestinationCalendars)` then does nothing, so a COLLECTIVE booking writes to none of the members' calendars even though they have destination calendars. Nothing is shown to anyone. Fall back to `[]` on line 1067, or assign `teamDestinationCalendars` when the value is null.",
+    "path": "packages/features/bookings/lib/handleNewBooking.ts",
+    "line": 1078,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Video references lose their credentialId\n\nBefore, non-calendar results stored `result.credentialId`. Now they store `undefined`, so `_video` booking references are saved with no credentialId. `handleCancelBooking.ts:722-741` relies on `reference.credentialId` to load the credential and call `updateMeeting` when one seat is cancelled. Without it, the video meeting is silently left out of the update. Keep `result.credentialId` for non-calendar results.",
+    "path": "packages/core/EventManager.ts",
+    "line": 170,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Fallback calendar lookup can never match\n\nThe `find` only runs when `externalCalendarId` is falsy, and it then looks for `cal.externalId === externalCalendarId` (null or undefined), so it always returns undefined. The old fallback to the destination calendar's `externalId` is gone. Updates (and deletes, line 317) for references with no `externalCalendarId` now go to the default calendar instead of the event's destination calendar, and Google will return 404 for events that live elsewhere. The fallback create path at `EventManager.ts:380` makes this worse: it calls `createEvent(c, event)` with no externalId, so new references there also have no `externalCalendarId`. Fall back to the destination entry whose `credentialId` matches this service's credential, or to the first entry.",
+    "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+    "line": 256,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "References from the fallback path no longer store externalCalendarId\n\nBefore, `externalCalendarId` came from `evt.destinationCalendar.externalId`. It now comes from `result.externalId`, which `CalendarManager.createEvent` only fills when the third argument is passed. This branch (destination with no credentialId) does not pass it, so these references are saved with `externalCalendarId` undefined. Later updates and deletes then fall back to the primary calendar (see the Google update/delete finding). Pass `destination.externalId` here as well.",
+    "path": "packages/core/EventManager.ts",
+    "line": 380,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Non-Google services always use the main host's calendar ID\n\n`createAllCalendarEvents` now calls `createEvent` once per collective member's credential. Office 365 (here), Lark (`larkcalendar/lib/CalendarService.ts:128`) and CalDAV (`packages/lib/CalendarService.ts:156`) still read `destinationCalendar[0]`, which is the organizer's calendar. A member's Outlook credential will POST to `/me/calendars/<organizer's id>/events`, which fails or picks the wrong calendar. A member's CalDAV credential filters out all of its own calendars, so no event is created. Only Google uses the `credentialId` it is given. These services should also pick the entry whose `credentialId` matches their own credential.",
+    "path": "packages/app-store/office365calendar/lib/CalendarService.ts",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Recurring deletion runs again for every calendar reference\n\nThe recurring-series branch is now inside the loop over references, so it deletes every remaining occurrence across all of the user's calendar credentials once per reference. With N calendar references, each delete is sent N times. The repeat calls fail (already deleted), and those errors are only logged. Move the recurring branch out of the loop.",
+    "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+    "line": 449,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/calcom/cal.com/pull/8087": {
+  "wachiman": [
+   {
+    "text": "All app modules are still imported eagerly when this module loads\n\nEvery `import(\"./x\")` here is evaluated as soon as `@calcom/app-store` is first imported, so all 28 app packages still get loaded on every import. The PR is meant to load them lazily, and this layout only turns the values into promises. Using thunks (`applecalendar: () => import(\"./applecalendar\")`) and calling `await appStore[key]?.()` at the call sites would load only the app that is needed. As written, a failed import of an app nobody asked for also becomes an unhandled rejection when the module loads.",
+    "path": "packages/app-store/index.ts",
+    "line": 3,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "The try/catch no longer catches errors from getCalendar\n\nBefore, `getCalendar` ran synchronously inside `forEach`, so an exception (for example a CalendarService constructor throwing) reached the surrounding `try/catch` and was logged. Now the callback is `async`, so that exception becomes a rejected promise that nobody awaits. It skips the catch on line 135 and surfaces as an unhandled rejection. Using `for...of` with `await`, or `await Promise.all(bookingRefsFiltered.map(...))`, would keep the error handling. The same pattern is in packages/app-store/wipemycalother/lib/reschedule.ts:125 and packages/trpc/server/routers/viewer/bookings.tsx:553 (that one has no try/catch at all).",
+    "path": "packages/app-store/vital/lib/reschedule.ts",
+    "line": 125,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/37429": {
+  "wachiman": [
+   {
+    "text": "i18next can't read Java MessageFormat placeholders, so the error shows raw `{0}` and `{2,choice,...}`\n\nThe account console translates messages with i18next (`js/apps/account-ui/src/i18n.ts:25-29`). It uses the default `{{name}}` interpolation and has no ICU plugin. Server errors are rendered by `t(key, {...params})` in `js/libs/ui-shared/src/user-profile/utils.ts:74-86`. Every sibling key in this file uses `{{0}}`, for example line 27. After this change the user sees the literal text `Attribute {0} must have at least {1} and at most {2} {2,choice,0#values|1#value|1<values}.` instead of the real values. The same regression is in `js/apps/admin-ui/maven-resources/theme/keycloak.v2/admin/messages/messages_en.properties:3138`. Fix: keep `{{0}}`/`{{1}}`/`{{2}}` in both JS bundles and use plain wording (or i18next plurals) there. The `choice` form only works in the FreeMarker/Java bundles under `themes/`.",
+    "path": "js/apps/account-ui/maven-resources/theme/keycloak.v3/account/messages/messages_en.properties",
+    "line": 188,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Admin UI error message loses `{{n}}` interpolation\n\nSame problem as the account-console bundle. The admin console also renders this key through i18next via the shared `setUserProfileServerError` (`js/libs/ui-shared/src/user-profile/utils.ts:74-86`). `{0}` and the `{2,choice,...}` clause are not interpolated, so they reach the user as raw text. Restore `{{0}}`, `{{1}}` and `{{2}}`. Medium confidence: I did not open the admin-ui i18n config, but the key previously used `{{0}}`, the same syntax as the account console.",
+    "path": "js/apps/admin-ui/maven-resources/theme/keycloak.v2/admin/messages/messages_en.properties",
+    "line": 3138,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Lithuanian bundle now contains Italian text\n\n`totpStep1=Installa una delle seguenti applicazioni sul tuo cellulare:` is Italian. Lithuanian users will see an Italian sentence in the OTP setup steps. The same Italian line was added at `themes/src/main/resources-community/theme/base/login/messages/messages_lt.properties:71` (`loginTotpStep1`). Replace both with a Lithuanian translation, e.g. `\u012ediekite vien\u0105 i\u0161 \u0161i\u0173 program\u0117li\u0173 savo mobiliajame telefone:`, or remove the key so the English fallback applies.",
+    "path": "themes/src/main/resources-community/theme/base/account/messages/messages_lt.properties",
+    "line": 101,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Simplified-Chinese bundle gets a Traditional-Chinese sentence\n\n`\u5728\u60a8\u7684\u624b\u6a5f\u4e0a\u5b89\u88dd\u4ee5\u4e0b\u61c9\u7528\u7a0b\u5f0f\u4e4b\u4e00\uff1a` uses Traditional characters and Taiwan wording (\u624b\u6a5f, \u61c9\u7528\u7a0b\u5f0f). The neighbouring lines 113-114 are Simplified (\u6253\u5f00\u5e94\u7528\u2026). Use the Simplified form, e.g. `\u5728\u60a8\u7684\u624b\u673a\u4e0a\u5b89\u88c5\u4ee5\u4e0b\u5e94\u7528\u7a0b\u5e8f\u4e4b\u4e00\uff1a`.",
+    "path": "themes/src/main/resources-community/theme/base/account/messages/messages_zh_CN.properties",
+    "line": 112,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Anchor mismatch message omits the key and file\n\nUnlike the 'Illegal HTML' message at line 111, `Didn't find anchor tag ...` names neither the key nor the file. With dozens of bundles checked in one build, the failure is hard to locate. Add `key` and `file` to the message, as line 111 does.",
+    "path": "misc/theme-verifier/src/main/java/org/keycloak/themeverifier/VerifyMessageProperties.java",
+    "line": 157,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "No test that valid HTML or anchors pass\n\nEvery new test only asserts that an error is reported. None checks that a translation keeping the English anchor, or allowed tags like `<b>`/`<br />`, yields an empty result. A sanitizer that flagged everything would pass this suite. Add a positive case, e.g. a `_de` file whose anchor matches `changedAnchor_en`, and assert that `verify()` is empty.",
+    "path": "misc/theme-verifier/src/test/java/org/keycloak/themeverifier/VerifyMessagePropertiesTest.java",
+    "line": 43,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/37634": {
+  "wachiman": [
+   {
+    "text": "isAccessTokenId never checks the grant shortcut: wrong offset and inverted condition\n\nThe encoded prefix is `sessionType(2) + tokenType(2) + grant(2)` (`DefaultTokenContextEncoderProvider.java:114-117`), so the grant shortcut is `substring(4, 6)`, not `substring(3, 5)`. On top of that, the code returns `false` when the shortcut *matches*, which is the reverse of what the matcher should do. Take `onrtac:<uuid>`: `substring(3,5)` is `\"ta\"`, which isn't equal to `\"ac\"`, so the matcher just falls through to the UUID check and passes. A token issued with the wrong grant would pass too. The assertions in `expectCodeToToken`, `expectDeviceCodeToToken`, `expectRefresh` and `expectAuthReqIdToToken` therefore only check that the value is `xxx:<uuid>`, not which grant issued it. Fix: `if (!items[0].substring(4, 6).equals(expectedGrantShortcut)) return false;`. Also check `items[0].length() == 6` first. Note that once this is fixed, any flow where the grant attribute isn't set (it falls back to `na`) will start failing these assertions.",
+    "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents.java",
+    "line": 483,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "rawTokenId null check actually checks grantType again\n\n`Objects.requireNonNull(grantType, \"Null rawTokenId not allowed\")` passes `grantType` again, so a null `rawTokenId` is never rejected. If one gets through, `encodeTokenId` builds an id ending in `:null`. Change the argument to `rawTokenId`.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/encode/AccessTokenContext.java",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "New abstract getShortcut() breaks custom grant factories, and the shortcut length isn't checked\n\n`getShortcut()` is abstract with no default. Every third-party `OAuth2GrantTypeFactory` will now fail to compile or load, and a factory that returns null makes `ConcurrentHashMap.put` throw an NPE in `DefaultTokenContextEncoderProviderFactory.postInit` (lines 75-76), which aborts server startup. The decoder also requires exactly 2 characters per segment (`DefaultTokenContextEncoderProvider.java:74-81`), but nothing checks the length of a custom shortcut. A 3-letter shortcut (which the Javadoc says is the usual form) produces token ids that `getTokenContextFromTokenId` rejects with IllegalArgumentException. Options: validate the length (exactly 2) and non-null in `postInit` with a clear error, fix the Javadoc's \"3-letters\" wording, and possibly add a default implementation.",
+    "path": "server-spi-private/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeFactory.java",
+    "line": 33,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/38446": {
+  "wachiman": [
+   {
+    "text": "Storage-backed recovery codes get removed from the local DB, which does nothing\n\n`RecoveryAuthnCodesUtils.getCredential` (RecoveryAuthnCodesUtils.java:56-62) now returns the user-storage credential first. When `allCodesUsed()` is true, this line still calls `removeStoredCredentialById(id)`. That goes to the local store (`UserCredentialManager.java:114-117`, `getStoreForUser`), and the local store never held this id, so the user-storage credential with no codes left stays in place. The storage still reports the user as configured. On the next login, `RecoveryAuthnCodeInputLoginBean` calls `getNextRecoveryAuthnCode().get()` on an empty list (RecoveryAuthnCodeInputLoginBean.java:21) and throws. That happens if the user leaves before finishing the CONFIGURE_RECOVERY_AUTHN_CODES required action. For a federated credential, remove it through the storage, e.g. `credentialManager().disableCredentialType(RecoveryAuthnCodesCredentialModel.TYPE)` (UserCredentialManager.java:173-188).",
+    "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/RecoveryAuthnCodesFormAuthenticator.java",
+    "line": 86,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Reference storage accepts any recovery code, as often as you like\n\n`isValid` accepts the input if it matches any stored code and never removes it. The local provider is stricter: it accepts only the next code and then removes it (RecoveryAuthnCodesCredentialProvider.java:106-112). With this storage, the login page asks for code #1 while any of the 12 codes works, and one code can be reused forever. `allCodesUsed()` never becomes true, so the new storage branch in the authenticator never runs. `testRecoveryKeysSetupAndLogin` logs in only once, so it can't catch reuse or wrong-code acceptance. Make the provider check only the next code and drop it after use. Then add a test that logs in twice and asserts the second login asks for code #2 and rejects code #1.",
+    "path": "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+    "line": 340,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Federated recovery-codes credential has a null id\n\n`RecoveryAuthnCodesCredentialModel.createFromValues` does not set an id, and `recoveryCodesModel.getId()` (set at line 195) is not copied over. The credential returned by `getCredentials` therefore has `id == null`. Account REST deletion looks up federated credentials with `credentialId.equals(c.getId())` (CredentialDeleteHelper.java:64), so this credential can't be selected or deleted. The authenticator's removal also gets a null id. Copy `myUser.recoveryCodes.getId()` onto the model.",
+    "path": "testsuite/integration-arquillian/servers/auth-server/services/testsuite-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage.java",
+    "line": 237,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "User storage receives plaintext codes and loses generatedAt and userLabel\n\nThe storage gets only the raw codes as a JSON array in `challengeResponse`. The `generatedAt` and `userLabel` values from `credentialModel` (RecoveryAuthnCodesAction.java:110) are dropped, so each storage has to make up its own (the test storage uses `Time.currentTimeMillis()` and a null label). Every storage also has to hash and consume the codes itself, with no stated contract. Consider passing the hashed `credentialModel` data, or documenting what a storage must store and return from `getCredentials`. `RecoveryAuthnCodeInputLoginBean` depends on that returned model having hashed `secretData`.",
+    "path": "server-spi-private/src/main/java/org/keycloak/utils/CredentialHelper.java",
+    "line": 123,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/36882": {
+  "wachiman": [
+   {
+    "text": "Doc says the Operator fails without `rolling-updates`, but nothing in the Operator checks the feature\n\nThe caution says the Operator \"will fail\" if `rolling-updates` is not enabled. The Operator never reads that feature. `UpgradeLogicFactory.create` (operator/src/main/java/org/keycloak/operator/upgrade/UpgradeLogicFactory.java:35-43) picks an upgrade logic from `spec.update.strategy` alone. No code under operator/src/main mentions `rolling-updates` or calls `update-compatibility`. `UpgradeTest` shows this too: with a `null` strategy it leaves the feature off (UpgradeTest.java:105-107) and still expects the upgrades to work. So the only thing gated today is the `update-compatibility` CLI. Either reword the caution, for example to say the feature will be required once the Operator uses the compatibility check, or add the gate to the Operator.",
+    "path": "docs/guides/operator/advanced-configuration.adoc",
+    "line": 449,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Enabling the feature here changes nothing the Operator does, and the list replaces any features already set\n\nNo Operator code depends on `ROLLING_UPDATES`, so turning it on only in the `RECREATE` branch tests nothing new. Its only effect is to put a build-time option on the CR. `setEnabledFeatures(List.of(...))` also overwrites whatever `getTestKeycloakDeployment` may already have put in `enabledFeatures`, instead of adding to it. Either drop the change until the Operator actually uses the feature, or append to the existing list.",
+    "path": "operator/src/test/java/org/keycloak/operator/testsuite/integration/UpgradeTest.java",
+    "line": 115,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Hard-coded `--features=rolling-updates` in a shared macro\n\nThe `updatecompatibility` macro now adds `--features=rolling-updates` to every example. A user who already enables other features with `--features` or in `keycloak.conf` will copy an example where this flag replaces their feature list, so the options no longer match their deployment. That defeats a tool whose job is comparing configurations. Consider saying in the prose (the CAUTION block already does this) that the feature must be enabled along with the user's existing features, and not forcing the flag inside the macro.",
+    "path": "docs/guides/templates/kc.adoc",
+    "line": 53,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Feature key hard-coded in the error message\n\nBuild the message from `Profile.Feature.ROLLING_UPDATES.getKey()` instead of the literal `'rolling-updates'`, so the message stays correct if the feature is renamed. UpgradeTest already does this.",
+    "path": "quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/cli/command/AbstractUpdatesCommand.java",
+    "line": 84,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/36880": {
+  "wachiman": [
+   {
+    "text": "Under V2, deleting a client leaves its permission resource behind\n\nThe listener now does nothing unless the V1 `ADMIN_FINE_GRAINED_AUTHZ` feature is on. That avoids the `UnsupportedOperationException` from `ClientPermissionsV2.setPermissionsEnabled` (ClientPermissionsV2.java:193). But with V2 enabled, nothing replaces it: when a client is deleted, the resource named after its id (created by `AdminPermissionsSchema.getOrCreateResource`/`resolveClient`) stays in the admin-permissions resource server, and so do the scope permissions that point to it. `getClientsWithPermission` will keep returning the deleted id. Consider deleting the V2 resource, or removing the deleted client from its permissions, on `ClientRemovedEvent` when V2 is on. A side effect of the same guard: role and group removal cleanup no longer runs when V1 is off, which it used to do.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+    "line": 77,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unused private method and import\n\nNothing calls `getEvaluationContext(...)`, because `canExchangeTo` throws. The static import of `TOKEN_EXCHANGE` (line 46) is also unused. Removing both also drops the `ClientModelIdentity`/`DefaultEvaluationContext`/`EvaluationContext` imports.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 262,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Javadoc on void require* methods says \"Returns true\"\n\nThe javadoc for `requireView()` (line 96) and `requireViewClientScopes()` (line 100) says they return `true`. Both are `void` and throw `ForbiddenException`. Reword them to match the other `require*` docs, e.g. \"Throws ForbiddenException if canView() returns false\". The `canList()` doc also mentions QUERY_USERS, which matches ClientPermissions.java:243, so that one is fine.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+    "line": 96,
+    "source": "wachiman-json"
+   }
+  ]
+ }
+}

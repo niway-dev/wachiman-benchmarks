@@ -1,0 +1,152 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-107534-flat` of grafana-107534-flat against d9a8253640464014aa3662c91131278990cfb828 (merge-base d9a8253)",
+    "repository": {
+      "name": "grafana-107534-flat"
+    },
+    "base": {
+      "sha": "d9a8253640464014aa3662c91131278990cfb828",
+      "ref": "d9a8253640464014aa3662c91131278990cfb828"
+    },
+    "head": {
+      "sha": "42e1895430aaa5b1ddc86ed6032dda5e762e0717",
+      "ref": "pr-107534-flat"
+    },
+    "title": "pr-107534-flat",
+    "description": "Advanced Query Processing Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts"
+    ],
+    "reviewed": [
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+      "line": 299,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Ad hoc filters and variables get applied more than once per query (twice when splitting, three times when sharding)",
+      "body": "`runSplitQuery` now runs `datasource.applyTemplateVariables(query, request.scopedVars, request.filters)`. Each sub-request then goes through `datasource.runQuery` → `super.query`, and `DataSourceWithBackend` calls `applyTemplateVariables(q, request.scopedVars, request.filters)` on every target again (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185). On the shard path it happens three times: `runShardSplitQuery` (shardQuerySplitting.ts:52), then `runSplitQuery` on every shard sub-request (shardQuerySplitting.ts:163), then `super.query`. The updated test shows this: `applyTemplateVariables` is called 5 times for one target (shardQuerySplitting.test.ts:112), once up front and once for each of the 4 sub-requests.\n\n`addAdHocFilters` only skips duplicates when the filter goes into the stream selector (`labelExists`, modifyQuery.ts:494). If the query has a parser, for example `sum(count_over_time({app=\"x\"} | logfmt [$__auto]))` with the ad hoc filter `level=error`, the filter goes through `addFilterAsLabelFilter` (modifyQuery.ts:200-211). That function appends ` | level=\\`error\\`` every time and never checks for an existing copy. So Loki gets the filter repeated 2 or 3 times. The results don't change, but the query shown in Query Inspector is bloated. On top of that, `templateSrv.replace` now runs again on text that was already interpolated, including ad hoc filter values. A value that contains `$name` for an existing dashboard variable would get substituted on the later pass.\n\nSuggested fix: interpolate up front without ad hoc filters, i.e. call `applyTemplateVariables(query, request.scopedVars)` here and in `runShardSplitQuery`, and let `super.query` add `request.filters` once. Alternatively, interpolate only in `runShardSplitQuery`/`runSplitQuery` when they are the entry point, and don't do it again for shard sub-requests.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "line": 52,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Shard targets are interpolated here and again inside runSplitQuery for every shard group",
+      "body": "The targets returned here already have variables and ad hoc filters applied. They are passed through `interpolateShardingSelector` and handed to `runSplitQuery` (line 163), which now calls `applyTemplateVariables` on them again for every shard group. That second call adds nothing: the variables are already resolved, and the stream selector already includes the ad hoc filters. It just runs `templateSrv.replace` and the Lezer-based `addAdHocFilters` once more per sub-request. Interpolating only once along this path (see the finding on querySplitting.ts:299) removes the repeated work as well.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "line": 78,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The mocked `replace` ignores scopedVars, so the test can't catch how `$__auto` is really handled",
+      "body": "The real `applyTemplateVariables` takes `__auto`/`__range` out of scopedVars so that the backend interpolates them (datasource.ts:1113). The mocked `replace` here swaps `$__auto` for `5m` without looking at scopedVars. The test therefore asserts a frontend-interpolated `[5m]`, which production doesn't produce from scopedVars. Two other gaps: the test never passes `request.filters`, so it can't detect the duplicated ad hoc filters, and the same applies to the copy at shardQuerySplitting.test.ts:84-101. Consider testing with a filter and with the real stripping of scopedVars, e.g. by asserting that `$__auto` stays in the query when `replace` honours the variables it is given.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "runSplitQuery interpolates template variables and ad hoc filters on each visible target before partitioning",
+      "location": "public/app/plugins/datasource/loki/querySplitting.ts:296-299",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/querySplitting.ts:296-301",
+        "public/app/plugins/datasource/loki/querySplitting.ts:180",
+        "public/app/plugins/datasource/loki/datasource.ts:350-357",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:200-211",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:494"
+      ],
+      "equivalent_path": "DataSourceWithBackend.query applies applyTemplateVariables to every target before sending (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185); runLiveQueryThroughBackend and the streaming branch call it once per target (datasource.ts:324, 377)",
+      "before_after": "The siblings interpolate exactly once, right before the request is sent. The new call interpolates up front, then sub-requests go through runQuery → super.query (querySplitting.ts:180, datasource.ts:350-352), which interpolates and adds ad hoc filters a second time.",
+      "visible_effect": "querySupportsSplitting/isLogsQuery now see the interpolated expr (querySplitting.ts:300-301), so queries whose selector comes from a variable get classified correctly. When a parser is present, ad hoc filters show up twice in the query sent to Loki (modifyQuery.ts:200-211, 511-541).",
+      "failure_mode": "Synchronous and has no new async step. Duplicated label filters don't change the results; the only visible effect is the query text in Query Inspector.",
+      "evidence_checked": true
+    },
+    {
+      "action": "runShardSplitQuery switches from interpolateVariablesInQueries (full scopedVars, no ad hoc filters) to applyTemplateVariables (keeps $__auto/$__range/$__interval for the backend and adds ad hoc filters)",
+      "location": "public/app/plugins/datasource/loki/shardQuerySplitting.ts:49-52",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:49-54",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:154-163",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:252-274",
+        "public/app/plugins/datasource/loki/datasource.ts:429-447",
+        "public/app/plugins/datasource/loki/datasource.ts:1113-1132",
+        "public/app/plugins/datasource/loki/querySplitting.ts:282-289",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts:112"
+      ],
+      "equivalent_path": "interpolateVariablesInQueries (datasource.ts:429-447) was the previous path; DataSourceWithBackend.query:185 also applies applyTemplateVariables",
+      "before_after": "Before: the frontend interpolated $__range/$__auto with values for the full range, and ad hoc filters were added only by super.query. After: those built-ins are left for the backend (datasource.ts:1113), and isQueryWithRangeVariable in runSplitQuery still sees $__range (querySplitting.ts:287), so such queries are no longer split. Ad hoc filters go into the selector used to fetch __stream_shard__ values (shardQuerySplitting.ts:252-258), and they are applied again by runSplitQuery (line 163 → querySplitting.ts:299) and by super.query.",
+      "visible_effect": "Shard values are fetched with a selector that includes the ad hoc filters. The query sent to Loki can contain duplicated label filters.",
+      "failure_mode": "If fetchLabelValues fails, the existing catch falls back to running unsharded (shardQuerySplitting.ts:270-274); the change doesn't touch that.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR moves Loki query splitting and shard splitting to `applyTemplateVariables`. Splitting now sees the interpolated expression, so a stream selector that comes from a variable is classified correctly, and `$__range`/`$__auto` are left for the backend. The problem is that the targets get interpolated again later. Each split sub-request goes through `super.query`, which calls `applyTemplateVariables` again. The shard path also goes through `runSplitQuery`, so it is interpolated three times. For queries with a parser, the ad hoc filters are appended once per pass, because only stream-selector filters are deduplicated. Results stay the same, but the query sent to Loki is bloated, and the text is run through variable substitution more than once. Suggested fix: leave out `request.filters` in the up-front calls, or interpolate only once. The new tests use a `replace` mock that ignores scopedVars, and they never pass ad hoc filters.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 63,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.5188282
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d9a8253640464014aa3662c91131278990cfb828"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5188282,
+    "usage": {
+      "input": 16,
+      "output": 10936,
+      "cacheRead": 157421,
+      "cacheWrite": 33570
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 123863,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3` of discourse-graphite-3 against e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3 (merge-base e25638d)",
+    "repository": {
+      "name": "discourse-graphite-3"
+    },
+    "base": {
+      "sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+      "ref": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+    },
+    "head": {
+      "sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+      "ref": "pr-3"
+    },
+    "title": "pr-3",
+    "description": "Add BlockedEmail, to block signups based on email. Track stats of how many times each email address is blocked, and last time it was blocked. Move email validation out of User model and into EmailValidator. Signup form remembers which email addresses have failed and shows validation error on email field.",
+    "author": "Neil Lalonde"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 12,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "high",
+      "title": "Block lookup is case-sensitive, so a change of letter case gets past it",
+      "body": "`should_block?` looks the address up with `where(email: email)`, which is an exact match. The value it receives is the raw `params[:email]`: `User.new_from_params` assigns it as typed (app/models/user.rb:87), and nothing on the way normalises it. On PostgreSQL, string equality is case-sensitive. If `bad@spammers.org` is blocked, a signup with `Bad@Spammers.org` gets through, and nothing logs or shows that it did. Normalise both sides: downcase the value when you store it and when you look it up (`Email.downcase` already exists and user.rb:127 uses it), or compare with `lower(email)`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/validators/email_validator.rb",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "A blocked signup bumps match_count twice",
+      "body": "`should_block?` writes to the database every time validation runs: it increments `match_count` and saves. `UsersController#create` validates the same user twice, once with `user.valid?` (app/controllers/users_controller.rb:168, which is evaluated before `SiteSetting.call_discourse_hub?`) and again inside `user.save` (line 172). So each signup attempt from a matching address adds 2 to `match_count`, and the stats come out wrong without any sign of it. Any other code path that calls `valid?` before `save` has the same problem. Either keep the counting out of the validator (have the validator only check, and record the hit once in the controller), or remember the result for each record. The increment is also a read-modify-write, so two concurrent attempts can lose an update; `update_all('match_count = match_count + 1')` avoids that.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 274,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Any email error marks the address as \"invalid\" on the client",
+      "body": "The client pushes the email into `rejectedEmails` for any error on `email`. That includes uniqueness (\"has already been taken\") and the domain whitelist/blacklist message, not just blocked addresses. After the first submit, `emailValidation` then reports that address as `user.email.invalid`, which tells the user the wrong thing when the real problem is that the address is already registered. A better option is to keep the server's reason for each rejected email and show that, or to only remember addresses that were blocked.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Signup failure response now includes errors and submitted values; client caches rejected emails",
+      "location": "app/controllers/users_controller.rb:198",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/users_controller.rb:194-201",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:268-285"
+      ],
+      "equivalent_path": "Existing failure branch rendered only `message`; the client flashed it",
+      "before_after": "Before: flash message only. After: the flash is the same, and if `errors.email` is present then `values.email` is pushed into `rejectedEmails`, which makes `emailValidation` fail for that address.",
+      "visible_effect": "The email field shows the 'invalid' reason while the typed email matches a rejected one",
+      "failure_mode": "If the AJAX call rejects, the existing handler flashes `create_account.failed` and resets `formSubmitted`, and nothing is cached. `rejectedEmails` is defined on the prototype, so it lasts for the life of the (singleton) controller across modal openings.",
+      "evidence_checked": true
+    },
+    {
+      "action": "EmailValidator calls BlockedEmail.should_block?, which writes stats while validation runs",
+      "location": "lib/validators/email_validator.rb:13",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/users_controller.rb:168-172",
+        "app/models/user.rb:84-91",
+        "app/models/blocked_email.rb:11-19",
+        "config/application.rb:36"
+      ],
+      "equivalent_path": "The old User#email_validator, which only checked the domain whitelist/blacklist and wrote nothing",
+      "before_after": "Validation now has a DB write side effect, and it runs twice per signup because the controller calls `valid?` and then `save`",
+      "visible_effect": "Signup fails with 'is not allowed.'",
+      "failure_mode": "The case-sensitive lookup lets case variants through; match_count is double-counted",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a BlockedEmail table, moves the email checks into a reusable EmailValidator, and caches rejected emails in the signup form. I found two problems worth fixing in this PR, plus one smaller point. The block lookup is case-sensitive while emails are stored exactly as typed, so a blocked address gets through with different letter case. And because validation writes stats, a single signup increments `match_count` twice, since the controller calls `valid?` and then `save`. The smaller point: the client labels every email error, including 'already taken', as 'invalid'.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 178,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.2049362
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2049362,
+    "usage": {
+      "input": 8,
+      "output": 4004,
+      "cacheRead": 54041,
+      "cacheWrite": 14252
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 47806,
+    "stop": "complete",
+    "notices": []
+  }
+}
