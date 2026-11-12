@@ -1,0 +1,68 @@
+{
+  "pr": "cal.com-10600",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "A valid backup code plus any nonempty totpCode authenticates a password account without verifying its password.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a CAL user with twoFactorEnabled and an unused backup code, submit the email, an incorrect password, totpCode=\"0\", and that backup code: packages/features/auth/lib/next-auth-options.ts:113-128 skips the identity-provider guards and password verification because totpCode is truthy. The new branch at :131-156 validates and consumes the backup code, bypassing the TOTP verification in the else branch at :157-185, and :205-214 returns the authenticated user. The signIn callback at :523-528 explicitly accepts credentials authentication without further checks; the pre-existing TOTP bypass does not refute this newly added backup-code path.",
+      "confidence": "high"
+    },
+    {
+      "id": 2,
+      "claim": "Dismissing the backup-code dialog bypasses the enabled-state refresh and can leave the user without saved codes after a reload.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/pages/api/auth/two-factor/totp/enable.ts:56-65 commits twoFactorEnabled=true before EnableTwoFactorModal.tsx:134-136 enters DisplayBackupCodes. That modal passes dismissal directly to onOpenChange at apps/web/components/settings/EnableTwoFactorModal.tsx:166, and packages/ui/components/dialog/Dialog.tsx:70,89-104 supplies ordinary Radix dismissal with no Escape/outside-click prevention. The parent at apps/web/pages/settings/security/two-factor-auth.tsx:64 only toggles visibility; only onEnable at :65-67 invalidates the user query that controls the switch at :46, so dismissal leaves cached Disabled state. Codes are not immediately erased: the mounted modal retains them at EnableTwoFactorModal.tsx:64 and can be reopened, but a reload discards that state and setup.ts:42-43 rejects setup while 2FA is enabled, whereas the explicit Close path at EnableTwoFactorModal.tsx:266-269 refreshes the parent.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The switch assertion checks the truthiness of a Promise instead of its resolved checked state.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/playwright/login.2fa.e2e.ts:52-53 calls expect(locator.isChecked()).toBeTruthy(); isChecked returns a Promise, and the outer await applies to the matcher result rather than resolving the argument. A resolved false value therefore cannot make this truthiness assertion fail. The supplied diff shows the assertion already existed and this PR merely adds the FIXME at :50-51, so this is a pre-existing test weakness rather than a newly introduced product defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Submitting an empty backup code in lost-access mode yields no validation message.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/pages/auth/login.tsx:57-66 validates email and password only and passes through backupCode, while :188 disables browser validation; apps/web/components/auth/BackupCode.tsx:20-25 registers backupCode without a required validation rule. With a valid retained password, opening lost-access mode clears totpCode at login.tsx:123-125, and submitting an empty backupCode misses the truthy backup-code branch at packages/features/auth/lib/next-auth-options.ts:131 and throws SecondFactorRequired at :157-159. login.tsx:146 clears the message and :156 merely sets the already-true twoFactorRequired state. This is a minor validation/feedback omission: entering a valid code still works and no authentication or stored data is changed.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The missing-backup-codes message directs legacy users to a generation action unavailable while 2FA remains enabled.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/prisma/migrations/20230804153419_add_backup_codes/migration.sql:2 adds a nullable column without backfilling existing 2FA accounts, so their nonempty backup-code login can throw MissingBackupCodes at packages/features/auth/lib/next-auth-options.ts:137. apps/web/pages/auth/login.tsx:158 renders the settings-generation advice from apps/web/public/static/locales/en/common.json:2019, but settings/security/two-factor-auth.tsx:43-49 offers the enable/disable switch and setup.ts:42-43 rejects generation for an already-enabled account. Disabling first requires a valid TOTP or backup code at disable.ts:48-98; someone who lost the authenticator and has no codes cannot follow this advice. The misleading recovery copy is new, but inability to recover without either factor already existed, so the finding is primarily a documentation issue.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The copy action reports success before knowing whether writing the backup codes to the clipboard succeeded.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/settings/EnableTwoFactorModal.tsx:276-279 calls navigator.clipboard.writeText and immediately shows the success toast without awaiting or catching its Promise. In a browser context that exposes the Clipboard API but rejects a write with NotAllowedError, clicking Copy thus shows Backup codes copied even though the clipboard is unchanged and the rejection is unhandled. Closing the modal and later reloading can discard the only displayed codes, while setup.ts:42-43 forbids retrieving a fresh set with 2FA still enabled. Neither the copy handler nor its caller has a rejection guard.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The shared PasswordField removes its password-visibility button from sequential keyboard navigation.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/ui/components/form/inputs/Input.tsx:45-59 places tabIndex=-1 on the only button that calls toggleIsPasswordVisible, whose state determines the input type at :26-36. packages/ui/components/tooltip/Tooltip.tsx:30 uses Trigger asChild, so the tooltip supplies no separate focusable control. A keyboard-only user tabbing through the login PasswordField at apps/web/pages/auth/login.tsx:203-208 now skips the reveal action and cannot activate it through the normal keyboard path. The change affects the shared component rather than one modal, and the supplied diff confirms the negative tab index is newly introduced.",
+      "confidence": "high"
+    }
+  ]
+}

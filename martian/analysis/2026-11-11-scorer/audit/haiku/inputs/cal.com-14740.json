@@ -1,0 +1,133 @@
+{
+ "pr": "cal.com-14740",
+ "checkout": "/tmp/audit-wt/cal.com-14740",
+ "audit_ids": [
+  2,
+  5,
+  6,
+  8,
+  9,
+  10,
+  11,
+  12
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 46,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Team admins are rejected: isTeamAdmin && isTeamOwner only lets owners through",
+   "body": "`isTeamAdminOrOwner` joins two checks with `&&` (lines 46-48). `isTeamAdmin` (packages/lib/server/queries/teams/index.ts:264-284) is true for role ADMIN or OWNER, and `isTeamOwner` (teams/index.ts:286-295) is true only for OWNER. So the conjunction is true only for owners, and a team ADMIN who is not the organizer or an attendee gets FORBIDDEN. The variable name and the intent point to `||`. Change `&&` to `||`. Also add a test for the ADMIN case (see the tests finding)."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 77,
+   "severity": "fix",
+   "topic": "security",
+   "title": "BLACKLISTED_GUEST_EMAILS check is case-sensitive and skips base-email normalisation",
+   "body": "The blacklist is lowercased on the env side (line 71) but the candidate `guest` is compared as typed (line 77). `Spam@Example.com` passes a blacklist entry `spam@example.com`. The sibling path normalises both sides: handleNewBooking.ts:741-743 uses `extractBaseEmail(guest).toLowerCase()` and checkIfBookerEmailIsBlocked.ts:17-19 compares lowercased values. Normalise `guest` the same way (lowercase, and base email if the sibling applies it) before the `includes` check."
+  },
+  {
+   "id": 2,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 165,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Calendar update failure is swallowed after the attendee rows are already committed",
+   "body": "The handler writes the new attendees to the DB (lines 92-106) before updating the calendar. `updateCalendarAttendees` returns void (packages/core/EventManager.ts:596-602) and discards the per-calendar results. `updateAllCalendarEvents` catches its own errors and returns failure objects instead of throwing (EventManager.ts:921-938). So when a calendar update fails, the handler still returns `{ message: \"Guests added\" }` and the user sees success. The guests are never added to the calendar event. A retry does not fix it: the dedupe at lines 74-78 now drops those emails and the call fails with BAD_REQUEST (lines 80-81). The sibling editLocation.handler.ts:107-111 inspects `results` and logs on failure. Check the results here and surface the failure, or make the DB write and calendar sync reconcile on retry."
+  },
+  {
+   "id": 3,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 168,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Emails are sent to the raw input list, not to the guests actually added",
+   "body": "`sendAddGuestsEmails(evt, guests)` passes the raw `guests` input, not `uniqueGuests`. An email that already belongs to an attendee is dropped from `uniqueGuests` (lines 74-78) but is still in `guests`. In email-manager.ts:541-545 that attendee is then matched by `newGuests.includes` and gets `AttendeeScheduledEmail` (\"Your event has been scheduled\") instead of `AttendeeAddGuestsEmail`. Pass `uniqueGuests` (the emails actually inserted) so only new guests get the scheduled invite."
+  },
+  {
+   "id": 4,
+   "path": "packages/emails/email-manager.ts",
+   "line": 525,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Add-guests emails ignore the event type's disableStandardEmails settings",
+   "body": "`sendLocationChangeEmails` (lines 495-524) gates the host and attendee emails on `eventTypeDisableHostEmail` and `eventTypeDisableAttendeeEmail` (lines 503, 515; helpers at lines 81-87). `sendAddGuestsEmails` takes no metadata and sends to the organizer, team members and every attendee unconditionally. The handler does not pass the event type metadata either (addGuests.handler.ts:168). The sibling editLocation.handler.ts:135-138 passes `booking?.eventType?.metadata`. An event type that disabled host or attendee emails will still receive 'Guests added' mail. Add an `eventTypeMetadata` parameter, gate the two branches the same way, and pass `booking.eventType?.metadata` from the handler."
+  },
+  {
+   "id": 5,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 52,
+   "severity": "fix",
+   "topic": "security",
+   "title": "Question: should any booking attendee be able to add guests?",
+   "body": "The route is `authedProcedure` (_router.tsx:79), not `bookingsProcedure` like `editLocation` (_router.tsx:62). `bookingsProcedure` (util.ts:19-30) only lets the organizer or a collective-event member load the booking. This handler also accepts any user whose session email matches an attendee's email (line 52). Each call then does four things: it inserts attendee rows, updates calendar invites, sends mail to all attendees with `from: organizer.name` (attendee-scheduled-email.ts:50), and has no cap on the `guests` array (addGuests.schema.ts:5). Attendee emails are not necessarily verified, and the PR body does not say whether this is intended. Did you mean organizer and team admin/owner only? If attendees are meant to have this right, consider a cap on `guests` and a rate limit, since the handler sends one email per attendee."
+  },
+  {
+   "id": 6,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 26,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "No booking status or time check, but the menu offers the action for past and unconfirmed bookings",
+   "body": "The handler loads the booking by id only (lines 26-42) and never checks status or end time. The Edit menu that holds 'Add guests' is shown for past confirmed bookings (BookingListItem.tsx:554) and for past pending, unconfirmed bookings (BookingListItem.tsx:553). For a past event, guests are invited and 'scheduled' mail goes out for a meeting that has already happened. For an unconfirmed booking there are usually no calendar references, so `updateCalendarAttendees` returns early (EventManager.ts:597-600) and only the emails go out. editLocation has the same exposure, so this is a gap in the sibling pattern as well as in this PR. Decide whether add-guests should be limited to upcoming accepted bookings."
+  },
+  {
+   "id": 7,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 74,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Server does not reject duplicate emails within one request",
+   "body": "The client rejects duplicates (AddGuestsDialog.tsx:26-29), but the server schema accepts `z.array(z.string().email())` (addGuests.schema.ts:5) and the dedupe at lines 74-78 only compares against existing attendees. Duplicate inputs, from a direct tRPC call, both reach `createMany` (lines 100-104) and create duplicate attendee rows. Deduplicate `uniqueGuests` and probably make the schema reject duplicates."
+  },
+  {
+   "id": 8,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 55,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "FORBIDDEN message uses a translation key that is not in common.json",
+   "body": "The handler throws `message: \"you_do_not_have_permission\"` (line 55). That key is not in apps/web/public/static/locales/en/common.json, and the dialog displays it through `t(err.message)` (AddGuestsDialog.tsx:43). A user who hits this sees the raw key. Add the key to common.json or reuse an existing one."
+  },
+  {
+   "id": 9,
+   "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+   "line": 36,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Validation error stays visible after a successful add and across reopen",
+   "body": "`isInvalidEmail` is set to true when validation fails (line 56) and is reset only by Cancel (line 91). `onSuccess` (lines 36-41) closes the dialog and resets the emails but not `isInvalidEmail`. The component stays mounted in every BookingListItem (BookingListItem.tsx:357-361), so after a fix-and-submit the 'Emails must be unique and valid' message is still shown the next time the dialog opens. The close path via `onOpenChange` (line 61, Escape or overlay) also does not reset the emails or the error, unlike Cancel (lines 89-93). Reset `isInvalidEmail` in `onSuccess`, and reset the form in `onOpenChange` too."
+  },
+  {
+   "id": 10,
+   "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+   "line": 43,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unreachable fallback and schema rebuilt on every render",
+   "body": "`${err.data?.code}: ${t(err.message)}` is always a non-empty string, so the `|| t(\"unable_to_add_guests\")` fallback on line 44 can never run. The zod schema on line 26 is also built inside the component body and re-created on every render. Move it to module scope and drop the dead fallback, or use the fallback for a missing message."
+  },
+  {
+   "id": 11,
+   "path": "packages/ui/form/MultiEmail.tsx",
+   "line": 46,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Hard-coded English 'Remove email' tooltip",
+   "body": "The remove-button tooltip on line 46 is a literal English string, while the rest of the dialog uses `t()`. Use a translation key and add it to common.json."
+  },
+  {
+   "id": 12,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 22,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "No tests for the new handler or dialog",
+   "body": "The diff adds no test file for addGuests.handler.ts or AddGuestsDialog.tsx. The permission logic (see the `&&` finding) and the dedupe and blacklist logic are the parts most likely to regress, and a unit test for the ADMIN role would catch the first one."
+  }
+ ]
+}

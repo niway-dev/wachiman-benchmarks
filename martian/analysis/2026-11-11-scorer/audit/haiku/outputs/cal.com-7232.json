@@ -1,0 +1,41 @@
+{
+  "pr": "cal.com-7232",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "One rejected SendGrid cancellation aborts the cancellation loop and prevents all queued reminder-row deletions from executing.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/ee/workflows/api/scheduleEmailReminders.ts:53-76 puts the entire loop inside one try, awaits each cancellation at lines 57-64, and only consumes the lazy Prisma delete promises at line 74. With flagged scheduled reminders A and B due at 12:05 and 12:10, a 12:00 run that cancels A but receives a rejected request for B skips Promise.all and retains both rows; any later rows are not attempted either. The next configured run is 12:15 (.github/workflows/cron-scheduleEmailReminders.yml:7-8), and scheduleEmailReminders.ts:33-40 then removes already-due rows without cancellation, leaving the failed/skipped provider sends uncancelled at their deadlines. Repeated-cancel rejection and indefinite starvation are not established by the repository, but the single-run loss of isolation and deletion progress is independently demonstrable.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "Booking cancellation defers scheduled email cancellation to a periodic cron while SMS and some other email cancellation paths act immediately.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/bookings/lib/handleCancelBooking.ts:484-490 calls deleteScheduledEmailReminder without immediateDelete, so emailReminderManager.ts:225-231 only flags the row; its already-scheduled provider batch remains active (created with sendAt at lines 155-176). If a booking is cancelled at 12:01 with an existing reminder due at 12:10, the cron schedule at .github/workflows/cron-scheduleEmailReminders.yml:7-8 next runs at 12:15, after the send deadline. scheduleEmailReminders.ts:33-40 deletes that now-past row before the cancellation query at lines 43-51 can process it, so even a healthy cron cannot cancel that reminder in time. SMS cancels directly at smsReminderManager.ts:179-180, and workflow deletion passes true at workflows.tsx:214; the reason for the asymmetry is undocumented, but the late-cancellation path has a concrete consequence.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Prisma is imported in workflows.tsx but has no remaining uses.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/workflows.tsx:9 imports Prisma, and searching that complete file for the identifier finds only that import. The supplied diff removes the Prisma.BatchPayload declarations associated with reminder deletion. PrismaPromise is still used at line 342, but it is a different imported identifier and does not justify retaining Prisma; the confirmed issue is unused-import cleanup, without a demonstrated lint failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The PR changes indentation inside the disabled testAction implementation without changing executable behavior.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "The supplied diff for packages/trpc/server/routers/viewer/workflows.tsx removes leading whitespace from the testAction section around lines 904-963 while preserving its tokens. The section begins with a comment at line 848; strictly, this is not one uninterrupted block comment because line 901 closes and immediately reopens it, and lines 966-968 do so again. All the changed lines remain inside the reopened comment starting at line 901, so the finding's substantive claim of unrelated nonfunctional diff noise is correct. No runtime failure follows from these indentation edits.",
+      "confidence": "high"
+    }
+  ]
+}

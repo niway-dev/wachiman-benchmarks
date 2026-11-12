@@ -1,0 +1,95 @@
+{
+  "pr": "cal.com-11059",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "Salesforce refresh persistence references prisma without importing it and can fail during service construction.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/app-store/salesforce/lib/CalendarService.ts:55-57 starts getClient on construction; with configured app keys and a successful refresh matching salesforceTokenSchema, execution reaches the unimported prisma at line 96, before creating the connection at line 101. packages/prisma/index.ts:6-8 declares a global prisma and lines 58-60 populate it outside production, so the finding overstates both the type-check failure and failure in every environment. In a production process with no preexisting global prisma, that assignment is skipped and line 96 raises ReferenceError; calendar operations awaiting this.conn, such as CalendarService.ts:135-137, reject.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "Salesforce service construction unconditionally performs a token refresh rather than using an existing valid token.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/app-store/salesforce/lib/CalendarService.ts:55-57 invokes getClient for each new service, and lines 73-84 POST a refresh without checking token age or validity. The PR diff adds this POST and the credential update at lines 96-99 before the previously direct Connection construction. Thus even a valid stored access token incurs a network round trip (and, once the missing import is fixed, a database write), but this comment establishes overhead rather than a separate demonstrated correctness failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "Office 365 schema-validation failures now throw a generic error without the previous payload and Zod diagnostics.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/app-store/office365calendar/lib/CalendarService.ts:262-264 passes the decoded payload into parseRefreshTokenResponse; packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts:21-23 throws a generic Error on schema failure and returns only successful results. The PR diff removes the console.error block that included tokenResponse.error and responseJson. packages/lib/errors.ts:24-29 still logs non-success HTTP bodies, so the lost diagnostics specifically affect schema-invalid successful responses, rather than every Microsoft error.",
+      "confidence": "high"
+    },
+    {
+      "id": 10,
+      "claim": "The sync helper documents an access-token-and-expiry-only response although its callers require additional provider fields and envelopes.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts:7 promises only access token and expiry, but packages/app-store/webex/lib/VideoApiAdapter.ts:49-55 and 88-90 require refresh_token, refresh_token_expires_in, scope and token_type, rejecting a body containing only the documented fields. packages/app-store/office365video/lib/VideoApiAdapter.ts:84-95 replaces the stored key with the endpoint body, so omitted refresh_token is lost. Google instead reads res.data at packages/app-store/googlecalendar/lib/CalendarService.ts:94-95, and Lark reads data.data at packages/app-store/larkcalendar/lib/CalendarService.ts:84-95. These establish inaccurate contract documentation; the separate raw-Response implementation failure is finding 4.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "The sync POST has no application authentication, potentially exposing tokens if the external endpoint trusts only user and app identifiers.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts:8-14 sets only method and form body containing calcomUserId and appSlug, with no shared-secret header. The reverse webhook explicitly checks a secret at apps/web/pages/api/webhook/app-credential.ts:24-29. However CALCOM_CREDENTIAL_SYNC_ENDPOINT names an externally supplied endpoint whose implementation, network access controls and authorization policy are absent from the checkout; unauthenticated token disclosure cannot be established from this request alone.",
+      "confidence": "medium"
+    },
+    {
+      "id": 12,
+      "claim": "The credential webhook uses ordinary string inequality rather than constant-time secret comparison.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "apps/web/pages/api/webhook/app-credential.ts:24-29 compares the supplied header to CALCOM_WEBHOOK_SECRET with !== and rejects mismatches. apps/web/pages/api/cron/syncAppMeta.ts:18-21 uses the same ordinary comparison for its API key, confirming the cited convention. Constant-time comparison would harden this check, but the repository does not establish a practical remotely exploitable timing attack or an authentication bypass.",
+      "confidence": "high"
+    },
+    {
+      "id": 14,
+      "claim": "Concurrent initial webhook deliveries can create multiple credential rows for the same user and app.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For an existing user and app with valid encrypted keys but no credential, two authenticated requests can both complete apps/web/pages/api/webhook/app-credential.ts:62-70 with null before either inserts. Both then execute credential.create at lines 83-90; packages/prisma/schema.prisma:127-146 has only a primary key on id and nonunique userId/appId indexes, so both inserts are permitted. Later deliveries update only the single row found at webhook lines 62-78, leaving another credential with potentially stale keys, while packages/lib/server/getUsersCredentials.ts:5-14 returns both rows.",
+      "confidence": "high"
+    },
+    {
+      "id": 15,
+      "claim": "APP_CREDENTIAL_SHARING_ENABLED is a string-valued truthiness flag and makes endpoint sync depend on webhook and encryption configuration.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/lib/constants.ts:103-104 evaluates secret && encryptionKey, yielding the encryption-key string when both are set, or an empty/undefined value otherwise. packages/app-store/_utils/oauth/refreshOAuthTokens.ts:5 and parseRefreshTokenResponse.ts:15 use it only in boolean conditions, so its nonboolean type does not itself select the wrong branch. The configuration coupling is real: setting only CALCOM_CREDENTIAL_SYNC_ENDPOINT does not activate sync; coercing the flag and documenting the prerequisites are clarity improvements.",
+      "confidence": "high"
+    },
+    {
+      "id": 16,
+      "claim": "CALCOM_WEBHOOK_SECRET is placed after CALENDSO_ENCRYPTION_KEY rather than alongside the other CALCOM variables.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "no",
+      "evidence": "turbo.json:200-207 lists CALCOM_WEBHOOK_HEADER_NAME, then CALENDSO_ENCRYPTION_KEY, then CALCOM_WEBHOOK_SECRET, confirming the local ordering inconsistency introduced by this PR. The broader claim of an entirely alphabetic list is overstated: BASECAMP3 entries already precede AUTH_BEARER_TOKEN_VERCEL at lines 195-198. All variables are still members of globalEnv, so reordering has no runtime or cache-key coverage consequence.",
+      "confidence": "high"
+    },
+    {
+      "id": 17,
+      "claim": "The example environment file gives CALCOM_CREDENTIAL_SYNC_ENDPOINT no specific description of its request and response contract.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": ".env.example:233-244 describes the sharing feature, webhook header and encryption key, but line 240 declares CALCOM_CREDENTIAL_SYNC_ENDPOINT without an endpoint-specific comment. packages/app-store/_utils/oauth/refreshOAuthTokens.ts:8-14 provides the actual outbound form fields and lacks an authentication header. Documenting those details is useful, though its response contract must first be reconciled with provider-specific caller expectations; the missing environment-variable explanation itself is a documentation issue.",
+      "confidence": "high"
+    }
+  ]
+}

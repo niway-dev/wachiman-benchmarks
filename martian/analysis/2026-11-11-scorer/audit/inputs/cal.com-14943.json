@@ -1,0 +1,36 @@
+{
+ "pr": "cal.com-14943",
+ "checkout": "/tmp/audit-wt/cal.com-14943",
+ "audit_ids": [
+  2
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 38,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Retry-count purge is not limited to SMS reminders",
+   "body": "The new second `OR` branch (`retryCount > 1`) has no `method` filter, so this SMS cron deletes any `WorkflowReminder` row (EMAIL, WHATSAPP, SMS) with `retryCount > 1`, whether or not it is scheduled. This file is the only place that increments `retryCount` today, so only SMS rows are affected right now. But the column sits on the shared model (`packages/prisma/schema.prisma:1000`). If the email or WhatsApp crons start counting retries, this endpoint will quietly delete their rows, on its own 15-minute schedule. Moving `method: WorkflowMethods.SMS` outside the `OR`, and adding `scheduled: false` to the retry branch, would keep the purge within its own scope. The comment at line 28 also still describes only the date-based deletion."
+  },
+  {
+   "id": 1,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 190,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "A failing update in the catch block now aborts the whole batch",
+   "body": "Before this change the `catch` only logged, so one bad reminder could not stop the loop. Now it calls `prisma.workflowReminder.update`, and nothing catches an error from that call. Take a reminder that is deleted between the `findMany` at line 48 and this point, for example by `deleteScheduledSMSReminder` (`packages/features/ee/workflows/lib/reminders/smsReminderManager.ts:245-251`) when a booking is cancelled or a workflow is edited. Its first update fails and jumps to this `catch`, and the update here throws P2025 as well. The handler then rejects, and every remaining reminder in `unscheduledReminders` waits until the next run 15 minutes later. Using `updateMany({ where: { id } , data: { retryCount: { increment: 1 } } })`, which does not throw when no row matches, or wrapping this call in its own try/catch would keep the loop's old isolation. `{ increment: 1 }` also avoids losing a count to a stale read-then-write."
+  },
+  {
+   "id": 2,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 39,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Reminders are silently deleted after two failed 15-minute runs",
+   "body": "The cron runs every 15 minutes (`.github/workflows/cron-scheduleSMSReminders.yml:8`). Two failures in a row therefore set `retryCount` to 2, and the next run deletes the reminder, with nothing logged. Failures include a Twilio error or outage, `checkSMSRateLimit` throwing, and `scheduleSMS` returning `undefined` while the user or team is locked (`twilioProvider.ts:90-95`). So an outage of about 30 minutes, or an admin lock that is lifted later, permanently drops reminders for bookings that may be days away. Before this change they were retried until `scheduledDate`. If the cap is intended, consider logging the reminder IDs you delete, and a larger cap or a backoff, so the loss can be diagnosed."
+  }
+ ]
+}

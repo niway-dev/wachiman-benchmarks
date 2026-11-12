@@ -1,0 +1,85 @@
+{
+ "pr": "sentry-93824-flat",
+ "checkout": "/tmp/audit-wt/sentry-93824-flat",
+ "audit_ids": [
+  1,
+  2,
+  4,
+  5,
+  6
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 254,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Hung flusher processes are never killed, so a restart runs two flushers on the same shards",
+   "body": "In production, processes come from `multiprocessing.get_context(\"spawn\").Process`, which builds `SpawnProcess` objects. In CPython, `SpawnProcess` subclasses `multiprocessing.process.BaseProcess`, not `multiprocessing.Process` (that is `context.Process`, a sibling class). So `isinstance(process, multiprocessing.Process)` is always False here, and `process.kill()` never runs. The old code called `self.process.kill()` unconditionally.\n\nWhen `cause == \"hang\"` (for example, a stall on Redis or on `future.result()`), `_create_process_for_shards` starts a second process for the same shards. That second process gets the same `healthy_since` and `backpressure_since` Values (lines 116-117), while the stuck one keeps running. Once the stuck one recovers, both processes flush the same queue keys at the same time, and segments are produced twice to buffered-segments before `done_flush_segments` removes them. The old process also keeps writing `healthy_since`, which hides later hangs. Each hang leaks another process, up to MAX_PROCESS_RESTARTS.\n\nFix: check `isinstance(process, multiprocessing.process.BaseProcess)`, or check `hasattr`-free against `multiprocessing.context.SpawnProcess`, which matches the type annotation at line 68. `join` (line 346) has the same check, so `terminate()` is never called there either. That part is pre-existing. Also, the new `break` at line 341 skips the terminate for every remaining process once the deadline passes."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 93,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Per-process buffers multiply the `max-flush-segments` budget and loosen the backpressure threshold",
+   "body": "`SpansBuffer.flush_segments` computes `max_segments_per_shard = ceil(max_flush_segments / len(self.assigned_shards))` (src/sentry/spans/buffer.py:382-384). It sets `any_shard_at_limit` when a segment has `>= max_segments_per_shard` entries (buffer.py:411-412).\n\nBefore this change, one buffer held all N shards, so each flush cycle was capped at `max-flush-segments` in total. Now each of the P processes owns a buffer with N/P shards. Each process may flush up to `max-flush-segments` per cycle, so the consumer as a whole can flush up to P times that, and the per-shard limit rises from M/N to M\u00b7P/N. The backpressure trigger at flusher.py:172 therefore fires later than the option intends.\n\nAn operator who sets `--flusher-processes` silently changes what `spans.buffer.max-flush-segments` means. Either divide the option by `num_processes` or document the new meaning."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 300,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "Redis memory info is fetched once per flusher buffer on every submit",
+   "body": "Every `SpansBuffer` gets the same client from `get_redis_client()` (buffer.py:162-163), and `get_memory_info` calls `iter_cluster_memory_usage(self.client)` (buffer.py:375-376). Looping over `self.buffers` therefore sends the same INFO requests P times on each `submit`, and the ratio comes out the same. One call is enough. The same applies to `record_stored_segments` at line 269-270, although there each buffer at least covers different shards."
+  },
+  {
+   "id": 3,
+   "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+   "line": 62,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "`time.sleep(0.1)` does nothing because the test patched `time.sleep` to a no-op",
+   "body": "Line 15 runs `monkeypatch.setattr(\"time.sleep\", lambda _: None)`, so the call at line 62 returns immediately and gives the flusher thread no time, despite the comment. The test only passes because `step.join()` with no timeout busy-waits until the thread exits. Remove the sleep and comment, or use a non-patched sleep as `test_flusher.py` does."
+  },
+  {
+   "id": 4,
+   "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+   "line": 85,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "The multi-process restart and health-check path has no test",
+   "body": "`test_flusher_processes_limit` only checks counts in the shard map. Nothing tests `_ensure_processes_alive` restarting one process out of several, or that flushing works when shards are split across processes. A restart test with real spawn processes would have caught the `isinstance` bug at flusher.py:254."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 32,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "Docstring says the flusher creates one process per shard, but the count is capped",
+   "body": "The number of processes is `min(max_processes, len(shards))`, and the CLI default is 1 (consumers/__init__.py:434). With the default, all shards share one process."
+  },
+  {
+   "id": 6,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 127,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "`_create_process_for_shard` has no callers, and the `if not process` guard is dead code",
+   "body": "Nothing calls `_create_process_for_shard`. At line 222, `if not process: continue` can never skip, because Process and Thread objects are always truthy and the dict only ever holds started processes."
+  },
+  {
+   "id": 7,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 199,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Metric tag key is `shards` here but `shard` everywhere else",
+   "body": "`spans.buffer.flusher.wait_produce` is tagged `shards`, while `produce` and `segment_size_bytes` (lines 185, 195) use `shard`. Values also differ: those carry the comma-joined list, and `flusher_unhealthy` (line 244) carries a single int. Dashboards can't group these metrics consistently."
+  }
+ ]
+}

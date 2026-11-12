@@ -1,0 +1,96 @@
+{
+ "pr": "cal.com-10600",
+ "checkout": "/tmp/audit-wt/cal.com-10600",
+ "audit_ids": [
+  0,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/auth/lib/next-auth-options.ts",
+   "line": 121,
+   "severity": "blocker",
+   "topic": "security",
+   "title": "Backup-code login skips the password check when any totpCode is sent",
+   "body": "In `authorize`, the password is verified only when `!credentials.totpCode` (line 121). Any non-empty `totpCode` skips that check, and the backup-code branch at line 131 then accepts `backupCode` alone. A request with the email, a valid backup code and any `totpCode` value (for example \"0\") logs in without the password. The same gate already lets email plus a valid TOTP skip the password (this is pre-existing), but backup codes are static and stay valid until used, so this adds a longer-lived single-factor credential. The disable endpoint does the right thing: it verifies the password before the backup branch (apps/web/pages/api/auth/two-factor/totp/disable.ts:40-45). Fix: in the backup branch, verify `credentials.password` against `user.password` when the user has one, before a code is consumed. Also confirm whether the pre-existing TOTP gate at line 121 is intended."
+  },
+  {
+   "id": 1,
+   "path": "packages/features/auth/lib/next-auth-options.ts",
+   "line": 144,
+   "severity": "fix",
+   "topic": "security",
+   "title": "Backup code can be spent twice under concurrent logins",
+   "body": "The code is checked at line 144 and the remaining list is written back in a separate update (lines 149-156) with no condition on the value read. Two concurrent credential requests with the same code can both pass the `indexOf` check and both succeed, so one code is used twice. The UI copy says each code \"can be used exactly once\" (apps/web/public/static/locales/en/common.json:2015). Make the consumption atomic, for example an `updateMany` conditioned on the stored value, and reject when the count is 0."
+  },
+  {
+   "id": 2,
+   "path": "apps/web/components/settings/EnableTwoFactorModal.tsx",
+   "line": 166,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Dismissing the backup-codes step with Escape or outside click loses the codes and leaves the UI showing 2FA disabled",
+   "body": "The codes are shown only in the DisplayBackupCodes step, and that step closes through the Close button, which calls `onEnable` (lines 266-270). `onEnable` is what closes the parent and refreshes the switch (apps/web/pages/settings/security/two-factor-auth.tsx:64-68). Escape or a click outside reaches the Radix dialog's `onOpenChange` (packages/ui/components/dialog/Dialog.tsx:87-104). The parent turns it into a plain toggle (two-factor-auth.tsx:64) and never calls `onEnable`. At that point the server already has 2FA enabled (apps/web/pages/api/auth/two-factor/totp/enable.ts:61), the switch still shows Disabled, and no endpoint returns the codes again, so after a reload they cannot be seen. Handle dismissal in the DisplayBackupCodes step the same way as Close, or ignore dismissal until the codes are acknowledged."
+  },
+  {
+   "id": 3,
+   "path": "apps/web/playwright/login.2fa.e2e.ts",
+   "line": 53,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "Switch assertion is vacuous: expect() receives a Promise",
+   "body": "`expect(page.locator(...).isChecked()).toBeTruthy()` passes a Promise to `expect`, so it can never fail. That is why the FIXME above it (lines 50-51) says the check passes when the switch is off. Use `await expect(page.locator(...)).toBeChecked()`, or the `data-state=\"checked\"` locator already used at line 127."
+  },
+  {
+   "id": 4,
+   "path": "apps/web/pages/auth/login.tsx",
+   "line": 156,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Submitting an empty backup code in lost-access mode does nothing visible",
+   "body": "In lost-access mode the form is `noValidate` (line 188), so the `required` BackupCode input is not enforced and an empty value is sent. `authorize` treats an empty string as no backup code and falls through to the TOTP branch (packages/features/auth/lib/next-auth-options.ts:157-159), which throws SecondFactorRequired. Line 156 sets the same state again and shows no message, so the submit appears to do nothing. Show an error for an empty backup code."
+  },
+  {
+   "id": 5,
+   "path": "apps/web/public/static/locales/en/common.json",
+   "line": 2019,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "missing_backup_codes points users to a settings action that does not exist",
+   "body": "\"No backup codes found. Please generate them in your settings.\" Settings sits behind login, and there is no generate action: codes are created only by disabling and re-enabling 2FA, which needs a TOTP code or a backup code. Accounts that enabled 2FA before this migration have NULL `backupCodes` (packages/prisma/migrations/20230804153419_add_backup_codes/migration.sql:2 adds the column with no backfill), so they see this message with no way to act on it. Reword the copy and decide how these accounts recover."
+  },
+  {
+   "id": 6,
+   "path": "apps/web/components/settings/EnableTwoFactorModal.tsx",
+   "line": 278,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Copy button reports success even when the clipboard write fails",
+   "body": "`navigator.clipboard.writeText` is neither awaited nor caught, and the success toast on the next line runs regardless. If the write is rejected, the user sees \"Backup codes copied!\" and gets an unhandled promise rejection. Await the write inside try/catch and show the toast only on success."
+  },
+  {
+   "id": 7,
+   "path": "packages/ui/components/form/inputs/Input.tsx",
+   "line": 49,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "tabIndex=-1 on the password reveal button applies to every PasswordField",
+   "body": "This removes the show/hide control from the keyboard tab order for every PasswordField, including login.tsx:203, EnableTwoFactorModal.tsx:174 and DisableTwoFactorModal.tsx:94 and the other consumers. The PR body says it is intentional (\"make password visible tooltip non-tabbable\"). Keyboard-only users can no longer reveal a password they typed. Consider keeping the button focusable and fixing the tooltip, or scoping the change to the 2FA fields."
+  },
+  {
+   "id": 8,
+   "path": "packages/features/auth/lib/next-auth-options.ts",
+   "line": 144,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Backup codes are matched case-sensitively and without trimming",
+   "body": "The input is compared after removing dashes only (line 144). Codes are lowercase hex (apps/web/pages/api/auth/two-factor/totp/setup.ts:61), so a code typed in uppercase, or pasted with surrounding spaces, is rejected as incorrect. The same comparison is in apps/web/pages/api/auth/two-factor/totp/disable.ts:61. Lowercasing and trimming before the match would fix both."
+  }
+ ]
+}

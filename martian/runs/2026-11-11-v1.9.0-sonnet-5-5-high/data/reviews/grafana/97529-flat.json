@@ -1,0 +1,148 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-97529-flat` of grafana-97529-flat against 871af07203177ce59a24e742107119409274f48a (merge-base 871af07)",
+    "repository": {
+      "name": "grafana-97529-flat"
+    },
+    "base": {
+      "sha": "871af07203177ce59a24e742107119409274f48a",
+      "ref": "871af07203177ce59a24e742107119409274f48a"
+    },
+    "head": {
+      "sha": "3f9895e6194eb19d497f19d4e1c6f218f069b8ac",
+      "ref": "pr-97529-flat"
+    },
+    "title": "pr-97529-flat",
+    "description": "Unified Storage Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "reviewed": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/storage/unified/search/bleve.go",
+      "line": 146,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "TotalDocs iterates b.cache without cacheMu, and this PR adds a call that can race with BuildIndex writes",
+      "body": "`TotalDocs` ranges over `b.cache` with no `cacheMu.RLock()`. This PR adds a call to it in `searchSupport.init` (resource/search.go:216). That call runs after the goroutine at search.go:207-213 has started, and that goroutine calls `handleEvent`, then `getOrCreateIndex`, then `BuildIndex`. `BuildIndex` now writes `b.cache[key]` under `cacheMu.Lock()` (bleve.go:137-139). A watch event for a not-yet-indexed resource can therefore write the map while `TotalDocs` iterates it. Go can fatally abort on that (`concurrent map iteration and map write`), which would crash the server at startup. The metrics collector (`bleve_index_metrics.go:96`) already calls it at arbitrary times, and the lock removed from `BuildIndex` never protected that path either. Fix: take `b.cacheMu.RLock()` (with `defer RUnlock`) in `TotalDocs`.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/storage/unified/resource/server.go",
+      "line": 258,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Failed eager Init in NewResourceServer leaks the watcher context and any started background work",
+      "body": "`NewResourceServer` now calls `s.Init(ctx)` and returns `nil, err` on failure. It never calls `cancel()` for the context created at line 229. It never calls `Stop` on the lifecycle (the SQL backend), and it does not stop the search watcher goroutine or broadcaster. `Init` can partly succeed: `search.init` may have started its `WatchWriteEvents` goroutine before `initWatcher` fails. Call `cancel()` (and ideally `lifecycle.Stop`) on this error path. The error is also logged twice, once inside `Init` (line 314) and again at line 260.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/server/module_server_test.go",
+      "line": 35,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Skipping the integration test on postgres may hide a regression from the eager Init change",
+      "body": "The test is skipped for postgres with the reason \"not working in Drone. Works locally.\" in the same PR that moves `Init` into the `NewResourceServer` constructor. If this test fails on postgres because of that change (startup now fails if the DB or index init fails), the skip hides it. Please confirm the failure also occurs on the base commit, or link an issue for the TODO.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Resource server Init moved from per-request lazy call to eager call in NewResourceServer; initWatcher reordered after search.init",
+      "location": "pkg/storage/unified/resource/server.go:258",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/server.go:229-235",
+        "pkg/storage/unified/resource/server.go:258-262",
+        "pkg/storage/unified/resource/server.go:293-318",
+        "pkg/storage/unified/sql/server.go:77-80"
+      ],
+      "equivalent_path": "Previous per-method s.Init(ctx) guarded by sync.Once (server.go Init at 293-318)",
+      "before_after": "Before: first request ran lifecycle.Init, initWatcher, then search.init, with the request context, and returned initErr on every later request. After: it runs once at construction with the server's long-lived watcher context, in the order lifecycle, search.init, initWatcher. Request handlers no longer check initErr, but Stop still sets initErr and nothing reads it afterwards.",
+      "visible_effect": "Startup blocks until indexes are built; init failure makes constructor (and Grafana module startup) fail instead of per-request errors.",
+      "failure_mode": "On init error NewResourceServer returns nil,err without cancel() or Stop, leaking the context and possibly the search event goroutine. Handlers called after Stop() no longer return 'service is stopping'.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New s.search.TotalDocs() call in searchSupport.init and removal of cacheMu lock around BuildIndex",
+      "location": "pkg/storage/unified/resource/search.go:216",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/search/bleve.go:137-139",
+        "pkg/storage/unified/search/bleve.go:144-154",
+        "pkg/storage/unified/resource/search.go:207-216",
+        "pkg/storage/unified/resource/bleve_index_metrics.go:96"
+      ],
+      "equivalent_path": "bleve_index_metrics.go:96 (the metrics collector) also calls TotalDocs",
+      "before_after": "Before: BuildIndex held cacheMu for the whole build, and TotalDocs never locked. After: BuildIndex locks only around the map write, and TotalDocs still does not lock, while the new call runs after the event goroutine starts.",
+      "visible_effect": "Log line reports total docs; a concurrent map iteration and write could crash the process.",
+      "failure_mode": "Possible fatal 'concurrent map iteration and map write' if a watch event triggers BuildIndex while TotalDocs iterates.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The main defect is `bleveBackend.TotalDocs` reading `b.cache` without a lock. This PR adds a call to it in `searchSupport.init`, right after the event goroutine starts, so it can race with `BuildIndex` map writes. Moving `Init` into `NewResourceServer` also has two weaker problems: the error path leaks the cancel context, and startup now fails on init errors. The postgres test skip may hide a regression from that change. The tracer-context and logger swaps look correct.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 82,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.168393
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "871af07203177ce59a24e742107119409274f48a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.168393,
+    "usage": {
+      "input": 8,
+      "output": 5126,
+      "cacheRead": 69730,
+      "cacheWrite": 27536
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 47751,
+    "stop": "complete",
+    "notices": []
+  }
+}

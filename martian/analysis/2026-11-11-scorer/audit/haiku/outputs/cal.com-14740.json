@@ -1,0 +1,77 @@
+{
+  "pr": "cal.com-14740",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "A failed calendar attendee update is hidden after the new attendee rows have been committed, and retrying the same guests cannot repair it.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:92-106 commits new attendees before the calendar update at line 165. For a booking with a valid calendar reference whose adapter rejects updateEvent, packages/core/CalendarManager.ts:328-348 catches that rejection and returns success:false at lines 370-378; EventManager.ts:596-602 discards the results returned by updateAllCalendarEvents (line 920). The handler consequently sends email and returns success at addGuests.handler.ts:167-173 although the provider event was not updated. Retrying only those emails removes them at lines 74-78 and throws BAD_REQUEST at lines 80-81, so the endpoint cannot reconcile that failed update.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The endpoint intentionally permits an authenticated attendee to add an unbounded list of guests, raising a question about authorization policy and email abuse.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:50-55 explicitly authorizes an attendee whose email equals the session user's email, whereas bookings/util.ts:25-48 restricts its separate procedure to organizers and collective hosts. addGuests.schema.ts:3-6 has no array cap, and email-manager.ts:539-549 sends to every attendee; sessionMiddleware.ts:201-215 requires a user and session but does not require emailVerified. Those facts support hardening concerns, but a deliberately enumerated attendee permission is not itself proof of unauthorized access, and the checkout establishes no organizer-only policy or concrete abuse threshold. This is a policy/rate-limit question rather than a demonstrated security defect.",
+      "confidence": "medium"
+    },
+    {
+      "id": 6,
+      "claim": "Adding guests is allowed for past and unconfirmed bookings and sends confirmed scheduling mail without checking booking status or time.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:26-55 loads by id and checks only the caller's relationship, so an organizer can submit a PENDING booking with no calendar references and a valid new guest. The handler inserts that guest at lines 92-106, EventManager.ts:596-600 returns without a calendar update, and addGuests.handler.ts:168 still calls sendAddGuestsEmails. email-manager.ts:540-542 selects AttendeeScheduledEmail for the new email, whose attendee-scheduled-email.ts:38-45 emits a scheduled/CONFIRMED invitation for a booking that remains pending. BookingListItem.tsx:193-199,227-229,553-554 also exposes this action on past pending and past confirmed bookings.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "The permission error is displayed as an untranslated key because you_do_not_have_permission is absent from the locale resources.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:54-55 throws you_do_not_have_permission for an unrelated authenticated caller. That key is absent from apps/web/public/static/locales/en/common.json and the other checked locale resources; AddGuestsDialog.tsx:43-44 passes it to t and displays the result. useLocale.ts:5-7 uses the common namespace and packages/config/next-i18next.config.js falls back to English, so that fallback supplies no translation either. The authorization still works; the consequence is an unhelpful error message.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "A validation error remains set after correcting the emails and successfully submitting, and survives closing and reopening the dialog.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:52-56 sets isInvalidEmail on invalid input but the successful branch only submits the mutation. The success callback at lines 36-40 clears emails and closes without clearing the error, and the only reset of the flag is the Cancel button at lines 89-92. BookingListItem.tsx:357-361 keeps AddGuestsDialog mounted independently of its open state, so invalid input followed by correction, success, and reopening renders the stale error at AddGuestsDialog.tsx:76-82. The onOpenChange callback at line 61 likewise changes only visibility.",
+      "confidence": "high"
+    },
+    {
+      "id": 10,
+      "claim": "The error fallback is unreachable and the component rebuilds its Zod validation schema on every render.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:43 always creates a nonempty string containing ': ', even if the code and translated message are absent, so the right side of the || at line 44 cannot execute. Lines 24-29 construct the schema inside the component function on each render. Neither issue prevents valid submission or demonstrates meaningful performance loss; these are small cleanup opportunities.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "The email removal tooltip is hard-coded English instead of using localization.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/ui/form/MultiEmail.tsx:46 passes the literal 'Remove email' to Tooltip, so changing locale cannot translate that text. The same component obtains t at line 13 and translates the add-another action at line 71, showing an available localization mechanism. The consequence is limited to untranslated tooltip copy.",
+      "confidence": "high"
+    },
+    {
+      "id": 12,
+      "claim": "The PR introduces the add-guests handler and dialog without tests for their permission and email validation behavior.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff adds packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts and apps/web/components/dialog/AddGuestsDialog.tsx without adding or changing a test file. Searching checkout test/spec files for addGuests and AddGuestsDialog found no direct coverage. The role conjunction at addGuests.handler.ts:46-48 and filtering at lines 74-81 are concrete behavior worth testing, but missing tests alone are not an additional runtime defect.",
+      "confidence": "high"
+    }
+  ]
+}

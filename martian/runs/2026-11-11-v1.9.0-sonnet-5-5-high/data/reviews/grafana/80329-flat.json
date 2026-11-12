@@ -1,0 +1,152 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80329-flat` of grafana-80329-flat against a886bd3c79a417a70b51509384d1f1ec3e87e96b (merge-base a886bd3)",
+    "repository": {
+      "name": "grafana-80329-flat"
+    },
+    "base": {
+      "sha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b",
+      "ref": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+    },
+    "head": {
+      "sha": "a17a7dcf9418c2c415ded93407dc77a43ebad1a3",
+      "ref": "pr-80329-flat"
+    },
+    "title": "pr-80329-flat",
+    "description": "Database Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "reviewed": [
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 534,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Debug logging at Error level on every successful batch, dumping full ID lists",
+      "body": "The cleanup paths call `r.log.Error` after every fetch and every delete (lines 534, 537, 554, 557, 576, 579). Each call runs on the success path and also when zero rows match, so each cleanup run logs several error-level lines per batch. The \"Annotations to clean…\" lines also log the entire `ids` slice (up to `AnnotationCleanupJobBatchSize`, 32767 in the new test) and the full SQL `cond`. Error-level logs will trip alerting and flood logs, and the `err` attribute is always nil at those points. They read like leftover debugging. Remove them, or drop to Debug and omit the ID list. Also, the `x, y` return names in these closures should be `affected, err`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/cleanup/cleanup.go",
+      "line": 77,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Cleanup ticker interval cut from 10 minutes to 1 minute",
+      "body": "`clean()` (line 88) runs all eight jobs (temp files, snapshots, dashboard versions, images, annotations, invites, short URLs, query history), not just annotations. Dropping the ticker from 10 to 1 minute makes every job run 10x more often, which adds DB load for every Grafana instance. Nothing in the PR title or body mentions this and it isn't needed for the annotation batching change. It looks like a local-testing leftover. Please revert it, or justify it and make it configurable.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "line": 83,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "\"running the max count delete again\" no longer runs it again",
+      "body": "The table now creates fresh annotations (9, 6 old) for every case and clears the tables in `t.Cleanup`. This case therefore no longer re-runs cleanup against the state left by the previous case. It just cleans a freshly created set that already has 3 per type. The name now describes behavior the test doesn't exercise. Either rename it, or call `cleaner.Run` twice in this case and assert the second run affects 0.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 584,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Empty-condition guard runs after the SQL is built",
+      "body": "`fetchIDs` builds the `SELECT` string before checking `condition == \"\"`. Move the check to the top. Also, `condition` is interpolated raw into SQL. That is safe only because every caller is internal (`annotationType` comes from the cleanup service), so a short comment saying so would help.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Batched cleanup now SELECTs IDs into memory and then DELETEs by id list (annotations by age, by count, orphaned tags)",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:519-630",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:528-539",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:597-630",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:643-661",
+        "pkg/services/cleanup/cleanup.go:123-131"
+      ],
+      "equivalent_path": "Previous single-statement DELETE ... WHERE id IN (SELECT id FROM (...)) executed via executeUntilDoneOrCancelled",
+      "before_after": "Before, selection and delete were one statement. Now, fetchIDs and deleteByIDs run as two separate DB sessions. The DELETE does not re-check the age, count or orphan condition. It is safe in practice because ids are monotonic and never reused, so rows selected for age or orphan status cannot become newer or non-orphaned. A concurrent insert only adds higher ids. The comment at lines 523-525 says it may under-delete but never over-delete. Each loop ends when affected==0 or on error. An error on either step returns immediately with the partial total.",
+      "visible_effect": "No UI effect. Fewer deadlocks on MySQL. The cleanup job logs now include error-level noise (see finding).",
+      "failure_mode": "If fetch or delete fails, the error propagates to untilDoneOrCancelled and then to cleanUpOldAnnotations, which logs it. Nothing is lost, and the next cycle retries. If the SQLite batch size is above 999, ids are inlined as int64 with %d, so there is no injection risk.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cleanup ticker changed to 1 minute",
+      "location": "pkg/services/cleanup/cleanup.go:77",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/cleanup/cleanup.go:77-86",
+        "pkg/services/cleanup/cleanup.go:88-121"
+      ],
+      "equivalent_path": "Previous 10-minute ticker",
+      "before_after": "Each tick runs clean() synchronously with a 9-minute timeout, so runs cannot overlap. They now start back-to-back and 10x as often.",
+      "visible_effect": "Higher background DB load from all cleanup jobs.",
+      "failure_mode": "None fatal, but jobs that take longer than a minute run continuously.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The batching rewrite in xorm_store.go is logically sound: IDs are monotonic, so the delete-by-id step cannot hit rows that no longer match. There are two things to fix. Error-level debug logs, including full ID lists, are emitted on every batch. The cleanup ticker was cut from 10 minutes to 1 minute, which makes all cleanup jobs run 10x more often. One test case's name no longer matches what it does.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 261,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.14072590000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+  },
+  "execution": {
+    "costUsdEstimate": 0.14072590000000001,
+    "usage": {
+      "input": 8,
+      "output": 4754,
+      "cacheRead": 72779,
+      "cacheWrite": 21473
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 53314,
+    "stop": "complete",
+    "notices": []
+  }
+}

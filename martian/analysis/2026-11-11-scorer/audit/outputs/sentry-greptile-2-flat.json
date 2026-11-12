@@ -1,0 +1,50 @@
+{
+  "pr": "sentry-greptile-2-flat",
+  "audits": [
+    {
+      "id": 4,
+      "claim": "Insertion silently evicts spans above a hardcoded 1000 while the advertised max_segment_spans setting no longer controls the limit.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/spans/buffer.py:150-158 still accepts and stores max_segment_spans, but process_spans passes only redis_ttl to Lua at :212-221 and _load_segment_data at :439-453 no longer enforces a span count. For a buffer configured with max_segment_spans=2000, inserting 1001 distinct small spans in one segment writes all payloads at :194-201, then src/sentry/scripts/spans/add-buffer.lua:62-63 irreversibly removes one even though the configured limit was not reached. Conversely, a configured limit of 10 no longer prevents a 20-span segment from being returned. The script does return metadata at :72, contrary to the literal claim that it returns nothing, but returns no eviction count, and the caller metrics at buffer.py:275-279 do not report evictions; the previous count-exceeded metric and log were removed.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "Changing existing span-buffer keys from Redis sets to sorted sets without migration causes processing and flushing errors on pre-deploy data.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "At the parent commit, src/sentry/spans/buffer.py:195-198 writes a Redis SET with SADD under exactly the same span-buf:s:{project:trace}:parent key that the head writes with ZADD at :195-201. An unexpired SET left by that version therefore causes WRONGTYPE when another span for that parent is processed; neither this pipeline nor the ZCARD/ZUNIONSTORE calls in src/sentry/scripts/spans/add-buffer.lua:45-54 contain a type conversion or alternate namespace. An old segment already in the queue also reaches buffer.py:365 and :434-437, where ZSCAN fails on the SET and propagates out of flush_segments. src/sentry/spans/consumers/process/flusher.py:123 and :157-159 show that this exception terminates the flusher, and :169-176 restart it only a limited number of times; the configured default key TTL is 3600 seconds (buffer.py:151, :220).",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "ZUNIONSTORE adds duplicate payload scores, allowing older redelivered spans to survive eviction ahead of newer spans.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "Process separate batches containing A(parent B), then B(parent C): buffer.py:194-201 initially places A under B, and add-buffer.lua:30-48 redirects B to C and moves A there. Redelivering A(parent B) writes the identical payload back under B at buffer.py:195-198, while Lua follows B to C and merges B into C at add-buffer.lua:51-54. The ZUNIONSTORE call at :53 omits AGGREGATE, so its default SUM changes A's score from end timestamp t to 2*t; the same omission exists at :47. With 1000 newer distinct payloads whose timestamps lie between t and 2*t, :62-63 removes a newer payload instead of A, changing the retained output loaded at buffer.py:434-449. The phrase never evicted is too absolute (later writes can reset the score), but the incorrect eviction ordering is real.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "Reducing redirect traversal from 10000 to 1000 can split a deep segment instead of joining its spans under the actual ancestor.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/scripts/spans/add-buffer.lua:30-38 now follows at most 1001 links, whereas the parent commit used 0..10000 and documented the truncation trade-off. Separate leaf-to-root batches S0(parent S1), S1(parent S2), through S1001(parent S1002), followed by root S1002, can leave redirects S0->S1->...->S1002 via :40 while the surviving payloads reside under S1002 via :45-54; buffer.py:292-320 only collapses relationships within each individual batch. A subsequent child of S0 stops at S1001, creates a distinct set there (:45), and merges its newly staged S0 set into that intermediate key (:51-54), without reaching S1002. buffer.py:237-259 queues that intermediate key separately, and :370-393 emits its spans with segment_id S1001 instead of S1002. This is a constructible deep-tree regression, although its practical frequency and whether the lower safety bound is an intentional trade-off cannot be established from the checkout.",
+      "confidence": "medium"
+    },
+    {
+      "id": 8,
+      "claim": "The tests do not cover the new 1000-span eviction threshold or eviction by differing end timestamps.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/spans/test_buffer.py:115-155, :184-225, :254-302, :332-372, and :409-449 permute fixed groups of only four or five spans, all with end_timestamp_precise=1700000000.0; :491-522 tests a single-span rebalance. These inputs never exercise the span_count > 1000 branch in src/sentry/scripts/spans/add-buffer.lua:62-63 or distinguish timestamp order. The other changed consumer/flusher tests likewise only add timestamps to small existing examples, so the missing coverage is confirmed, but a missing test alone is not a runtime defect.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "pr": "cal.com-10967",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "Creating video meeting references now drops their credentialId, preventing subsequent credential-based cancellation.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a new Zoom booking, packages/core/EventManager.ts:452-456 calls createMeeting, which returns the actual credential ID in packages/core/videoClient.ts:71-78. EventManager.ts:153-170 explicitly replaces that ID with undefined for non-calendar results; handleNewBooking.ts:2368-2369 persists these references. On cancellation, handleCancelBooking.ts:486-501 calls deleteMeeting only when the video reference has a credentialId, with no fallback for a missing ID, so the Zoom meeting remains active after the booking is cancelled.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "Additional collective hosts using Office365, Lark or CalDAV receive the first host destination instead of their own when creating calendar events.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "handleNewBooking.ts:990-994 and 1077-1078 append collective members' destinations after the organizer's destination. EventManager.ts:339-370 resolves each destination's credential but passes the same full event to createEvent; CalendarManager.ts:234-236 forwards that event without selecting a destination. With two Office365 hosts whose private calendars have distinct IDs, office365calendar/lib/CalendarService.ts:65-79 authenticates as host B but posts to /me/calendars/<host A ID>/events, so B's event creation fails. The same first-entry assumption is present in larkcalendar/lib/CalendarService.ts:125-132 and packages/lib/CalendarService.ts:156-175, where disjoint CalDAV calendar URLs filter out all of B's calendars.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "Collective member destinations are discarded when both the event type and organizer lack a destination calendar.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a collective event with organizer A lacking a destination and member B having a connected destination, handleNewBooking.ts:990-994 collects B's destination, but lines 1063-1067 initialize evt.destinationCalendar to null. The optional push at lines 1077-1078 therefore does nothing. The normal booking path passes this event to EventManager.create at lines 2112-2114; EventManager.ts:338-395 never iterates B's destination and only considers organizer credentials in its fallback, so no event is created using B's credential. Neither the user selection in packages/prisma/selects/user.ts nor this creation path requires the organizer to have a destination.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "Cancelling all remaining occurrences repeats organizer-only calendar deletion once per reference and leaves other collective hosts' events undeleted.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a recurring collective booking with references for A and B, handleCancelBooking.ts:333-371 marks the future bookings cancelled and loads all their references. Lines 422-444 iterate both current references and can resolve B's credential from the database, but the recurring branch at lines 449-457 discards that resolved credential and loops only A's credentials, selecting only the first calendar reference of each future booking. With one organizer calendar credential and A's reference first, A's event is targeted twice per occurrence while B's UID and credential are never used. The diff shows that repeated execution is introduced by the new outer loop, and the PR's multiple-host event creation exposes the skipped-host behavior.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "A collective member destination without credentialId is processed with organizer credentials and can create a duplicate organizer event.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "DestinationCalendar.credentialId is nullable in packages/prisma/schema.prisma:150-160, and the migration packages/prisma/migrations/20220629151617_connect_destination_calendar_to_credential/migration.sql:2 adds the nullable column without backfilling existing destinations. Take organizer A with Google credential 1 and its destination, and member B with a legacy Google destination whose credentialId is null: handleNewBooking.ts:990-994 and 1077-1078 append B's destination without resolving its owner. EventManager.ts:375-380 then uses this.calendarCredentials, initialized from the organizer at handleNewBooking.ts:919 and 2000-2002, rather than B's credentials. GoogleCalendarService at packages/app-store/googlecalendar/lib/CalendarService.ts:147-154 selects A's matching destination again for credential 1, producing a second organizer event and no direct event in B's destination; the modern destination setter's credential requirement does not repair legacy rows.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "loadUsers reports an empty dynamic-user list as HTTP 500 and removes organization.slug from its dynamic-user result despite the remaining type declaration.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/prisma/zod-utils.ts:212-220 permits user: [] with eventTypeId: 0, and handleNewBooking.ts:726-728 now throws a plain Error for that list, which lines 757-761 convert to HTTP 500. However, the old implementation shown in the diff merely returned an empty user array: the unchanged downstream path at handleNewBooking.ts:916-919 passes undefined as organizerUser to getAllCredentials, whose line 145 immediately reads user.credentials, so this input already failed rather than being handled successfully. The query at lines 735-739 really omits organization while IsFixedAwareUser still declares it at lines 352-355, but the cast at line 870 masks that mismatch and this file does not dereference organization.slug. These are error-classification/type-maintenance concerns without a demonstrated newly broken successful booking path.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "pr": "sentry-95633-flat",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "Closing a strategy permanently shuts down the factory-owned pool reused by subsequent strategies, causing new results to be skipped and eligible offsets committed.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/result_consumer.py:131-137 creates the pool once, and :244-259 constructs each strategy with that same pool without checking whether it has been shut down. Calling strategy.close() invokes queue shutdown at src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-338 and :231-243; a subsequent factory.create_with_partitions() therefore returns a strategy backed by closed queues. For a fully drained partition followed by the next contiguous result, put() at :212 raises ShutDown, the catch at :317-325 marks the unprocessed result complete, and :278-289 plus result_consumer.py:249-252 commit past it. This independently constructs the lifecycle failure without requiring Arroyo source; older outstanding offsets can block commits, so the finding overstates the universality of every offset being committed.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "The background commit thread races Arroyo polling or revocation because its Commit callback is not safe to call from that thread.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:270-287 unquestionably invokes commit_function from a daemon thread, and src/sentry/remote_subscriptions/consumers/result_consumer.py:249-252 forwards it to Arroyo Commit. However, requirements-frozen.txt:124 only pins sentry-arroyo==2.28.0; the permitted checkout does not include its StreamProcessor or KafkaConsumer implementations. The repository code establishes the cross-thread call but does not establish the callback threading contract, its synchronization, or a concrete polling/revocation race, so the claimed downstream failure cannot be verified here.",
+      "confidence": "medium"
+    },
+    {
+      "id": 2,
+      "claim": "Closing the strategy stops committing before processing finishes and shuts down workers without draining pending items.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "Take one worker blocked in result_processor on offset 100 and offset 101 queued behind it: src/sentry/remote_subscriptions/consumers/queue_consumer.py:129-140 processes 100 while :204-212 accepts 101. close() at :335-338 signals and joins the commit thread before shutting down the pool; the loop at :274-289 can make one final pass when its wait wakes, but cannot commit results completed after it exits. Pool shutdown sets worker.shutdown at :233-234, so after 100 finishes and is marked complete at :149 the worker exits at :129 without taking 101, despite the non-immediate queue shutdown at :238. There is no post-drain commit in join() (:344-345), leaving processed 100 uncommitted and 101 unprocessed, which causes replay rather than graceful draining.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The new queue strategy accepts an unbounded backlog and provides no backpressure when workers fall behind.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:185 constructs queues without maxsize, and :204-212 unconditionally records offsets and enqueues WorkItems retaining decoded results and original messages (:24-31). For a subscription whose processor blocks on a slow database call at :140, successive messages for that subscription all enter the same queue (:198-202) and continue accumulating while submit returns normally (:293-325). poll() at :327-333 only reports statistics, and no rejection or outstanding-item limit exists, so a continuing input stream can exhaust process memory; this contradicts the backpressure guarantee at :253.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "join(timeout) ignores its deadline and repeats shutdown with independent fixed waits for each worker.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:344-345 discards timeout and calls close(), whose :337-338 adds a five-second commit-thread wait and invokes pool.shutdown(). Pool shutdown sequentially joins each worker for five seconds at :242-243 without a shared deadline. With the default twenty workers (src/sentry/remote_subscriptions/consumers/result_consumer.py:136) blocked inside result_processor, even join(timeout=0) can spend roughly 100 seconds waiting on workers, and calling close() beforehand repeats those waits. The exact rebalance consequence depends on external consumer configuration, but the named call already violates its requested timeout.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "A FilteredPayload passed through the factory decoder raises and logs an assertion instead of following the normal skipped-result path.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/result_consumer.py:254-256 supplies decode_payload as the strategy decoder, and :187-188 asserts against FilteredPayload before its decoding try block. submit() calls that decoder first at src/sentry/remote_subscriptions/consumers/queue_consumer.py:295, so a BrokerValue containing FilteredPayload logs an exception at :317-318 rather than reaching the None branch at :301-304. The catch still records and completes the offset at :319-325, so the demonstrated consequence is unnecessary error logging, not lost valid processing or blocked commits. tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:237-240 uses a custom decoder that masks this discrepancy.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The named order and concurrency unit tests only check completion counts, so they do not verify the properties in their names.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:302-312 submits five same-subscription messages but only waits and asserts the result count; its decoder at :237-240 discards offsets and returns identical results for these messages. The concurrency tests at :137-173 and :314-325 likewise check counts and group presence without observing worker overlap. The separate pool order test at :108-135 does check order, which mitigates coverage but does not make these specific assertions verify their advertised properties.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The queue statistics test can fail when workers consume all submitted items before its initial nonempty assertion.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:73-78 processes each item immediately by appending under a lock, and the three workers start during setup (:80-84; src/sentry/remote_subscriptions/consumers/queue_consumer.py:188-195). After the last submit at test_queue_consumer.py:197, scheduling those workers before the test resumes lets them remove all ten items. get_stats() counts only queued items (queue_consumer.py:214-220), so the assertion at test_queue_consumer.py:199-200 sees zero and fails despite correct processing; the event clear at :180 does not prevent workers from running.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "The offset-commit unit test can observe an earlier partial commit after its processing-complete event and fail its final-offset assertion.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:219-224 signals processing completion inside the processor, before src/sentry/remote_subscriptions/consumers/queue_consumer.py:149 completes the offset in the worker finally block. A valid interleaving has the commit loop read completed offsets only through 103 (:278), the fifth callback signal process_complete_event, and the commit callback then store 103 and set commit_event (test_queue_consumer.py:232-235). Both waits at :296-297 can therefore finish with committed_offsets still 103, making the assertion of 104 at :300 fail even though the next commit iteration would correct it. An earlier partial commit can also leave commit_event already set; neither wait requires the expected offset.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "The mode help text omits the new mode and inaccurately describes parallel as multithreading.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/consumers/__init__.py:121 adds thread-queue-parallel to the four choices while :123 retains the generic statement that parallel uses multithreading. src/sentry/remote_subscriptions/consumers/result_consumer.py:126-130 instead implements parallel with a MultiprocessingPool, while :119-121 and :131-137 implement the two thread-based modes. The inaccurate parallel wording already exists in the supplied base-to-head diff, so this is a pre-existing documentation issue compounded by the new choice, not a new runtime defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "The graceful-shutdown test only checks that the factory clears its pool reference and cannot detect abandoned submitted work.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:1987-2005 submits five results and immediately calls factory.shutdown(), then only asserts queue_pool is None. src/sentry/remote_subscriptions/consumers/result_consumer.py:183-185 clears that reference after pool.shutdown() regardless of how many results ran, and queue_consumer.py:233-243 plus :129 can stop workers with queued items remaining. The test has no processed-count or commit assertion and does not mock the processor, unlike the sibling test at test_results_consumer.py:1699; send_result only scopes the feature context around submit at :103-109. The missing verification is real, while the underlying non-draining production defect is separately covered by finding 2.",
+      "confidence": "high"
+    },
+    {
+      "id": 12,
+      "claim": "The concurrent-subscriptions test establishes that two results run but does not establish that they run concurrently.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:1784-1787 uses two workers but :1791-1795 chooses a random second subscription rather than ensuring distinct worker assignments. The mapping at src/sentry/remote_subscriptions/consumers/queue_consumer.py:198-202 can assign both keys to one queue, and the waits and only assertion at test_results_consumer.py:1811-1820 still pass after sequential execution. No barrier, overlap observation, or worker identity check refutes that execution; this is a missing concurrency assertion rather than evidence of incorrect production ordering.",
+      "confidence": "high"
+    },
+    {
+      "id": 13,
+      "claim": "The new uptime unit tests stop their pools but leave each strategy commit thread alive.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For example, tests/sentry/uptime/consumers/test_results_consumer.py:1697 constructs a strategy and :1731 only calls factory.shutdown(); the other new unit tests follow the same pattern. Factory shutdown at src/sentry/remote_subscriptions/consumers/result_consumer.py:180-185 only stops pool workers and clears the factory reference, while the daemon thread created at queue_consumer.py:270-271 retains its strategy and exits only when shutdown_event is set (:274-276, :335-342). Consequently the tests leave live threads waking every second and retaining their pools and callbacks until process exit. The finding overstates callback frequency: :280-289 calls the callback only for committable offsets, so normally these leaked threads eventually just poll without invoking it.",
+      "confidence": "high"
+    },
+    {
+      "id": 14,
+      "claim": "The Kafka integration test fails to close its verification consumer when an assertion raises and contains a redundant commits guard.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:2109-2116 allocates verify_consumer, but the only close is at :2140 after all assertions. If, for example, the committed offset assertion at :2136-2138 fails, control enters the finally block at :2142-2146, which only deletes the topic and never closes that consumer. Also, the wrapper increments commit_count and appends to commits_made together at :2074-2076, so after assert commit_count >= 1 at :2120 the if commits_made guard at :2122 is redundant. These are test resource-cleanup and clarity issues with no demonstrated production effect.",
+      "confidence": "high"
+    }
+  ]
+}

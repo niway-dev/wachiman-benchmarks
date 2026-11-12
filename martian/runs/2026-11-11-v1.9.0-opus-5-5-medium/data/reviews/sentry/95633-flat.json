@@ -1,0 +1,305 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-95633-flat` of sentry-95633-flat against fd358e8a388939959369f08f616e29552cdaf96e (merge-base fd358e8)",
+    "repository": {
+      "name": "sentry-95633-flat"
+    },
+    "base": {
+      "sha": "fd358e8a388939959369f08f616e29552cdaf96e",
+      "ref": "fd358e8a388939959369f08f616e29552cdaf96e"
+    },
+    "head": {
+      "sha": "371d72c8c18ead287e4497a7346abf1493c55481",
+      "ref": "pr-95633-flat"
+    },
+    "title": "pr-95633-flat",
+    "description": "feat(uptime): Add ability to use queues to manage parallelism",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "src/sentry/remote_subscriptions/consumers/result_consumer.py",
+      "tests/sentry/remote_subscriptions/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "tests/sentry/uptime/consumers/test_results_consumer.py"
+    ],
+    "reviewed": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "src/sentry/remote_subscriptions/consumers/result_consumer.py",
+      "tests/sentry/remote_subscriptions/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "tests/sentry/uptime/consumers/test_results_consumer.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 338,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Strategy close() shuts down the factory-owned pool; after a rebalance every message is dropped and its offset committed",
+      "body": "The factory builds one `FixedQueuePool` in `__init__` (result_consumer.py:133) and hands the same instance to every strategy it creates (result_consumer.py:254-259). On a partition revocation Arroyo calls `close()`/`join()` on the current strategy. `close()` then calls `self.queue_pool.shutdown()`, which shuts down every queue and stops every worker. `factory.queue_pool` is still set, so the next `create_with_partitions` passes `assert self.queue_pool is not None` and builds a new strategy on the dead pool. From then on, each `submit` calls `add_offset` and then `work_queue.put`, and the put raises `queue.ShutDown`. The `except Exception` at line 317 catches that, logs it, and marks the offset complete, so the commit loop commits it. The result is that every result after the first rebalance is skipped but still committed. That's silent data loss for uptime results. Fix: the strategy shouldn't shut down a pool it doesn't own. Either create the pool per strategy, or leave pool shutdown to `factory.shutdown()` only. On revoke, drain or clear the pool's state for the revoked partitions instead.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 287,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Arroyo `commit` is called from a background thread, including for partitions that may have been revoked",
+      "body": "`_commit_loop` runs on its own daemon thread and calls `commit_function`, which calls Arroyo's `Commit` callable (result_consumer.py:249-252). Every other strategy in this file calls `commit` from the consumer thread, inside `submit`/`poll`. Arroyo's StreamProcessor stores pending commit offsets in plain state and doesn't lock it, so this commit races with the main loop. Nothing in `OffsetTracker` clears revoked partitions either: after a revoke, offsets for partitions this consumer no longer owns can still be committed and can overwrite the new owner's progress. Collect the committable offsets in the tracker and call `commit` from `poll()` on the consumer thread instead.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 185,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Queues are unbounded, so there is no backpressure despite the docstring",
+      "body": "`queue.Queue()` is created with no `maxsize`, so `put` at line 212 never blocks. The strategy keeps accepting messages from Kafka as fast as the consumer can poll, no matter how far the workers fall behind. Under a processing slowdown (DB latency, a slow subscription) memory grows without limit until the process is OOM-killed. The docstring at line 253 claims \"Natural backpressure when queues fill up\". Fix: give the queues a `maxsize`, and when they are full, raise `MessageRejected` from `submit` so Arroyo pauses and retries the message.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 234,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Shutdown drops queued work and the final commit, and can block for up to about 100s",
+      "body": "`shutdown()` sets `worker.shutdown = True` before shutting the queues down with `immediate=False`. Workers check that flag at the top of each loop (line 129), so each one exits after its current item and abandons whatever is still queued; the non-immediate drain never happens. `close()` stops the commit thread (line 336) before the pool is drained, so offsets completed in the last second are never committed. Those messages get reprocessed after the restart or rebalance. On top of that, the workers are joined one after another with `timeout=5.0` each, so the worst-case shutdown is `num_queues` × 5s (100s with the default 20), plus 5s for the commit thread. During a rebalance that can exceed the poll interval. Fix: drain first (let the workers empty their queues), then do one final commit, and put a single deadline on the whole join instead of one per worker.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 89,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Commits stall permanently on any gap in Kafka offsets",
+      "body": "`get_committable_offsets` requires every integer offset in the range to have been seen. Kafka offsets aren't guaranteed to be contiguous: transaction control markers and compaction leave gaps. When the topic has such a gap, `highest_committable` stops before it forever, and commits for that partition stop while `all_offsets` keeps growing. Consider walking the sorted set of seen offsets instead of `range()`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "line": 200,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Racy assertion that the queues are non-empty right after submit",
+      "body": "Three worker threads are already running and consuming. They can drain all 10 trivial items before `get_stats()` runs, so `stats[\"total_items\"] > 0` fails intermittently. Block the processor with an Event while the stats are checked.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "line": 312,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "test_preserves_order_within_group does not check order",
+      "body": "The test only asserts `len(self.processed_results) == 5`. It should assert that the results arrive in offset order. Since every message has the same `subscription_id`, that means encoding the offset in the payload and comparing against it. The \"concurrent\" tests don't check concurrency either. None of the tests covers the close-then-recreate (rebalance) path where the shared pool breaks.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1922,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Error-handling test checks for the opposite of its docstring and passes only because the commit tick hasn't fired yet",
+      "body": "The docstring says errors must not block commits for other messages. The assertion checks the opposite: that nothing is committed (`len(committed_offsets) == 0 or test_partition not in committed_offsets`). The implementation behaves like the docstring, not the assertion. `OrderedQueueWorker.run` calls `complete_offset` in `finally` even when the processor raises (`queue_consumer.py:144-149`). So once `_commit_loop` runs (it waits 1.0s per tick, `queue_consumer.py:276`), it commits {partition: 102}, which is 101 + 1 (`result_consumer.py:249-252`). The test leaves its wait loop as soon as both calls have happened, then sleeps 0.2s. That is normally well under 1s after the strategy starts, so the assertion only holds because the commit thread hasn't ticked yet. On a slow CI runner the processing can take longer than a second and the test fails. It also never checks the behaviour the docstring promises. Fix: wait for a commit, then assert `committed_offsets[test_partition] == 102`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1979,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Offset-gap test claims the code never commits past a gap, but the code does so on the next tick",
+      "body": "With offsets 100, 102 and 103, the first `get_committable_offsets` returns 100 (commit 101). `mark_committed(100)` then drops 100 from `all_offsets`, leaving {102, 103} (`queue_consumer.py:100-105`). On the next tick, `start = max(last_committed + 1, min_offset) = max(101, 102) = 102`, so 102 and 103 become committable and 104 is committed (`queue_consumer.py:83-96`). The gap is skipped about one second after the first commit. The assertions \"Should not commit past the gap\" and `last_commit == 101` pass only because the test exits roughly 0.2s after the first commit, before the second tick. The test pins down a guarantee the implementation doesn't provide, and it fails whenever a second tick lands inside the wait window. Decide the intended semantics first. Kafka offsets can legitimately have gaps (compaction, transaction markers), so skipping is arguably correct. Then assert that behaviour across at least two commit ticks.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 2004,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Graceful-shutdown test only checks `queue_pool is None`; it never checks that queued work was drained",
+      "body": "The test submits 5 results and only asserts that `factory.queue_pool` is reset. `FixedQueuePool.shutdown` sets `worker.shutdown = True` before calling `q.shutdown(immediate=False)` (`queue_consumer.py:233-238`). The worker loop is `while not self.shutdown` (`queue_consumer.py:129`), so a worker can exit with items still in its queue. This test would not notice if those items were dropped. Also, `result_processor` is not mocked here, unlike the sibling tests. The real processor runs on daemon worker threads after `send_result` has left its feature context, against the test's transactional DB. Consider mocking the processor and asserting it was called 5 times after `shutdown()`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1820,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "\"Concurrent subscriptions\" test doesn't test concurrency",
+      "body": "The docstring says different subscriptions are processed concurrently, but the test only asserts `call_count == 2`. That duplicates `test_thread_queue_parallel`, and it would pass even if every result ran on a single worker. With `max_workers=2`, the two subscription IDs can also hash to the same queue (`hash(group_key) % num_queues`, `queue_consumer.py:202`). To test concurrency, block the first call on an Event and assert that the second call starts anyway. The subscriptions need to be chosen so they land on different queues.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1731,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Strategy commit threads and worker threads leak across tests",
+      "body": "Each test calls only `factory.shutdown()`. Nothing calls `close()` on the returned `SimpleQueueProcessingStrategy`, so its `_commit_loop` thread keeps running for the rest of the test session, polling every second (`queue_consumer.py:270-276`, `335-338`). `factory.shutdown()` also isn't in a `finally`, so when an assertion fails, the worker threads leak too. Call `consumer.close()` (or `consumer.join()`) and `factory.shutdown()` in a `try/finally` or `addCleanup`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 2061,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Kafka test: `KAFKA_TOPIC_OVERRIDES` has no effect, `if commits_made` is redundant, and the verify consumer leaks on failure",
+      "body": "`StreamProcessor` is given `Topic(test_topic)` directly, so the `override_settings(KAFKA_TOPIC_OVERRIDES=...)` block doesn't affect what the test exercises. `if commits_made:` is always true once `commit_count >= 1` has passed, so the guard only obscures the assertion. `verify_consumer.close()` runs only when every assertion passes; move it into the `finally` block.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Strategy close/join on partition revocation",
+      "location": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-338",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:204-212",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:317-325",
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:131-137",
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:244-259"
+      ],
+      "equivalent_path": "create_thread_parallel_worker / create_multiprocess_worker leave the factory-owned executor or pool alone on strategy close; only factory.shutdown tears it down",
+      "before_after": "The new strategy shuts down the shared FixedQueuePool, and factory.queue_pool keeps pointing at the dead pool",
+      "visible_effect": "After a rebalance, uptime results are skipped and their offsets committed",
+      "failure_mode": "queue.ShutDown from put is caught at line 317 and the offset is marked complete",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bound on the shutdown wait",
+      "location": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:242",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:231-243",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-345"
+      ],
+      "visible_effect": "A rebalance or shutdown can stall",
+      "failure_mode": "Joins run one after another with a 5s timeout each: num_queues*5s plus 5s for the commit thread, and close is called again from join()",
+      "evidence_checked": true
+    },
+    {
+      "action": "Commit from the background thread",
+      "location": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:273",
+      "status": "open",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:273-291"
+      ],
+      "equivalent_path": "The serial and batched strategies commit through Arroyo's CommitOffsets on the consumer thread",
+      "visible_effect": "Possible lost or overwritten commits",
+      "failure_mode": "Commits race with the consumer thread; revoked partitions are not cleared from the tracker",
+      "open_question": "Is Arroyo's Commit callable thread-safe?",
+      "candidates": [
+        "arroyo/processing/processor.py"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Tests drive UptimeResultsStrategyFactory in thread-queue-parallel mode and assert commit behaviour from SimpleQueueProcessingStrategy",
+      "location": "tests/sentry/uptime/consumers/test_results_consumer.py:1874",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:127-156",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:67-105",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:273-291",
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:244-259"
+      ],
+      "equivalent_path": "OrderedQueueWorker.run completes offsets in finally; _commit_loop commits every 1s with +1 applied by commit_offsets",
+      "before_after": "Worker marks the offset complete even after an exception; the commit loop commits the contiguous prefix, then removes committed offsets, so later ticks skip gaps",
+      "visible_effect": "Test results only; the error-handling and offset-gap assertions depend on finishing before the next 1s commit tick",
+      "failure_mode": "On slow CI a commit tick lands inside the wait window and the error-handling and gap tests fail; both assert behaviour the code does not have",
+      "evidence_checked": true
+    },
+    {
+      "action": "factory.shutdown() at the end of tests",
+      "location": "tests/sentry/uptime/consumers/test_results_consumer.py:2004",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:180-185",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:231-243",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-338"
+      ],
+      "equivalent_path": "FixedQueuePool.shutdown via BaseStrategyFactory.shutdown",
+      "before_after": "Sets the worker shutdown flags before shutting down the queues, then joins workers; the strategy's commit thread is not stopped",
+      "visible_effect": "queue_pool is set to None; leftover queued items may never be processed",
+      "failure_mode": "The graceful-shutdown test would not catch dropped items; commit threads leak",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 2.** This change adds a thread-queue-parallel mode for the remote subscriptions result consumer. There is one blocker. Each strategy's close() shuts down the queue pool, but the factory owns that pool and reuses it for every strategy it creates. After the first partition rebalance, every message is swallowed and its offset committed. There are also three fixes. Arroyo's commit is called from a background thread. The queues are unbounded, so there's no backpressure. Shutdown drops queued work and the final commit, and its worst-case wait grows with the number of queues (about 100s at the default of 20). The tests include a racy stats assertion, an ordering test that doesn't check order, and no test for the rebalance path.\n\n**Batch 2 of 2.** I reviewed the new thread-queue-parallel tests in test_results_consumer.py (part 2 of 2). Two tests assert behaviour the implementation doesn't have, and they pass only because they finish before the commit thread's next 1-second tick: the error-handling test (failed offsets are in fact committed) and the offset-gap test (the gap is skipped on the second tick). The remaining findings are weaker tests: graceful shutdown never checks that queued work was drained, the concurrency test doesn't test concurrency, threads leak across tests, and the Kafka integration test has a no-op settings override.",
+  "batches": [
+    {
+      "label": "Batch 1 of 2",
+      "files": 6,
+      "lines": 814,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.39481900000000003
+    },
+    {
+      "label": "Batch 2 of 2",
+      "files": 1,
+      "lines": 468,
+      "maxRisk": 2,
+      "status": "reviewed",
+      "turns": 5,
+      "costUsd": 0.4049874
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fd358e8a388939959369f08f616e29552cdaf96e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.7998064,
+    "usage": {
+      "input": 12,
+      "output": 11791,
+      "cacheRead": 143412,
+      "cacheWrite": 66907
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 9,
+    "durationMs": 125873,
+    "stop": "complete",
+    "notices": []
+  }
+}
