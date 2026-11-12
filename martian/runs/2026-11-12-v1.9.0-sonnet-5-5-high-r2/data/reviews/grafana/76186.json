@@ -1,0 +1,154 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-76186` of grafana-76186 against 58ba11ecbd60863e2bfc6e32f0399ed4feb3927a (merge-base 58ba11e)",
+    "repository": {
+      "name": "grafana-76186"
+    },
+    "base": {
+      "sha": "58ba11ecbd60863e2bfc6e32f0399ed4feb3927a",
+      "ref": "58ba11ecbd60863e2bfc6e32f0399ed4feb3927a"
+    },
+    "head": {
+      "sha": "303cdc2caf256aa5df660611120c2e3f7392365d",
+      "ref": "pr-76186"
+    },
+    "title": "pr-76186",
+    "description": "Rewrite old useStyles2 pattern to use new pattern (#76136)\nElasticsearch: Added support for calendar_interval in ES date histogram queries (#75459)\nLoki Autocomplete: Add more context to comments about situations and completions (#76144)\nAdmin: Add missing wrapper to OrgUsersTable (#76185)\nPlugins: Refactoring: Implement plugin instrumentation as a middleware (#76011)\nPlugins: Chore: Renamed instrumentation middleware to metrics middleware\nRemoved repeated logger attributes in middleware and contextual logger\nrenamed loggerParams to logParams\nPR review suggestion\nAdd contextual logger middleware\nRemoved unused params from logRequest\nRemoved unwanted changes\nSafer FromContext method\nRemoved traceID from logParams\nMerge remote-tracking branch 'origin/main' into giuseppe/rename-instrumentation-middleware",
+    "author": "Giuseppe Guerra"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/plugins/log/fake.go",
+      "pkg/plugins/log/ifaces.go",
+      "pkg/plugins/log/logger.go",
+      "pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go",
+      "pkg/services/pluginsintegration/clientmiddleware/logger_middleware.go",
+      "pkg/services/pluginsintegration/clientmiddleware/metrics_middleware.go",
+      "pkg/services/pluginsintegration/clientmiddleware/metrics_middleware_test.go",
+      "pkg/services/pluginsintegration/pluginsintegration.go"
+    ],
+    "reviewed": [
+      "pkg/plugins/log/fake.go",
+      "pkg/plugins/log/ifaces.go",
+      "pkg/plugins/log/logger.go",
+      "pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go",
+      "pkg/services/pluginsintegration/clientmiddleware/logger_middleware.go",
+      "pkg/services/pluginsintegration/clientmiddleware/metrics_middleware_test.go",
+      "pkg/services/pluginsintegration/clientmiddleware/metrics_middleware.go",
+      "pkg/services/pluginsintegration/pluginsintegration.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go",
+      "line": 14,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "New middleware and the moved log attributes have no test",
+      "body": "The attributes `endpoint`, `pluginId`, `dsName`, `dsUID` and `uname` used to be added inside the instrumentation middleware. They are now added by `ContextualLoggerMiddleware`, and `LoggerMiddleware` logs them only through `m.logger.FromContext(ctx)`. I found no test in `pkg/services/pluginsintegration/clientmiddleware` that covers `instrumentContext` or `NewContextualLoggerMiddleware`, and none that checks `LoggerMiddleware` output. If `NewContextualLoggerMiddleware` is removed from the chain in `pluginsintegration.go`, or moved after `NewLoggerMiddleware`, \"Plugin Request Completed\" silently loses its plugin and datasource fields and no test fails. A small test could call each of the four endpoints and check the attributes through `FromContext`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/pluginsintegration/clientmiddleware/metrics_middleware_test.go",
+      "line": 21,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Test function keeps the old middleware name",
+      "body": "The constructor is renamed to `newMetricsMiddleware`, but the test is still called `TestInstrumentationMiddleware`. Rename it to `TestMetricsMiddleware` so the name matches the type under test.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/plugins/log/fake.go",
+      "line": 46,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "TestLogger.FromContext discards the logs written through it",
+      "body": "`FromContext` returns a fresh `NewTestLogger()`, as `New` already does. Anything logged through `logger.FromContext(ctx).Info(...)`, which is what `LoggerMiddleware` now does, is therefore invisible to a test that holds the original `TestLogger`. Returning `f` would let tests assert on those calls. Nothing in this PR relies on it, so this is optional.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Plugin request attributes (endpoint, pluginId, dsName, dsUID, uname) move from the metrics middleware into a new ContextualLoggerMiddleware that is registered after it",
+      "location": "pkg/services/pluginsintegration/pluginsintegration.go:159",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go:27-57",
+        "pkg/services/pluginsintegration/pluginsintegration.go:157-162",
+        "pkg/infra/log/log.go:55-61",
+        "pkg/infra/log/log.go:285-291"
+      ],
+      "equivalent_path": "Old `instrumentContext` call inside `instrumentPluginRequest` in metrics_middleware.go. It ran only after `pluginTarget` succeeded, and only for QueryData, CallResource, CheckHealth and CollectMetrics.",
+      "before_after": "Before, the context was enriched inside the metrics wrapper. Now `ContextualLoggerMiddleware` enriches the context for the same four endpoints with the same attribute set, and the stream methods pass straight through as before. It sits before `LoggerMiddleware` in the chain, so the logger middleware sees the attributes. The one difference is that it also runs when the plugin is not registered, because `pluginTarget` is no longer a gate.",
+      "visible_effect": "Log lines from the plugin client and downstream code still carry the plugin and datasource attributes. Log fields come out in a different order.",
+      "failure_mode": "`QueryData` in the new middleware dereferences `req.PluginContext` with no nil check. `LoggerMiddleware` has a nil guard but the metrics middleware has none, so a nil request panics in the old code too. No new failure mode.",
+      "evidence_checked": true
+    },
+    {
+      "action": "LoggerMiddleware drops its own pluginId/endpoint/uname/traceID/dsName/dsUID params and calls `m.logger.FromContext(ctx).Info`",
+      "location": "pkg/services/pluginsintegration/clientmiddleware/logger_middleware.go:58",
+      "status": "closed",
+      "evidence": [
+        "pkg/plugins/log/logger.go:48-56",
+        "pkg/infra/log/log.go:203-217",
+        "pkg/infra/tracing/tracing.go:91-97",
+        "pkg/services/pluginsintegration/clientmiddleware/logger_middleware.go:49-59"
+      ],
+      "equivalent_path": "Old `logRequest` built the params by hand. `ConcreteLogger.FromContext` runs every registered `ctxLogProviders` entry. These are the context-attributes provider in log.go and the traceID provider registered in `tracing.ProvideService`.",
+      "before_after": "Before, the traceID was added through `tracing.TraceIDFromContext(ctx, false)`. The tracing provider uses the same call with the same argument, so the output is equivalent. This holds only when `tracing.ProvideService` has run, which it does at server startup. `grafanaInfraLogWrapper.FromContext` type-asserts the result to `*log.ConcreteLogger`. `ConcreteLogger.FromContext` returns either `cl` or `cl.New(...)`, both `*ConcreteLogger`, so the assertion succeeds.",
+      "visible_effect": "The \"Plugin Request Completed\" lines carry the same fields as before, now through the contextual logger.",
+      "failure_mode": "If the assertion failed, the wrapper falls back to `d.New()` and silently loses the context fields. That cannot happen with the current infra logger.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no defects in this PR. I read all eight files and the unchanged code they call, and checked that the logging refactor behaves the same as before.\n\n- **`traceID`:** it is still logged. `ConcreteLogger.FromContext` runs the providers registered at `pkg/infra/tracing/tracing.go:91`, and that one calls `TraceIDFromContext(ctx, false)`, the same call the old code made.\n- **Plugin and datasource attributes:** `ContextualLoggerMiddleware` sets them for the same four endpoints and sits before `LoggerMiddleware` in the chain.\n- **New `Logger.FromContext`:** the only implementers of the interface are the wrapper and `TestLogger`, and both have the method. The wrapper's type assertion to `*log.ConcreteLogger` always succeeds with the current infra logger.\n\nI left three non-blocking suggestions:\n- Add tests for the new middleware and for the `LoggerMiddleware` output. Nothing fails if the middleware is dropped from the chain or moved after the logger.\n- Rename `TestInstrumentationMiddleware`, which still has the old name.\n- Optionally make `TestLogger.FromContext` return `f`, so logs written through it can be asserted on.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 215,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.2656793
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "58ba11ecbd60863e2bfc6e32f0399ed4feb3927a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2656793,
+    "usage": {
+      "input": 18,
+      "output": 8697,
+      "cacheRead": 255053,
+      "cacheWrite": 38292
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 71978,
+    "stop": "complete",
+    "notices": []
+  }
+}

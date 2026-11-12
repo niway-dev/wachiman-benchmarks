@@ -1,0 +1,166 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of grafana-103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "grafana-103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/cache.go",
+      "line": 31,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Denial cache key is ambiguous when name or folder contain underscores",
+      "body": "`userPermDenialCacheKey` joins `name` and `parent` with `_`, and neither is escaped. Grafana dashboard and folder UIDs may contain `_`. A deny for name `a_b` in folder `c` and a check for name `a` in folder `b_c` both produce `..._a_b_c`. The second check then hits `permDenialCache` at service.go:117 and returns `Allowed: false` without consulting permissions, for up to 30s. The result is a wrong deny with no error or log. An empty `name` or `parent` makes this worse, because the key then ends in `_`. Use a separator that cannot appear in UIDs, or length-prefix the fields. The key also shares the `<ns>.perm_<uid>_<action>` prefix with `userPermCacheKey` and `anonymousPermCacheKey`. Give it a distinct prefix such as `.perm_denial_`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 973,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "\"Should deny on explicit cache deny entry\" passes without the denial cache",
+      "body": "`setupService` wires a default `fakeStore{}` with no permissions. If the `permDenialCache` check at service.go:117 were removed, this test would still deny. `permCache` holds `dash1: false`, so `checkPermission` returns false. The request then falls through to the DB, which returns no permissions, so the result is still `Allowed: false`. The comment \"Allow access to the dashboard to prove this is not checked\" does not match the data, because the cached value is `false`, not `true`. To exercise the denial cache, make the store or `permCache` grant access, for example `dash1: true` or a store with a matching permission. Then assert the response is still denied, and that the store was not called (`store.calls`). There is also no test that a DB-side deny populates `permDenialCache` (service.go:153-155). A second identical Check should hit the cache and not the store.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 337,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Dead `cacheHit` field in TestService_getUserPermissions",
+      "body": "The cache-hit case was removed, so both remaining cases set `cacheHit: false`. The `if tc.cacheHit` branches at lines 367 and 388 can no longer run. Remove the field and the branches.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 139,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "A stale cache hit that does not allow now always costs a DB round trip",
+      "body": "`getUserPermissions` and `getAnonymousPermissions` no longer read `permCache`. Whenever the cached scope map does not allow the request, `Check` goes to `getIdentityPermissions` and queries the DB, even when the cache is fresh. Only the denial cache bounds this, to once per (user, action, name, folder) per 30s. A user who probes many distinct resources they cannot access, such as a dashboard list for a user with few grants, issues one DB permission query per distinct name or folder. Those queries share a singleflight key per user and action, so only concurrent ones are deduplicated. If this is the intended trade-off, a short comment next to the fallthrough would help.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac.go",
+      "line": 239,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Exported NoopCache with receiver name `lc` copied from LocalCache",
+      "body": "`NoopCache` is only used inside this package, so it can be unexported. The receiver name `lc` is left over from a local-cache implementation. The in-process client now drops the 30s client-side cache that the remote client keeps, and nothing in the code says why. A one-line comment would help. For example: the in-proc server already caches server-side, and the client cache would add a second layer of staleness.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check consults a per-(user,action,name,folder) denial cache and a permissions-cache fast path before the DB",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-137",
+        "pkg/services/authz/rbac/service.go:153-155",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/cache.go:30-32",
+        "pkg/services/authz/rbac/cache.go:58-77"
+      ],
+      "equivalent_path": "Previous flow: getUserPermissions read permCache and, on a hit, returned it, and Check then ran checkPermission on it (the pre-change code at service.go:379-384).",
+      "before_after": "Before, a stale cached scope map that lacked a newly granted permission produced a deny until the TTL expired. Now a cached scope map that does not allow falls through to the DB, and a fresh DB deny is stored in permDenialCache for 30s. The permCache read moved out of getUserPermissions and getAnonymousPermissions into getCachedIdentityPermissions.",
+      "visible_effect": "The gRPC CheckResponse.Allowed that callers see. Newly granted permissions take effect faster when the cached map is stale, but a deny that was just cached persists for 30s, so a grant made right after a deny is still denied for up to 30s. The key-collision issue can also produce wrong denies.",
+      "failure_mode": "Cache Get/Set errors are only logged, so the code degrades to the DB path. A GetUserIdentifiers error in the cached path is ignored and retried in the DB path. A checkPermission error on cached perms returns an error without trying the DB.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The in-process authz client now uses NoopCache instead of a 30s local cache; the remote client is unchanged",
+      "location": "pkg/services/authz/rbac.go:101",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac.go:101-105",
+        "pkg/services/authz/rbac.go:160-169",
+        "pkg/services/authz/rbac.go:239-251"
+      ],
+      "equivalent_path": "newRemoteRBACClient (rbac.go:160-169) still creates authzlib.NewClient with cache.NewLocalCache (30s expiry).",
+      "before_after": "Before, newRBACClient gave both paths the same 30s client cache. Now only the remote path caches client-side, and the in-proc path always calls the server, which has its own permission cache.",
+      "visible_effect": "In-proc access checks reflect permission changes sooner. The server is called on every check, so the number of calls to the in-process server goes up.",
+      "failure_mode": "NoopCache.Get returns cache.ErrNotFound, which is the expected miss signal, so there is no error path.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The caching change is sound in structure, but I found two problems that need fixing. First, the denial-cache key is ambiguous, because `_` joins fields whose UIDs can contain `_`. That can return a wrong deny for up to 30s, silently. Second, the new test \"Should deny on explicit cache deny entry\" would pass even if the denial cache were removed, so it does not test the feature. I also noted one dead test field, the extra DB reads that stale cache hits now cause, and the exported `NoopCache` in `rbac.go`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.262214
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.262214,
+    "usage": {
+      "input": 14,
+      "output": 7392,
+      "cacheRead": 220660,
+      "cacheWrite": 41550
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 71510,
+    "stop": "complete",
+    "notices": []
+  }
+}

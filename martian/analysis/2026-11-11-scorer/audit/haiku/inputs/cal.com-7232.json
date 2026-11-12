@@ -1,0 +1,66 @@
+{
+ "pr": "cal.com-7232",
+ "checkout": "/tmp/audit-wt/cal.com-7232",
+ "audit_ids": [
+  0,
+  3,
+  4,
+  5
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+   "line": 56,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "One failed SendGrid cancel stops the cron loop, and the row deletes queued before it never run",
+   "body": "The cancel loop awaits `client.request` for each flagged reminder inside one `try` (lines 53-77) with no per-item catch. The row deletes are Prisma lazy promises queued at lines 66-70 and only executed by `Promise.all` at line 74, which is skipped when the loop throws. If one cancel fails, the rows already cancelled in that run stay `cancelled: true` and are selected again on the next run (lines 43-51). If SendGrid rejects a repeat cancel of an already-cancelled batch, the failure repeats at the same row every run, so reminders after it are never cancelled and are sent to attendees of cancelled or rescheduled bookings. The only trace is the `console.log` at line 76. Fix: await the cancel and the delete per reminder inside its own try/catch so one failure does not block the rest. I could not confirm how SendGrid answers a repeat cancel; that is the open premise."
+  },
+  {
+   "id": 1,
+   "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+   "line": 488,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Reminder row deletes are no longer awaited; a surviving unscheduled EMAIL row is sent by the cron",
+   "body": "The base awaited the reminder `deleteMany` calls through `await Promise.all(prismaPromises...)`. That await is now gone (line 495-497 only awaits attendee and reference deletes). Line 488 calls `deleteScheduledEmailReminder`, which for an unscheduled reminder (no referenceId) runs `prisma.workflowReminder.delete` (emailReminderManager.ts:203-211) without anyone awaiting it. That row is what stops scheduleEmailReminders.ts:79-98 from sending it: that query selects `scheduled: false` rows up to 72 hours ahead and checks neither the booking status nor `cancelled`. If the handler is cut off before the delete lands, the attendee gets a reminder for a cancelled booking, with no error. The same un-awaited pattern appears at bookings.tsx:490, workflows.tsx:214, 378, 521 and 576. Fix: collect these promises and await them as the base did. Confidence is medium because later awaits in this handler probably let the delete finish first."
+  },
+  {
+   "id": 2,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 968,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Immediate SendGrid cancel on reschedule leaves no retry if the cancel fails",
+   "body": "Line 968 passes `immediateDelete=true`. In emailReminderManager.ts:213-223 that branch cancels in SendGrid and returns without touching the row. If the SendGrid call throws, the catch at emailReminderManager.ts:233-235 only logs. The row keeps `scheduled: true` and `cancelled` null, so the cron never selects it (scheduleEmailReminders.ts:43-51 selects only flagged rows), and the attendee receives the reminder for the old time. Consider falling back to the flag (`cancelled: true`) when the immediate cancel fails, so the cron retries. The try/catch at handleNewBooking.ts:964-975 does not help: the helper is async and never rejects, so the try only wraps code that cannot throw."
+  },
+  {
+   "id": 3,
+   "path": "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts",
+   "line": 225,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Why do email cancellations wait for the cron while SMS, reschedule and workflow delete cancel immediately?",
+   "body": "Flagged EMAIL rows (lines 225-231) stay live in SendGrid until the cron runs within the hour before send. The cron runs every 15 minutes (.github/workflows/cron-scheduleEmailReminders.yml:8). SMS is cancelled at once (smsReminderManager.ts:179-186). Reschedule (handleNewBooking.ts:968), workflow delete (workflows.tsx:214) and step delete (workflows.tsx:521) cancel EMAIL at once too. The PR body does not explain why cancelled-booking EMAIL is deferred. Was this intended? If the cron stops running, deferred emails are still sent. Please confirm the reason, or cancel immediately as the other paths do."
+  },
+  {
+   "id": 4,
+   "path": "packages/trpc/server/routers/viewer/workflows.tsx",
+   "line": 9,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unused Prisma import",
+   "body": "Once the `Prisma.BatchPayload` type was removed with the old delete code, `Prisma` on line 9 has no remaining use in this file. A grep finds only the import. Remove it; it may fail lint or the unused-locals check."
+  },
+  {
+   "id": 5,
+   "path": "packages/trpc/server/routers/viewer/workflows.tsx",
+   "line": 904,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Whitespace-only re-indent inside a block comment",
+   "body": "Lines 848-1010 are a single block comment: `/* testAction:` opens at line 848 and `*/` closes at line 1010, with inner `/*` markers at lines 901 and 968. The PR strips indentation from about 60 lines inside it (lines 904-963) and adds no live code, so the diff is noise unrelated to the PR. Revert the whitespace so the diff shows only real changes. The commented-out block itself predates this PR."
+  }
+ ]
+}

@@ -1,0 +1,68 @@
+{
+  "pr": "cal.com-14740",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "An authenticated attendee can add arbitrarily many guests and trigger organizer-branded mail without checking guest settings or booking status.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/_router.tsx:79 exposes this as an authedProcedure, and addGuests.handler.ts:50-56 explicitly authorizes an attendee by email. For an account that attended a booking whose event type has disableGuests=true, submit new valid, non-blacklisted addresses: addGuests.schema.ts:3-6 has no array cap, and addGuests.handler.ts:74-106 persists them without checking disableGuests, dates or status. This bypasses the guest restriction represented by packages/features/bookings/lib/getBookingFields.ts:228-235 and reaches email-manager.ts:525-549, which sends each new attendee a confirmation; templates/attendee-scheduled-email.ts:50 uses the organizer name as the sender display name. Calendar updates are attempted at addGuests.handler.ts:165, although their success is not guaranteed; the demonstrated failure does not require successful calendar synchronization.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "A failure after the attendee database write can leave saved guests without completing calendar synchronization or notification and make a retry fail validation.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:92-106 commits the attendee insert before translations at 108-121, the credential query at 158, and the calendar update at 165. Consider a successful insert followed by a rejected credential read, such as a database connection failure: packages/lib/server/getUsersCredentials.ts:8-17 awaits findMany without recovery, so the handler rejects before the email call at 168, with no transaction or compensation. A retry containing those same addresses is filtered to zero by addGuests.handler.ts:74-81 and returns emails_must_be_unique_valid instead of completing the original operation. Ordinary provider update failures are often caught by core/CalendarManager.ts:328-348, so the claim is not true of every calendar failure, but the post-commit exception path remains real.",
+      "confidence": "medium"
+    },
+    {
+      "id": 5,
+      "claim": "The permission error uses a missing English translation key, exposing the raw key in the toast.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts:54-55 throws you_do_not_have_permission and apps/web/components/dialog/AddGuestsDialog.tsx:42-44 translates that message directly. The English common.json has no such key; apps/web/public/static/locales/en/common.json:1628 instead defines dont_have_permission. A forbidden request therefore lacks a translated permission message, a localized-copy problem rather than an authorization failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The invalid-email state survives successful submission and closing, showing a stale error when the dialog reopens.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:52-56 sets isInvalidEmail on invalid input, while editing only calls setMultiEmailValue at 69-74. Submit invalid input, correct it, then successfully add guests: onSuccess at 36-40 closes and clears the value but never clears isInvalidEmail, so the conditional error at 76-84 reappears on reopening. apps/web/components/booking/BookingListItem.tsx:357-361 keeps AddGuestsDialog mounted while toggling its open prop, so closing DialogContent does not reset the component state. Only the Cancel handler at AddGuestsDialog.tsx:89-92 clears the flag; the onOpenChange callback at 61 also omits that reset.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The error-toast fallback is unreachable and the client validation schema is recreated on every render.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:43 interpolates a colon and space into message even if both values are absent, so the fallback at 44 cannot be selected. Lines 26-29 also build the schema each render, while packages/trpc/server/routers/viewer/bookings/addGuests.schema.ts:3-6 defines a separate server schema without the client uniqueness refinement. These are demonstrable error-message and maintainability issues; the normal dialog validates email format locally at 52-54, so the asserted server-Zod-message case is not an ordinary valid dialog submission.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "MultiEmail has an untranslated removal tooltip and a label that is not associated with its inputs.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/ui/form/MultiEmail.tsx:21 uses htmlFor=\"emails\", but the EmailField props at 27-38 provide neither that id nor a field name and use an empty label. packages/ui/components/form/inputs/TextField.tsx:66-70 generates an id with useId and uses it at 127-129; its own label is gated on a nonempty name at 102-109, so it does not repair this association. MultiEmail.tsx:46 also hard-codes Remove email despite having t at line 13. These are concrete accessibility/localization issues of limited scope.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "The new add-guests handler and email fan-out have no targeted automated coverage.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff adds packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts and packages/emails/email-manager.ts:525-549 without adding test files. Searching checkout test/spec files for addGuests, sendAddGuestsEmails and add_members found no targeted coverage of these new entry points. The permission branches at addGuests.handler.ts:46-55 and filtering at 74-81 warrant tests, but missing coverage alone does not establish an additional runtime defect.",
+      "confidence": "high"
+    }
+  ]
+}

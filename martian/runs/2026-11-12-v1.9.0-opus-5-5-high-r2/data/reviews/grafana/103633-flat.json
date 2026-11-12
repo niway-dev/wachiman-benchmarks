@@ -1,0 +1,175 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of grafana-103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "grafana-103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/cache.go",
+      "line": 31,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Denial cache key is ambiguous: different (name, folder) pairs map to the same key",
+      "body": "`userPermDenialCacheKey` joins `name` and `parent` with `_`, and dashboard/folder UIDs may themselves contain `_`. A denial for dashboard `a` in folder `b_c` produces `ns.perm_<uid>_dashboards:read_a_b_c`, the same key as dashboard `a_b` in folder `c`. Check reads the denial cache first (`service.go:116-121`) and returns `Allowed: false` without looking at permissions, so the second dashboard is silently denied for up to `shortCacheTTL` even when the user can access it. The key also leaves out the identity type (`checkReq.IdentityType`). Subjects of different types that share a UID string (for example the anonymous or renderer subject and a user) share denial entries, even though `getIdentityPermissions` resolves their permissions differently (`service.go:330-339`). Fix: use a separator that cannot appear in UIDs, or encode the fields (length-prefix or escape them), and add the identity type to the key.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 139,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Every first-time denial now runs a full permission DB query",
+      "body": "`getUserPermissions` and `getAnonymousPermissions` no longer read `permCache` (`service.go:379-380`, `423-424`). So whenever the cached scope map doesn't grant a resource, Check calls `permissionStore.GetUserPermissions` again (`service.go:400`). Only that one exact `(user, action, name, folder)` tuple then goes into the denial cache. Before this change, one DB query per user/action every 30s served every Check, allowed or denied. Now a caller that checks many distinct resources the user can't see (search/list filtering by per-item Check) triggers one permission query per resource. Singleflight only merges calls that run at the same time. You could re-fetch only when the cached entry is older than some threshold, or keep the read-through and invalidate the cache on grant instead.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 982,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "\"explicit cache deny\" test passes even without the denial cache",
+      "body": "The comment says the permission cache is set up to *allow* access \"to prove this is not checked\", but the map value is `false`. So `scopeMap[\"dashboards:uid:dash1\"]` is false and the cached path denies anyway. The DB fallback then uses the default empty `fakeStore` from `setupService` (`service_test.go:1328,1340-1342`), which also denies. The assertion `assert.False(resp.Allowed)` would pass with the denial-cache lookup removed. Set the value to `true` (and/or give the store an allowing permission) so the test fails unless the denial entry short-circuits.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac.go",
+      "line": 239,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "`NoopCache` is exported from the `authz` package but only used internally",
+      "body": "`NoopCache` is used only by `ProvideAuthZClient` (line 103). Exporting it adds public API to `pkg/services/authz`. Make it unexported (`noopCache`), and consider adding `var _ cache.Cache = (*noopCache)(nil)` so the interface conformance is checked at compile time.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check consults the new per-resource denial cache before anything else",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-121",
+        "pkg/services/authz/rbac/service.go:153-155",
+        "pkg/services/authz/rbac/cache.go:30-32",
+        "pkg/services/authz/rbac/cache.go:58-92"
+      ],
+      "equivalent_path": "permCache lookup previously inside getUserPermissions/getAnonymousPermissions",
+      "before_after": "Before: one cached scope map per (user, action), so allow and deny were both answered from cache for 30s. After: a hit on the denial key returns deny immediately. A miss checks the cached scope map and returns only on allow; otherwise it queries the DB and writes a denial entry when the result is a deny.",
+      "visible_effect": "A user is denied a resource for up to shortCacheTTL after a previous denial. Key collisions (cache.go:31) can deny an unrelated resource.",
+      "failure_mode": "Cache Get errors are logged and treated as a miss (cache.go:62-67), so the request falls back to the DB. A Set failure is logged only.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Check/List read cached permissions via new getCachedIdentityPermissions, then fall back to getIdentityPermissions",
+      "location": "pkg/services/authz/rbac/service.go:342",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:123-139",
+        "pkg/services/authz/rbac/service.go:180-192",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/service.go:370-417",
+        "pkg/services/authz/rbac/service.go:419-439"
+      ],
+      "equivalent_path": "getIdentityPermissions (service.go:320-340), which used to read permCache itself",
+      "before_after": "The cached path skips the folders:create action-set expansion, but it uses the same cache key that getUserPermissions writes (service.go:379,406), so it reads the same content. The cache read was removed from getUserPermissions and getAnonymousPermissions, so their DB path always queries the store.",
+      "visible_effect": "Allows come from cache. Denials re-query the DB, so new grants show up sooner. Revocations still lag by up to 30s, as before.",
+      "failure_mode": "If GetUserIdentifiers fails in the cached path, the error is swallowed and the user is looked up again in getUserPermissions (service.go:374). The second lookup surfaces the error, so there is no silent allow.",
+      "evidence_checked": true
+    },
+    {
+      "action": "In-process authz client switches from a 30s local cache to NoopCache",
+      "location": "pkg/services/authz/rbac.go:101",
+      "status": "open",
+      "evidence": [
+        "pkg/services/authz/rbac.go:101-105",
+        "pkg/services/authz/rbac.go:239-251"
+      ],
+      "equivalent_path": "newRemoteRBACClient, which keeps a 30s LocalCache (rbac.go:160-167)",
+      "before_after": "In-process Check/List calls are no longer cached on the client side. Every call goes through the in-proc channel to rbac.Service, which applies its own caching.",
+      "visible_effect": "Permission changes show up faster in-process. Per-request cost now depends on the service's caching.",
+      "failure_mode": "NoopCache.Get always returns cache.ErrNotFound. Whether authzlib treats that as a plain miss could not be verified from the vendored source.",
+      "open_question": "Does authzlib's client treat cache.ErrNotFound from Get as a miss, and ignore Set returning nil without side effects?",
+      "candidates": [
+        "github.com/grafana/authlib/authz/client.go"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change adds a per-resource denial cache in front of Check and moves permission-cache reads into a new getCachedIdentityPermissions. Cached allows return immediately, and denials re-query the DB. The in-process client's local cache becomes a no-op. Issues found: (1) the denial cache key is ambiguous, because `_`-joined name/folder UIDs can collide and the identity type is left out, which can silently deny an unrelated resource; (2) each new (resource, user) denial now runs a full permission DB query, where before one query per user/action served every Check for 30s; (3) the \"explicit cache deny\" test sets the perm-cache value to `false`, so it passes even without the denial cache. Minor: `NoopCache` is exported without need.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.4635362
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4635362,
+    "usage": {
+      "input": 8,
+      "output": 7304,
+      "cacheRead": 98681,
+      "cacheWrite": 37211
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 75941,
+    "stop": "complete",
+    "notices": []
+  }
+}

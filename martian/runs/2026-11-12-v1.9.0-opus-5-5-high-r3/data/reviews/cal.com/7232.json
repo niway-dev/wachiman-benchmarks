@@ -1,0 +1,196 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-7232` of cal.com-7232 against d1440bb5d2f2190ad7ae1d26c165f970055b5370 (merge-base d1440bb)",
+    "repository": {
+      "name": "cal.com-7232"
+    },
+    "base": {
+      "sha": "d1440bb5d2f2190ad7ae1d26c165f970055b5370",
+      "ref": "d1440bb5d2f2190ad7ae1d26c165f970055b5370"
+    },
+    "head": {
+      "sha": "6048e2a86b50e81e1e3b1b467dfea5a895add3dc",
+      "ref": "pr-7232"
+    },
+    "title": "pr-7232",
+    "description": "refactor: use dynamic import in booking page (#7101)\nLayout Story (#7116)\nBooking page now displays localized dates, times, and timezones (#7130)\nfix deleting webhook (#7159)\nfix(schedule): close on click #7143 (#7148)\nsmall UI fix\nfix cancelling scheduled emails\nimprove comments\ndelete reminders for rescheduled bookings\nadd migration file\ncancel rescheduled bookings immediately\nMerge branch 'main' into fix/cancelled-rescheduled-workflow-emails\nremove immediate delete for request reschedule",
+    "author": "CarinaWolli"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+      "packages/features/ee/workflows/components/WorkflowStepContainer.tsx",
+      "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts",
+      "packages/features/ee/workflows/lib/reminders/smsReminderManager.ts",
+      "packages/prisma/migrations/20230217230604_add_cancelled_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma",
+      "packages/trpc/server/routers/viewer/bookings.tsx",
+      "packages/trpc/server/routers/viewer/workflows.tsx"
+    ],
+    "reviewed": [
+      "packages/prisma/migrations/20230217230604_add_cancelled_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma",
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+      "packages/features/ee/workflows/components/WorkflowStepContainer.tsx",
+      "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts",
+      "packages/features/ee/workflows/lib/reminders/smsReminderManager.ts",
+      "packages/trpc/server/routers/viewer/bookings.tsx",
+      "packages/trpc/server/routers/viewer/workflows.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+      "line": 56,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "One failed SendGrid cancel stops every later cancellation in the run",
+      "body": "The whole loop sits inside one try (lines 53-77), and each `client.request` is awaited in order. If one cancel throws (for example a bad or already-handled batch_id), two things happen:\n\n1. Every reminder after it in `remindersToCancel` is skipped for this run.\n2. None of the deletes queued so far run. Prisma promises are lazy and only run at the `Promise.all` on line 74, which is never reached.\n\nThe next cron run fetches the same rows in the same order and fails at the same place. This repeats until line 34 removes the bad row once its `scheduledDate` has passed. By then the reminders behind it have reached their send time, so their emails go out for bookings that were cancelled or rescheduled. Only a `console.log` records it.\n\nFix: put a try/catch around each reminder (cancel it, then delete that row), so one failure does not block the rest.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+      "line": 488,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Reminder cancellation is no longer awaited before the handler returns",
+      "body": "Before, the reminder `deleteMany` calls were added to `prismaPromises` and awaited (old lines ~505-508). Now `deleteScheduledEmailReminder`/`deleteScheduledSMSReminder` are async calls nobody awaits inside `forEach`. Line 495 no longer waits for any reminder work.\n\nThe DB write that marks `cancelled: true` (emailReminderManager.ts:225-232) is what the cron relies on to cancel the SendGrid batch. If the function is suspended after it responds (serverless), that write can be lost, and the reminder email for the cancelled booking is sent with no error.\n\nThe same fire-and-forget pattern appears in bookings.tsx:489-493, handleNewBooking.ts:966-972 and workflows.tsx:212-218/376-382/519-525/574-580.\n\nFix: collect the promises (`map` instead of `forEach`) and `await Promise.all(...)` them.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/bookings/lib/handleNewBooking.ts",
+      "line": 964,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "try/catch around the non-awaited reminder calls catches nothing",
+      "body": "The `forEach` callbacks start async calls without awaiting them, so a rejection never reaches this `catch`. Both callees already catch internally (emailReminderManager.ts:233, smsReminderManager.ts:187), so the `log.error` at line 974 can never run. If you await the calls (see the finding on handleCancelBooking), the try/catch starts doing something; otherwise remove it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/trpc/server/routers/viewer/workflows.tsx",
+      "line": 1,
+      "severity": "fix",
+      "topic": "rules",
+      "confidence": "high",
+      "title": "Type-only imports changed to value imports break the consistent-type-imports lint rule",
+      "body": "`packages/config/eslint-preset.js:35-43` sets `@typescript-eslint/consistent-type-imports` to \"error\" with `prefer: \"type-imports\"`.\n\nThis PR turns `import type { Prisma, PrismaPromise }` into a value import (lines 1-10), and both names are still used only as types. The same happens in two other files:\n- handleNewBooking.ts:1-10 moves `App`, `Credential`, `EventTypeCustomInput` and `Prisma` from `import type` into a value import.\n- scheduleEmailReminders.ts:10 imports `Prisma` and `WorkflowReminder` as values but only uses them as types.\n\nLint will fail. Restore the `import type` lines.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Cron cancels SendGrid batches for reminders flagged cancelled within the next hour, then deletes them",
+      "location": "packages/features/ee/workflows/api/scheduleEmailReminders.ts:44-77",
+      "status": "closed",
+      "evidence": [
+        "packages/features/ee/workflows/api/scheduleEmailReminders.ts:34-41",
+        "packages/features/ee/workflows/api/scheduleEmailReminders.ts:53-77",
+        ".github/workflows/cron-scheduleEmailReminders.yml:8",
+        "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts:213-223"
+      ],
+      "equivalent_path": "emailReminderManager.ts deleteScheduledEmailReminder immediate path (POST /v3/user/scheduled_sends with status cancel)",
+      "before_after": "Uses the same cancel request as the immediate path. The cron runs every 15 minutes, which fits the 1-hour window. Failures are handled for the whole loop at once, not per reminder.",
+      "visible_effect": "The reminder email is not sent for a cancelled booking. If cancellation fails, the email is sent and the failure only shows in a log.",
+      "failure_mode": "The first throwing request stops the rest of the loop, and the queued lazy Prisma deletes never run. The same failure repeats on each run until line 34 deletes the row.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Booking cancellation flags email reminders cancelled (or deletes them when unscheduled) and deletes SMS reminders",
+      "location": "packages/features/bookings/lib/handleCancelBooking.ts:485-497",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleCancelBooking.ts:485-497",
+        "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts:197-236",
+        "packages/features/ee/workflows/lib/reminders/smsReminderManager.ts:177-189"
+      ],
+      "equivalent_path": "Old code awaited the prisma deleteMany calls via prismaPromises",
+      "before_after": "Before, the DB delete was awaited. Now none of the reminder work is awaited before the response.",
+      "visible_effect": "Reminder email or SMS for the cancelled booking",
+      "failure_mode": "Errors are caught and logged inside the callees. If the process stops after the response, the DB flag can be lost and the email is sent with no error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Reschedule cancels the original booking's reminders immediately",
+      "location": "packages/features/bookings/lib/handleNewBooking.ts:963-975",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleNewBooking.ts:964-975",
+        "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts:203-223"
+      ],
+      "equivalent_path": "bookings.tsx requestReschedule (deferred cancellation via cancelled flag)",
+      "before_after": "Emails with a referenceId are only cancelled at SendGrid; the row stays with scheduled=true until the cron deletes it after its date. Emails without a referenceId are deleted. SMS rows are deleted.",
+      "visible_effect": "No reminder is sent for the old time slot",
+      "failure_mode": "The calls are not awaited, so the surrounding try/catch is ineffective; errors are logged inside the callees",
+      "evidence_checked": true
+    },
+    {
+      "action": "Editing a workflow step or removing event types flags the existing reminders as cancelled before new ones are scheduled",
+      "location": "packages/trpc/server/routers/viewer/workflows.tsx:574-580",
+      "status": "closed",
+      "evidence": [
+        "packages/trpc/server/routers/viewer/workflows.tsx:505-531",
+        "packages/trpc/server/routers/viewer/workflows.tsx:567-580",
+        "packages/prisma/schema.prisma:643"
+      ],
+      "equivalent_path": "Deleting a step at workflows.tsx:519-531 cancels immediately, and the cascade then removes the rows",
+      "before_after": "Rows flagged cancelled keep their workflowStepId. If the step is deleted later, remindersFromStep includes them and they are cancelled immediately before the cascade removes them.",
+      "visible_effect": "The user does not receive the old version of the reminder",
+      "failure_mode": "Fire-and-forget, same as the cancellation path",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR changes how booking cancellation, request-reschedule and workflow edits cancel email reminders. They now set a new `cancelled` flag, and the 15-minute cron cancels those SendGrid batches within an hour of their send time. Two cases still cancel immediately: rescheduling a booking and deleting a step or workflow.\n\nProblems found:\n- **Cron cancel loop (fix):** it is wrapped in one try/catch. A single failing SendGrid request skips every later cancellation and all the queued deletes, on every run. The skipped reminders' emails then go out for cancelled bookings, with only a log line to show it.\n- **Calls nobody awaits (fix):** the reminder cancellation calls are no longer awaited before the response, in handleCancelBooking and at the other call sites. The DB flag can be lost, and the reminder is then sent silently.\n- **Lint (fix):** the `import type` → value-import changes break the repository's `consistent-type-imports` lint rule, which is set to error, in workflows.tsx, handleNewBooking.ts and scheduleEmailReminders.ts.\n- **Dead try/catch (consider):** the new try/catch in handleNewBooking can never catch anything.\n\nThe WorkflowStepContainer change only stops an empty gray box from showing when just a sender ID is needed. The workflows.tsx changes at lines 901-962 only reindent code that is already commented out.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 444,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.6657586000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d1440bb5d2f2190ad7ae1d26c165f970055b5370"
+  },
+  "execution": {
+    "costUsdEstimate": 0.6657586000000001,
+    "usage": {
+      "input": 14,
+      "output": 11341,
+      "cacheRead": 252813,
+      "cacheWrite": 48540
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 110805,
+    "stop": "complete",
+    "notices": []
+  }
+}

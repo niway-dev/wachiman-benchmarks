@@ -1,0 +1,124 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-107534-flat` of grafana-107534-flat against d9a8253640464014aa3662c91131278990cfb828 (merge-base d9a8253)",
+    "repository": {
+      "name": "grafana-107534-flat"
+    },
+    "base": {
+      "sha": "d9a8253640464014aa3662c91131278990cfb828",
+      "ref": "d9a8253640464014aa3662c91131278990cfb828"
+    },
+    "head": {
+      "sha": "42e1895430aaa5b1ddc86ed6032dda5e762e0717",
+      "ref": "pr-107534-flat"
+    },
+    "title": "pr-107534-flat",
+    "description": "Advanced Query Processing Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts"
+    ],
+    "reviewed": [
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+      "line": 299,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Queries are interpolated again by runQuery, and 3 times on the shard path; ad hoc filters accumulate",
+      "body": "`runSplitQuery` now calls `datasource.applyTemplateVariables(query, scopedVars, filters)`, including ad hoc filters. Every split request then goes through `datasource.runQuery`, which calls `DataSourceWithBackend.query`. That calls `applyTemplateVariables(q, request.scopedVars, request.filters)` again on each target (`packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185`). So on the plain split path each query is interpolated twice.\n\nOn the shard path `runShardSplitQuery` interpolates once (`shardQuerySplitting.ts:52`). Each sub-request then goes through `runSplitQuery` (`shardQuerySplitting.ts:163`), which interpolates again, and `super.query` interpolates a third time.\n\nThe old shard code called `interpolateVariablesInQueries(request.targets, request.scopedVars)` with no filters. The old `runSplitQuery` did not interpolate at all. So ad hoc filters used to be applied exactly once, in `super.query`.\n\n`addFilterToStreamSelector` skips duplicate labels (`modifyQuery.ts:494`). `addFilterAsLabelFilter` has no such check (`modifyQuery.ts:511-541`). For a query with a parser (`| logfmt`, `| json`) and an ad hoc filter on a non-indexed label, each pass appends another `` | k=`v` ``. The query sent to Loki and shown in the inspector then carries the filter 2x (split) or 3x (shard). The results are the same, but the queries are longer and the text differs from the non-split path. Any variable value that contains `$name` or `[[name]]` is also re-interpolated on later passes.\n\nSuggestion: interpolate once. For example, pass the already-interpolated targets to `runQuery` in a way that skips `super.query`'s interpolation. Alternatively, interpolate only what the splitter needs (`expr` for `isQueryWithRangeVariable`/`isLogsQuery`, and `step`) and leave the rest to `super.query`. For the shard path, interpolate in `runShardSplitQuery` or in `runSplitQuery`, not both.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "line": 112,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test asserts the redundant interpolation count (5), and the new tests never reach super.query",
+      "body": "`toHaveBeenCalledTimes(5)` is 1 call in `runShardSplitQuery` plus 4 calls from the nested `runSplitQuery` sub-requests. The old test asserted 1 call. The test now locks in the repeated interpolation described in the `querySplitting.ts:299` finding, and it breaks when the number of shard groups changes.\n\nThe new 'Interpolates queries before execution' tests in both files mock `datasource.runQuery`. They therefore never exercise the second `applyTemplateVariables` call inside `DataSourceWithBackend.query`. They cannot catch double application of ad hoc filters or variables. A test that spies on `DataSourceWithBackend.prototype.query`, or that sets `request.filters` and checks the final expression, would cover this.\n\nThe `applyTemplateVariables` mocks at lines 56-59 and 173-176 also mutate the incoming `query` in place. The real method returns a new object.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "runSplitQuery / runShardSplitQuery now call datasource.applyTemplateVariables (with scopedVars and ad hoc filters) on each target before splitting",
+      "location": "public/app/plugins/datasource/loki/querySplitting.ts:299",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/querySplitting.ts:296-299",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:49-52",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:163",
+        "public/app/plugins/datasource/loki/datasource.ts:350-352",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:494",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:511-541"
+      ],
+      "equivalent_path": "DataSourceWithBackend.query already calls applyTemplateVariables per target, and the old shard path called interpolateVariablesInQueries without filters",
+      "before_after": "Before: runSplitQuery sent raw targets to runQuery, and interpolation happened once in super.query. The shard path interpolated variables only (no ad hoc filters), then super.query interpolated again with filters. After: targets are interpolated with filters in the splitter, then again in super.query (2x for split, 3x for shard, because runShardSplitQuery feeds runSplitQuery). Interpolating before splitting lets calculateStep, querySupportsSplitting and isLogsQuery see the resolved step and expr.",
+      "visible_effect": "The split-by-time and split-by-shard queries sent to Loki carry repeated ad hoc label filters (`| k=`v``) when the filter is added after a parser. Results are unchanged. The query text and inspector show the repeats.",
+      "failure_mode": "No new async call. No error path. The effect is silent redundancy, with possible re-interpolation of `$` or `[[ ]]` text inside variable values.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change interpolates variables, `step` and ad hoc filters before splitting, so `calculateStep` and the `$__range` check see resolved values. That goal is valid. But `runQuery` goes through `DataSourceWithBackend.query`, which interpolates every target again. So split queries are interpolated twice, and shard queries three times. `addFilterAsLabelFilter` has no duplicate check, so ad hoc filters added after a parser repeat in the query sent to Loki. Results stay the same. Both are \\\"consider\\\"-level findings: the repeated interpolation, and a shard test that asserts the 5-call count while the new tests never reach `super.query`. I found no other defects in the four files.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 63,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.24925989999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d9a8253640464014aa3662c91131278990cfb828"
+  },
+  "execution": {
+    "costUsdEstimate": 0.24925989999999998,
+    "usage": {
+      "input": 20,
+      "output": 7178,
+      "cacheRead": 263439,
+      "cacheWrite": 37774
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 68651,
+    "stop": "complete",
+    "notices": []
+  }
+}

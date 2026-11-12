@@ -1,0 +1,171 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90045-flat` of grafana-90045-flat against 66c4dff17e9147b11fb9b14c6ed63089a599da65 (merge-base 66c4dff)",
+    "repository": {
+      "name": "grafana-90045-flat"
+    },
+    "base": {
+      "sha": "66c4dff17e9147b11fb9b14c6ed63089a599da65",
+      "ref": "66c4dff17e9147b11fb9b14c6ed63089a599da65"
+    },
+    "head": {
+      "sha": "d8bdb59a12b36564bc4d72888cacc9c8193c3f47",
+      "ref": "pr-90045-flat"
+    },
+    "title": "pr-90045-flat",
+    "description": "Dual Storage Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.work.sum",
+      "pkg/apiserver/rest/dualwriter_mode1_test.go",
+      "pkg/apiserver/rest/dualwriter_mode3.go",
+      "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "pkg/tests/apis/playlist/playlist_test.go"
+    ],
+    "reviewed": [
+      "pkg/apiserver/rest/dualwriter_mode3.go",
+      "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "pkg/apiserver/rest/dualwriter_mode1_test.go",
+      "pkg/tests/apis/playlist/playlist_test.go",
+      "go.work.sum"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 166,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Legacy DeleteCollection duration recorded as storage duration",
+      "body": "The goroutine calls recordStorageDuration for the legacy DeleteCollection. It should call recordLegacyDuration, as the other three goroutines do. As written, the legacy latency is mixed into the storage metric and the legacy metric never gets a delete-collection sample.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 45,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Storage failures recorded with the legacy metric",
+      "body": "Create (line 45) and Update (line 129) record a failed Storage call with recordLegacyDuration(true, ...). The storage call is what failed, so it should use recordStorageDuration. Mode 3 storage errors are therefore counted under the legacy metric, and the storage error metric never sees them.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 106,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Delete success metric labelled with object name, and log context uses wrong logger",
+      "body": "Line 106 passes `name` where every other call passes `options.Kind`. This gives the metric a label per object name, which is unbounded cardinality. Line 97 builds the context with `d.Log` instead of `log`, so the name, kind and method values are lost in downstream logs. Both should use the intended values.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 50,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Async legacy writes derive their context from the request context",
+      "body": "The legacy goroutines (lines 50, 108, 134, 161) wrap the request ctx in a timeout. Once the handler returns, the server normally cancels that ctx, so the legacy write can fail with context canceled. Legacy can then silently drift from storage, and the failure is only recorded in a metric. Mode1 uses the same pattern (dualwriter_mode1.go:54), but in Mode3 legacy is a secondary write that nothing else retries. Consider context.WithoutCancel(ctx) as the parent. Failures in these goroutines are also never logged.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 59,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Legacy writes race with the returned object and share mutable inputs",
+      "body": "Create returns `created, err` while the goroutine still uses `obj`, and err is always nil at that point. Mode1 deep-copies before going async. Update and Delete likewise pass the shared objInfo and options into the goroutine, which keeps using them after the handler has returned.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "line": 28,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Tests don't verify the legacy async writes or the failure paths",
+      "body": "The Create and Update cases register legacy mocks but never assert that Legacy was called. The goroutine is racy, so the test would pass whether or not it ran. The Delete and DeleteCollection cases register no legacy mock at all. If the goroutine did run, the testify mock would panic on an unexpected call (or the test would end first). The test titled 'creating an object only in the unified store' registers a legacy mock, which contradicts its name. Use a sync mechanism and AssertCalled to cover the legacy path.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "line": 119,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Local p shadows the package-level registry",
+      "body": "TestMode3_Get creates its own `p`, while all other tests use the package-level `p` from dualwriter_mode1_test.go:27. Shadowing it is inconsistent. Mode1_Get was changed in this PR to drop the same local copy.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Mode 3 write paths: write to Storage synchronously, then to Legacy in a goroutine",
+      "location": "pkg/apiserver/rest/dualwriter_mode3.go:50",
+      "status": "closed",
+      "evidence": [
+        "pkg/apiserver/rest/dualwriter_mode1.go:53-63",
+        "pkg/apiserver/rest/dualwriter_mode3.go:50-57",
+        "pkg/apiserver/rest/dualwriter_mode3.go:161-167"
+      ],
+      "equivalent_path": "DualWriterMode1.Create goroutine writing to Storage",
+      "before_after": "Mode1 writes to Legacy synchronously, deep-copies the result, then runs the Storage write in a goroutine with a 10s timeout. Mode3 uses the same shape with the roles swapped, but it does not deep-copy and it does not log goroutine errors.",
+      "visible_effect": "The client sees only the Storage result. Legacy-store failures are visible only in metrics.",
+      "failure_mode": "The request ctx is cancelled when the handler returns, so the async legacy write may fail with context canceled. That failure is silent apart from a metric, and legacy then drifts from storage.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The Mode3 dual-writer has several metric-labelling bugs: legacy and storage durations are swapped in Create, Update and DeleteCollection, and Delete passes the object name as a label. The async legacy goroutines inherit the request context and may be cancelled early. The tests don't assert the legacy path.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 655,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 5,
+      "costUsd": 0.17999969999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "66c4dff17e9147b11fb9b14c6ed63089a599da65"
+  },
+  "execution": {
+    "costUsdEstimate": 0.17999969999999998,
+    "usage": {
+      "input": 8,
+      "output": 5088,
+      "cacheRead": 98037,
+      "cacheWrite": 29825
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 5,
+    "durationMs": 39583,
+    "stop": "complete",
+    "notices": []
+  }
+}

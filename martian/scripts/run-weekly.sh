@@ -9,6 +9,9 @@
 #   JUDGE_BATCH    judge calls in flight (default 8)
 #   EXTRA_ENV      extra settings for the reviews, e.g. "AGENT_REVIEW_X=1" (an arm)
 #   WACHIMAN_ARGS  extra `wachiman local` flags, e.g. "--result-version 2" (v1.10.0 on: keeps the verifier's verdicts)
+#   ONLY           extended regex on the worklist row: run only the matching PRs (a re-run of a fixed row)
+#   WACHIMAN_DIR   a Wachiman checkout to run instead of the installed one (pins a version:
+#                  `git archive v1.9.0 | tar -x -C /tmp/wachiman-1.9.0`; the wrapper honours it)
 #   RAM_GB         RAM disk size for snapshots (default 6; two Discourse snapshots need about 4)
 # Needs: the installed `wachiman`, ~/.wachiman/claude-personal signed in, ANTHROPIC_API_KEY unset.
 set -u
@@ -53,12 +56,12 @@ review_queue() {
     git -C $W/repos/$repo worktree remove --force $RUN/wt/$repo-$n 2>/dev/null
   done < $1
 }
-tail -n +2 $HERE/worklist.tsv > $RUN/worklist.tsv
+tail -n +2 $HERE/worklist.tsv | grep -E "${ONLY:-.}" > $RUN/worklist.tsv
 for q in $(seq 1 $QUEUES); do awk -v q=$q -v Q=$QUEUES 'NR%Q==q%Q' $RUN/worklist.tsv > $RUN/queue-$q.tsv; done
 for q in $(seq 1 $QUEUES); do review_queue $RUN/queue-$q.tsv & done
 wait
 done_n=$(find $RUN/reviews -name '*.json' -size +0 | wc -l | tr -d ' ')
-log "reviews done: $done_n of 50"
+log "reviews done: $done_n of $(wc -l < $RUN/worklist.tsv | tr -d ' ')"
 
 # 3. A fresh copy of Martian's offline bench, with Wachiman's findings added
 rm -rf $RUN/bench; cp -R $W/martian-upstream/offline $RUN/bench

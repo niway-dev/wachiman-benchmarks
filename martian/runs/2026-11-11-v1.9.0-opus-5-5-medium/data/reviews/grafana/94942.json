@@ -1,0 +1,153 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions returns false on every path, so the feature-flag check does nothing",
+      "body": "Both branches return `false`, so the `IsEnabledGlobally(FlagSqlExpressions)` call (line 195) has no effect, and the inverted `enabled := !...` name points the wrong way. Turning on `sqlExpressions` still gives \"sqlExpressions is not implemented\", which is what the PR wants. But a reader will take this for a flag gate with a bug in it. Either drop the helper and return the error directly in `case QueryTypeSQL` (with a comment saying SQL expressions are disabled until a new engine lands), or write it as `return false // disabled: no SQL engine`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql_command.go",
+      "line": 30,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "The legacy node path is not gated and reports a misleading 'invalid sql' error",
+      "body": "Only `ExpressionQueryReader.ReadQuery` checks `enableSqlExpressions`. The legacy `TypeSQL` branch in `pkg/expr/nodes.go:159-160` calls `UnmarshalSQLCommand` → `NewSQLCommand` → `sql.TablesList`, which now always fails because the stub `RunCommands` returns \"not implemented\". The user gets the BadRequest `sql-invalid-sql` / \"error reading SQL command\", and a Warn \"invalid sql query\" is logged, which suggests their SQL is malformed. Consider returning the same \"sqlExpressions is not implemented\" error early in `NewSQLCommand` or `UnmarshalSQLCommand`, so both paths fail the same way and the message is accurate.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/expr/sql/db.go",
+      "line": 12,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "DB.TablesList stub is unused",
+      "body": "Nothing calls the `TablesList` method on `DB`. The only callers use the package-level `sql.TablesList` (`pkg/expr/sql_command.go:30`, `pkg/expr/sql/parser_test.go`), and that function goes through `RunCommands`. The method sits next to the package function of the same name, which is confusing. Remove it unless a planned interface needs it.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Parsing a query with type \"sql\" via ExpressionQueryReader now always returns an error",
+      "location": "pkg/expr/reader.go:129",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-138",
+        "pkg/expr/reader.go:194-200",
+        "pkg/expr/nodes.go:132-145",
+        "pkg/expr/nodes.go:159-166",
+        "pkg/expr/sql_command.go:25-36",
+        "pkg/expr/sql/parser.go:22-30",
+        "pkg/expr/sql/db.go:16-18"
+      ],
+      "equivalent_path": "Legacy TypeSQL branch in buildCMDNode: pkg/expr/nodes.go:159-160 → UnmarshalSQLCommand → NewSQLCommand",
+      "before_after": "Before: with the flag on, it read the SQLExpression and built an SQLCommand through go-duck. After: the reader fails with 'sqlExpressions is not implemented' whatever the flag says. The legacy path is not gated; it fails inside NewSQLCommand because the stub RunCommands errors, which gives BadRequest 'error reading SQL command'.",
+      "visible_effect": "Any SQL expression in a query or alert returns an error. The message depends on which path parsed it.",
+      "failure_mode": "Fails loudly in both paths. Nothing fails silently: Execute is never reached because the command cannot be built.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand.Execute uses the stub sql.NewInMemoryDB().QueryFramesInto",
+      "location": "pkg/expr/sql_command.go:100",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:96-105",
+        "pkg/expr/sql/db.go:20-22"
+      ],
+      "equivalent_path": "Previous go-duck duck.NewInMemoryDB().QueryFramesInto",
+      "before_after": "Before: ran the SQL in DuckDB. After: always returns 'not implemented', which ends up in rsp.Error.",
+      "visible_effect": "Not reachable in practice, because NewSQLCommand fails first. If it were reached, the error would show in the result.",
+      "failure_mode": "The error is put in rsp.Error and logged.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR removes the go-duck dependency and puts not-implemented stubs in its place, which turns SQL expressions off. It does that, and both parse paths fail loudly rather than silently. Three things to consider: `enableSqlExpressions` returns false on every path, so its feature-flag check does nothing; the legacy nodes.go path is not gated and fails with a misleading 'error reading SQL command' / 'invalid sql query'; and the unused `DB.TablesList` stub has the same name as the package-level `TablesList`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.3618796
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3618796,
+    "usage": {
+      "input": 12,
+      "output": 3559,
+      "cacheRead": 157618,
+      "cacheWrite": 32391
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 49324,
+    "stop": "complete",
+    "notices": []
+  }
+}

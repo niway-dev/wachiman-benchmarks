@@ -1,0 +1,41 @@
+{
+  "pr": "sentry-67876-flat",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "The new OAuth login step lets token-exchange and user-lookup network exceptions escape instead of rendering an installation error.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a callback with matching state, src/sentry/integrations/github/integration.py:412-423 calls safe_urlopen before entering its try block. src/sentry/http.py:85-116 directly calls session.request, so a connection failure escapes; alternatively, a returned access token leads to get_user_info at integration.py:434, whose session.get and raise_for_status in identity/github/provider.py:7-16 let a timeout or HTTP 401 escape. Pipeline.dispatch_to at pipeline/base.py:190-196 and PipelineAdvancerView.handle at web/frontend/pipeline_advancer.py:63-64 do not catch those exceptions, resulting in a server error for an interrupted or rejected GitHub request. The sibling exchange_token catches connection failures at identity/oauth2.py:286-307, although it does not handle every HTTP/timeout case alleged by the comment.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The authorize URL interpolates redirect_uri and state without query-parameter encoding.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/integrations/github/integration.py:404-408 indeed interpolates both values directly. However, pipeline/base.py:132-133 generates state as a hexadecimal digest and utils/http.py:22-30 joins the fixed /extensions/github/setup/ path to the configured URL prefix, so ordinary callback URLs contain no nested query delimiters requiring escaping. The test at tests/sentry/integrations/github/test_integration.py:232-235 confirms that simple URL shape. Using urlencode is sound defensive maintenance, but the cited colon/slashes alone do not produce a failing authorization URL and no concrete supported configuration failure is established.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "test_installation_not_found now stops at the OAuth state check instead of exercising the installation lookup's 404 branch.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/integrations/github/test_integration.py:379-396 stubs the installation 404 but then supplies state ddd023d87a913d5226e2a882c4c4cc05 and asserts Invalid installation request. The successful flow uses state 9cae5e88803f35ed7970fc131e6e65d3 at lines 235-242, matching the pipeline now containing OAuthLoginView and GitHubInstallation at integration.py:343-344. The mismatched state returns at integration.py:412-413 before next_step at line 439 can reach build_integration's 404 handling at lines 351-356. This is lost test coverage rather than evidence that the production 404 handler itself is broken.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The new OAuth tests lack wrong-state, missing-token, missing-login, and missing-sender cases.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The wrong-state portion is false: tests/sentry/integrations/github/test_integration.py:388-396 sends a code with a mismatching state and checks the generic error, albeit under the misleading test_installation_not_found name. The added stubs always provide access_token and login at lines 116-123, and the new mismatch test provides sender at lines 415-417, leaving the missing-token/login/sender paths untested. integration.py:431-436 explicitly handles missing token/login, whereas lines 501-504 directly index sender/login; additional coverage is useful but is not itself a production defect. The missing-sender coverage request overlaps finding 1's scenario, but its root concern is test coverage rather than the KeyError implementation.",
+      "confidence": "high"
+    }
+  ]
+}

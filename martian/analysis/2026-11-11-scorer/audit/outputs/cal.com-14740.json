@@ -1,0 +1,32 @@
+{
+  "pr": "cal.com-14740",
+  "audits": [
+    {
+      "id": 3,
+      "claim": "An authenticated booking attendee can submit an uncapped list of new addresses and trigger app emails to those addresses and existing participants.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings/_router.tsx:79-94 exposes this mutation to authenticated users, and addGuests.handler.ts:50-56 explicitly authorizes an attendee whose email matches the session; addGuests.schema.ts:3-6 has no guest-count cap, while procedures/authedProcedure.ts:7-29 leaves rate limiting commented out. For a booking with an organizer and no calendar references, an attendee can submit 1,000 distinct valid, non-blacklisted addresses: addGuests.handler.ts:74-106 inserts all of them, and packages/core/EventManager.ts:596-601 returns normally for the empty references. addGuests.handler.ts:108-136,165-168 then passes all attendees to packages/emails/email-manager.ts:525-549, which schedules one organizer email and one email per attendee, so repeating with fresh addresses also repeatedly notifies the growing attendee list. The team-member assertion is conditional and does not apply to this handler's event, which has no team field (addGuests.handler.ts:124-147); request-size limits and the global email kill switch also mean 'unlimited' is an absent application-level count limit, not literally infinite delivery.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "The dialog retains its validation error after correcting the emails and succeeding, and preserves both input and error when dismissed through its open-change callback.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:48-56 sets isInvalidEmail on an invalid submit, while packages/ui/form/MultiEmail.tsx:31-34 only updates the email array when the user corrects it; neither a valid submit nor success clears that flag (AddGuestsDialog.tsx:35-40,52-56). For example, submit an invalid email, correct it to a new valid address, successfully add it, and reopen: the success callback reset the input but the error at lines 76-82 still renders. BookingListItem.tsx:357-361 mounts AddGuestsDialog unconditionally, and bookings-listing-view.tsx:209-219 keys the booking row by unchanged booking.id, so ordinary query invalidation does not reset its state. Dismissal forwards only setIsOpenDialog (AddGuestsDialog.tsx:61; packages/ui/components/dialog/Dialog.tsx:80), whereas the Cancel handler alone resets both values (AddGuestsDialog.tsx:89-92), confirming the alternate-close path as well.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The error toast's fallback is unreachable and an error lacking data.code receives a literal undefined prefix.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/components/dialog/AddGuestsDialog.tsx:42-44 always constructs a nonempty string containing ': ', so the unable_to_add_guests fallback cannot run, even with an empty translated message. When err.data is absent, JavaScript interpolation of err.data?.code produces 'undefined', yielding an 'undefined: ...' toast; the client uses HTTP links (packages/trpc/react/trpc.ts:78-94) and supplies no normalization guaranteeing server error data for transport failures. This is a genuine low-impact error-message presentation defect: the underlying failure still reaches the error toast and no booking operation depends on the fallback.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -9,6 +9,9 @@ This repository holds data and reports only. The reviewer's code, specs and deci
 
 ## Start here
 
+- **[martian/models.md](martian/models.md)**: which model and effort to use as reviewer (Opus, Sonnet,
+  Haiku side by side on Martian's 50 PRs), and what the benchmark's false positives really are.
+  The centre of the current conclusions.
 - **[results.md](results.md)**: every result so far in one page, newest first, each line linked to
   its full report. Read this first.
 - **[dataset/](dataset/README.md)**: one row per posted finding (Wachiman, Pullfrog, CodeRabbit),

@@ -1,0 +1,125 @@
+{
+ "pr": "cal.com-22532",
+ "checkout": "/tmp/audit-wt/cal.com-22532",
+ "audit_ids": [
+  0,
+  1,
+  2,
+  4,
+  6,
+  7,
+  8,
+  9,
+  11
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+   "line": 42,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Deleting cached data does not refresh the cache status where no onChanged is passed",
+   "body": "The deleteCache mutation only calls `onSuccess` (line 45). It does not invalidate `connectedCalendars`. The disconnect mutation in the same file does, in `onSettled` (lines 61-64). CalendarListContainer passes `onChanged`, which invalidates `connectedCalendars` (apps/web/components/apps/CalendarListContainer.tsx:79-88, 112-113), so the main settings page refreshes. EventAdvancedTab renders the wrapper without `onChanged` (packages/features/eventtypes/components/tabs/advanced/EventAdvancedTab.tsx:372-384), so `onSuccess` is undefined there. After a successful delete the toast says it worked, but the menu still shows 'Last updated' and 'Delete cached data' until the page reloads. Fix: move `const utils = trpc.useUtils();` above the cache mutation and add `async onSettled() { await utils.viewer.calendars.connectedCalendars.invalidate(); }` to `deleteCacheMutation`."
+  },
+  {
+   "id": 1,
+   "path": "scripts/test-gcal-webhooks.sh",
+   "line": 5,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "ENV_FILE is resolved against the caller's working directory and can write outside the repo",
+   "body": "`ENV_FILE=\"../.env\"` is relative to the current directory, and the script never changes directory. Run from the repo root as `./scripts/test-gcal-webhooks.sh`, it writes GOOGLE_WEBHOOK_URL into the parent directory of the repo and creates that file if it is missing (lines 62-70). The repo's env template is the root `.env.example`, so the intended target is the root `.env`. Fix: resolve it from the script location, e.g. `ENV_FILE=\"$(cd \"$(dirname \"$0\")/..\" && pwd)/.env\"`. Confidence is medium because the script documents no working directory, so the outcome depends on how it is run."
+  },
+  {
+   "id": 2,
+   "path": "packages/trpc/server/routers/viewer/calendars/connectedCalendars.handler.ts",
+   "line": 28,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Cache status bypasses the global calendar-cache gate that every other caller uses",
+   "body": "The handler constructs `new CalendarCacheRepository()` directly. Other callers go through `CalendarCache.init` (packages/features/calendar-cache/calendar-cache.ts:22-28; e.g. packages/app-store/googlecalendar/lib/CalendarService.ts:463, 616, 981), which returns `CalendarCacheRepositoryMock` when calendar-cache is off globally. So the mock's new `getCacheStatusByCredentialIds` (calendar-cache.repository.mock.ts:27-30) can never run from this path. With the flag off, the settings page still queries the table and shows 'Last updated' for any rows left behind. Fix: `const cacheRepository = await CalendarCache.init(null);`. That type-checks because the method is on the interface (calendar-cache.repository.interface.ts:30-32)."
+  },
+  {
+   "id": 3,
+   "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+   "line": 89,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Cache timestamp is always formatted as en-US while the label is translated",
+   "body": "The label is localized through `t(\"cache_last_updated\", \u2026)`, but the timestamp is formatted with a hard-coded `Intl.DateTimeFormat(\"en-US\", \u2026)` (lines 89-92). Users in other locales see an English date format inside a localized sentence. Format with the active locale instead."
+  },
+  {
+   "id": 4,
+   "path": "packages/prisma/migrations/20250715160635_add_calendar_cache_updated_at/migration.sql",
+   "line": 9,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Legacy cache rows get the deploy time as 'Last updated'; header comment contradicts the statement",
+   "body": "`DEFAULT NOW()` gives every existing CalendarCache row the migration timestamp, so 'Last updated' shows the deploy date for rows not rewritten since. The real write time is recoverable: upsertCachedAvailability sets `expiresAt = now + CACHING_TIME` (packages/features/calendar-cache/calendar-cache.repository.ts:16, 161, 168), so `expiresAt - 30 days` equals the write time if CACHING_TIME has always been 30 days. I could not confirm that from history. Separately, the generated header (lines 2-6) still says the column is added 'without a default value', which the next statement contradicts. Consider `UPDATE \"CalendarCache\" SET \"updatedAt\" = \"expiresAt\" - INTERVAL '30 days';` after the ALTER, and correct the header."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 1024,
+   "severity": "consider",
+   "topic": "question",
+   "title": "SelectedCalendar.updatedAt is bumped on every cache refresh but nothing in this part reads it",
+   "body": "`updateManyByCredentialId(this.credential.id, {})` runs on every cache refresh (the webhook at packages/app-store/googlecalendar/api/webhook.ts:46 and unwatch at CalendarService.ts:975) and writes `SelectedCalendar.updatedAt` for every calendar under the credential. The status the UI shows reads `CalendarCache.updatedAt` instead (connectedCalendars.handler.ts:27-29). `UserWithCalendars` carries the new field (packages/lib/getConnectedDestinationCalendars.ts:21-28), but CalendarManager only uses `externalId` from selected calendars (packages/lib/CalendarManager.ts:81). Questions for the author: which consumer needs this column? And does Prisma write `@updatedAt` for an `updateMany` with empty `data`? If it does not, the line does no write at all and the PR's stated purpose is not met. If nothing reads it, the line is an extra UPDATE per webhook. My search for readers was not exhaustive."
+  },
+  {
+   "id": 6,
+   "path": "packages/trpc/server/routers/viewer/calendars/deleteCache.handler.ts",
+   "line": 28,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Cache delete bypasses the repository, though the PR says it uses the repository pattern",
+   "body": "The PR body says the cache deletion 'use[s] repository pattern', but this handler calls `prisma.calendarCache.deleteMany` directly, while the read path goes through the repository. The repository has no delete method, and the mock declares `deleteManyByCredential` (calendar-cache.repository.mock.ts:23-25) that the real class lacks. Moving the delete behind `CalendarCache.init` would be wrong as a drop-in: with the flag off it returns the mock, and the delete would silently do nothing while the toast says success. If the author moves it into the repository, the write must stay unconditional."
+  },
+  {
+   "id": 7,
+   "path": "packages/trpc/server/routers/viewer/calendars/deleteCache.handler.ts",
+   "line": 13,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "No tests for the new delete handler, its ownership check, or the status query",
+   "body": "Nothing covers `deleteCacheHandler` and its ownership check (lines 17-26), `getCacheStatusByCredentialIds` (packages/features/calendar-cache/calendar-cache.repository.ts:173-188), or the enriched `connectedCalendarsHandler` output. The calendars folder has only setDestinationCalendar.handler.test.ts. The existing calendar-cache.repository.test.ts (prismock) already covers the repository, so a case for the new method fits there. The ownership check is the access boundary for this mutation, so it should have a test that a foreign credentialId is rejected."
+  },
+  {
+   "id": 8,
+   "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+   "line": 6,
+   "severity": "consider",
+   "topic": "rules",
+   "title": "@calcom/platform-constants is imported but not declared by packages/features",
+   "body": "This file imports `GOOGLE_CALENDAR_TYPE` from `@calcom/platform-constants`. packages/features/package.json does not declare that package, and this is the only import of it under packages/features. It resolves through workspace hoisting, but the package should list its own dependencies. Add it to packages/features/package.json, or import the constant from a package that already declares it."
+  },
+  {
+   "id": 9,
+   "path": "apps/web/package.json",
+   "line": 11,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "dev:cron runs npx tsx, but tsx is not declared anywhere in the repo",
+   "body": "`dev:cron` now runs `npx tsx cron-tester.ts`. `tsx` does not appear in any package.json in the repo (ts-node is declared at apps/web/package.json:196). When tsx is not already installed, npx downloads the latest version on each run, unpinned. Add tsx to devDependencies, or keep ts-node, which is already declared. Confidence is medium because I did not check whether tsx is present transitively in node_modules."
+  },
+  {
+   "id": 10,
+   "path": "scripts/test-gcal-webhooks.sh",
+   "line": 68,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "sed -i '' is BSD-only, and failure paths exit 0",
+   "body": "`sed -i ''` is the macOS form. On GNU sed (Linux) the empty string is read as the script and the command fails after tunnelmole has already started. Separately, `cleanup` always exits 0 (lines 11-18), and it is called on the rate-limit path (line 49) and the no-URL path (line 58), so a calling shell cannot tell the URL was not written. Consider `sed -i.bak` (works on both) with the .bak removed, and a non-zero exit on the failure paths."
+  },
+  {
+   "id": 11,
+   "path": "scripts/test-gcal-webhooks.sh",
+   "line": 30,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Reuse branch can write a stale tunnel URL from an old log",
+   "body": "In the 'already running' branch the URL comes from /tmp/tmole.log (line 30). That file is only cleared when this script starts tmole itself (line 34). If tmole was started elsewhere, the first URL in an older log can be written to the env file and reported as current, with no check that the log belongs to the running process."
+  }
+ ]
+}

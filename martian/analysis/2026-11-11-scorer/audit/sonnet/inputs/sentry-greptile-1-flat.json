@@ -1,0 +1,65 @@
+{
+ "pr": "sentry-greptile-1-flat",
+ "checkout": "/tmp/audit-wt/sentry-greptile-1-flat",
+ "audit_ids": [
+  2,
+  4,
+  5
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/api/paginator.py",
+   "line": 840,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "OptimizedCursorPaginator cannot paginate a datetime key (endpoint passes order_by=-datetime)",
+   "body": "`OptimizedCursorPaginator.get_item_key` (840) and `value_from_cursor` (843) copy `Paginator`, which is for integer keys (222-227). The audit-log endpoint orders by `-datetime`, which is why it used `DateTimePaginator` (233-241). `DateTimePaginator` converts the datetime to a millisecond timestamp in `get_item_key` and converts the cursor value back to a datetime in `value_from_cursor`. The new class does neither. `math.floor(<datetime>)` raises `TypeError` on the first non-empty result set. On a second page, `cursor.value` is passed raw into `datetime >= <number>` in `build_queryset`. So `?optimized_pagination=true` fails for any org with audit rows, and cursors from the default path are not interchangeable with it. Subclass `DateTimePaginator` if a variant is really needed. First, state what the new class does that the existing paginators do not."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/api/paginator.py",
+   "line": 877,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Negative-offset path relies on Django behaviour that does not exist",
+   "body": "The comment at 876 says the Django ORM handles negative slicing automatically. It does not. `QuerySet.__getitem__` asserts on negative indices (\"Negative indexing is not supported\"). A cursor like `0:-1:0` (parsed by `Cursor.from_string`, `src/sentry/utils/cursors.py:58-59`, with no sign check) sends `queryset[-1:stop]` and raises `AssertionError`, which becomes a 500. So the advertised \"reverse pagination from arbitrary positions\" does not work. The comment that this reaches \"data beyond normal pagination bounds\" and is safe \"because permissions are checked at the queryset level\" is also not backed by any code in this PR. Remove the branch, or reject negative offsets with a 400 in `get_cursor`/`paginate`. Add tests for whichever you choose; the PR adds none."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/api/paginator.py",
+   "line": 182,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Shared BasePaginator.get_result now silently clamps negative offsets for every endpoint",
+   "body": "This changes `BasePaginator`, which every `Paginator`/`DateTimePaginator` endpoint uses, not just the audit log. Before, a forward cursor with a negative offset (`value:-5:0`, accepted by `Cursor.from_string`) failed in Django's slice assertion. Now it is clamped to 0 and returns a page from the start, with no error, so a malformed cursor yields a wrong result silently. The `is_prev` branch still passes the negative offset through, so the behaviour is inconsistent. Line 192 still compares `len(results)` to the unclamped `offset + limit + extra`, which no longer matches the slice that was fetched. The comment (179-181) claims a benefit that the code does not provide. Revert this hunk. If negative offsets should be handled, validate the cursor and return 400."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+   "line": 71,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "enable_advanced is evaluated on every request and dereferences a possibly-None member",
+   "body": "`organization_context.member` is typed `RpcOrganizationMember | None`, and the model comment says it is None when the caller is not a member (`src/sentry/organizations/services/organization/model.py:344-346`). This line runs even when `optimized_pagination` is absent. A non-superuser caller with no membership, for example a token with `org:write` that is not tied to a member, now raises `AttributeError` and gets a 500 on the default listing that used to work. Compute `enable_advanced` only inside `if use_optimized`, and guard `member is not None`. I could not confirm which callers reach this endpoint with `member=None`; the type and the model comment say it is possible."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+   "line": 68,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Duplicated paginate call and undocumented query flag with no stated need",
+   "body": "The two `paginate` branches differ only in `paginator_cls` and `enable_advanced_features`. The \"performance\" claim has no benchmark, and the new class runs the same query as the base paginator. A hidden `optimized_pagination` flag gated by role adds an untested code path to a security-sensitive audit endpoint. The PR adds no tests for it, and no tests for the endpoint or `OptimizedCursorPaginator`. If it stays, add tests for both paths. Lines 72 and 89 also have trailing whitespace."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/utils/cursors.py",
+   "line": 26,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "Comment on Cursor.offset describes behaviour that is not implemented",
+   "body": "The comment says the constructor \"allows negative offsets for advanced pagination\", but `int(offset)` is unchanged and the class never allowed or disallowed them specially. Only the paginators interpret the offset. The comment is misleading and the file has no functional change; drop it."
+  }
+ ]
+}

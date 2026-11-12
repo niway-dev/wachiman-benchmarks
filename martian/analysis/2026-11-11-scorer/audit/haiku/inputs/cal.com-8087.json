@@ -1,0 +1,75 @@
+{
+ "pr": "cal.com-8087",
+ "checkout": "/tmp/audit-wt/cal.com-8087",
+ "audit_ids": [
+  2,
+  3,
+  5,
+  6
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/trpc/server/routers/viewer/bookings.tsx",
+   "line": 553,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Reschedule: getCalendar failures are now silently dropped by forEach(async)",
+   "body": "The callback passed to `bookingRefsFiltered.forEach` is now `async`, and `getCalendar` is awaited at line 556. Before this change `getCalendar` ran synchronously, so a throw from `new CalendarService(credential)` (packages/app-store/_utils/getCalendar.ts:22) escaped the forEach and failed the mutation. That failure happened after the booking was already set to CANCELLED (packages/trpc/server/routers/viewer/bookings.tsx:482). Now the rejection is never observed: forEach drops the promise, the mutation returns success, and the calendar event is not deleted. The throw is reachable: the googlecalendar constructor parses `credential.key` with zod synchronously (packages/app-store/googlecalendar/lib/CalendarService.ts:38). The `deleteEvent` rejections were already unhandled before this change, so the new loss is specifically the getCalendar failure. The same PR converts the old-behaviour loop in packages/features/bookings/lib/handleCancelBooking.ts:480-483 to `for...of`, which is the pattern to use here. This block has no enclosing try (no `try {` between lines 480 and 600 of this file)."
+  },
+  {
+   "id": 1,
+   "path": "packages/app-store/vital/lib/reschedule.ts",
+   "line": 125,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Vital reschedule: the try/catch can no longer catch calendar failures",
+   "body": "The `try` at line 124 wraps `bookingRefsFiltered.forEach(async ...)`. The callback is async, so `await getCalendar(...)` at line 128 turns a synchronous throw into a rejected promise that forEach drops. The `logger.error` at line 137 is therefore unreachable for calendar-creation failures, and the failure is lost: the calendar event is not deleted, and nothing is logged by this code. Before this change the synchronous throw from getCalendar was caught here and logged. The `_video` branch (line 131) keeps its previous behaviour. Fix: iterate with `for...of` and await inside the try, as in packages/features/bookings/lib/handleCancelBooking.ts:480-483."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/wipemycalother/lib/reschedule.ts",
+   "line": 125,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Wipemycalother reschedule: the try/catch can no longer catch calendar failures",
+   "body": "Same defect as the vital reschedule. The `try` at line 124 wraps `bookingRefsFiltered.forEach(async ...)`, and `await getCalendar(...)` at line 128 turns a synchronous throw into a rejected promise that forEach drops. The `logger.error` at line 137 no longer sees calendar-creation failures, so the calendar event is silently left in place. Fix: use `for...of` with await inside the try."
+  },
+  {
+   "id": 3,
+   "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+   "line": 460,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Recurring cancel: a getCalendar failure silently skips the remaining calendar deletions",
+   "body": "In the recurring branch, `.forEach(async (credential) => { const calendar = await getCalendar(credential); for (...) { ... await calendar?.deleteEvent(...) } })` at lines 458-470. Before this change `getCalendar` was synchronous, so a throw propagated out of forEach and out of the handler, and the cancel request failed visibly. Now the rejection is dropped: that credential's deletions are skipped with no error, and the handler still returns \"Booking successfully cancelled.\" (line 656). A pre-existing race is also in this block: the `apiDeletes.push(deletedEvent)` at line 467 runs after the forEach callback has started, and the snapshot taken at line 652 (`Promise.all(prismaPromises.concat(apiDeletes))`) may not include those entries. This PR already converts the old-behaviour branch at lines 480-483 to `for...of`; the recurring branch should use the same pattern so the getCalendar await and the deleteEvent await are both sequenced by the handler."
+  },
+  {
+   "id": 4,
+   "path": "packages/core/videoClient.ts",
+   "line": 52,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "createMeeting: an app load failure now throws instead of falling back to Cal Video",
+   "body": "`getVideoAdapters` is now async and does `await appStore[...]`, and `createMeeting` awaits it at line 52, which is outside the `try` that starts at line 70. The Cal Video fallback is in that try's `catch` (lines 86-91). Before this change `getVideoAdapters` could not reject on a module load. Now, if the dynamic import of a video app rejects, `createMeeting` rejects before the fallback runs, so the booking fails instead of falling back. This needs a module load failure to occur, so it is rare; moving the call inside the try, or catching it, would keep the fallback."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/index.ts",
+   "line": 3,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "Async import of appStore does not defer loading: import() runs when the object literal is evaluated",
+   "body": "Each `import(\"./x\")` in the object literal starts loading the module as soon as `index.ts` is evaluated. The set of modules loaded is the same as with the earlier static imports; only the values changed from modules to promises. The PR title and commit message (\"Async import of the appStore packages\") suggest the goal is to defer loading. To defer it, store thunks (`applecalendar: () => import(\"./applecalendar\")`) and call them at the six lookup sites (packages/app-store/_utils/getCalendar.ts:15, packages/core/videoClient.ts:26, packages/features/bookings/lib/handleCancelBooking.ts:589, packages/trpc/server/routers/viewer/bookings.tsx:967, packages/lib/payment/handlePayment.ts:26, packages/lib/payment/deletePayment.ts:16)."
+  },
+  {
+   "id": 6,
+   "path": "packages/app-store/index.ts",
+   "line": 3,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Unawaited app import rejections: is there an unhandledRejection handler in the server runtime?",
+   "body": "Each `import()` promise is created at module evaluation. If one app module throws while loading, its promise rejects at startup, and nothing awaits it until that app is looked up. Before this change, a failing static import would have thrown at module load, which is visible at startup. Is there an unhandledRejection handler for the web server that would make this visible? The candidates are apps/web/sentry.server.config.js and apps/web/next.config.js. I did not check either file."
+  }
+ ]
+}

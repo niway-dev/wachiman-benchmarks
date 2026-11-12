@@ -1,0 +1,198 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-2` of discourse-graphite-2 against 56abd247e1829cb6de82dfcc8ce04deb5f0d1e91 (merge-base 56abd24)",
+    "repository": {
+      "name": "discourse-graphite-2"
+    },
+    "base": {
+      "sha": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91",
+      "ref": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91"
+    },
+    "head": {
+      "sha": "6669a2d94d76eea3b99b8c476d12b1eb66726b07",
+      "ref": "pr-2"
+    },
+    "title": "pr-2",
+    "description": "FEATURE: per-topic unsubscribe option in emails",
+    "author": "Régis Hanol"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/components/dropdown-button.js.es6",
+      "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/routes/app-route-map.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-from-params.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs",
+      "app/assets/javascripts/discourse/views/topic-unsubscribe.js.es6",
+      "app/assets/stylesheets/common/base/topic.scss",
+      "app/controllers/topics_controller.rb",
+      "app/mailers/user_notifications.rb",
+      "app/models/topic.rb",
+      "app/models/topic_user.rb",
+      "app/views/email/notification.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "lib/email/message_builder.rb",
+      "spec/components/email/message_builder_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/components/dropdown-button.js.es6",
+      "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/routes/app-route-map.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-from-params.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs",
+      "app/assets/javascripts/discourse/views/topic-unsubscribe.js.es6",
+      "app/controllers/topics_controller.rb",
+      "app/mailers/user_notifications.rb",
+      "app/models/topic_user.rb",
+      "app/models/topic.rb",
+      "app/views/email/notification.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "lib/email/message_builder.rb",
+      "spec/components/email/message_builder_spec.rb",
+      "app/assets/stylesheets/common/base/topic.scss"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 113,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Unsubscribe skips TopicUser.change, so the mute can be silently undone by auto-tracking",
+      "body": "The action sets `tu.notification_level` and calls `tu.save!` directly. The existing path, `set_notifications` (line 332), goes through `TopicUser.change`, and that also sets `notifications_reason_id = user_changed` and `notifications_changed_at` (topic_user.rb:87-90) and publishes the MessageBus change (topic_user.rb:112-114). Here none of that happens. The auto-track code only acts on rows whose `notifications_reason_id` is NULL: `auto_track` (topic_user.rb:38) and the `update_last_read` SQL (topic_user.rb:161-164). So a user who never picked a level (reason NULL) clicks unsubscribe and gets set to muted. The next time they read the topic past the auto-track threshold, or reply to it, it goes back to tracking without telling them, and they start getting notifications they just opted out of. Their other open tabs also never get the level change. Fix: call `TopicUser.change(current_user.id, params[:topic_id], notification_level: new_level)` instead of `save!`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 107,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "500 error when the visiting user has no TopicUser row",
+      "body": "`TopicUser.find_by(...)` returns nil when the logged-in user has never interacted with the topic. `tu.notification_level` then raises NoMethodError and the page returns a 500. The URL is public and contains no user-specific part (`Topic#unsubscribe_url`, topic.rb:719-721), so this happens to anyone who opens a forwarded email link, or to the recipient if they open it while logged in as a different account. `TopicUser.change` creates the row when it is missing (topic_user.rb:97-106), so switching to it, as in the other finding, fixes this as well.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 98,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "high",
+      "title": "State-changing GET endpoint with no CSRF protection, and it changes the level again on every repeat",
+      "body": "`GET /t/:slug/:topic_id/unsubscribe` (routes.rb:440-441) changes the user's notification level, and `check_xhr` is skipped for it (line 32). Any third-party page can embed `<img src=\"https://forum/t/x/123/unsubscribe\">` and use the visitor's session cookie to lower their notification level on any topic ID. Each hit lowers it one more step (watching/tracking → regular → muted, lines 107-111), so two requests mute the topic. The same goes for an ordinary browser reload or Back/forward re-fetch of the page: a user who landed at regular gets moved to muted without being told. Consider a signed per-user key in the link (like `email_unsubscribe_url(key: ...)` used by the digest), or have the GET only render a confirmation and do the change on POST/PUT.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/locales/client.en.yml",
+      "line": 985,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "The page says notifications will stop even when the topic was only lowered to Regular",
+      "body": "When the previous level was tracking or watching, the controller sets it to regular, not muted (topics_controller.rb:107-108). Regular still notifies on mentions and replies. The message \"You will stop receiving notifications for <title>\" is therefore wrong in that case. Consider wording based on the resulting level, or always muting.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "line": 5,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Typo in property name `stopNotificiationsText`",
+      "body": "`stopNotificiationsText` should be `stopNotificationsText`. The misspelled name is also used in templates/topic/unsubscribe.hbs:3, so it would need renaming in both places.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "User clicks the per-topic unsubscribe link in a notification email (GET /t/:slug/:topic_id/unsubscribe)",
+      "location": "app/controllers/topics_controller.rb:98",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/topics_controller.rb:98-116",
+        "app/controllers/topics_controller.rb:330-332",
+        "app/models/topic_user.rb:37-42",
+        "app/models/topic_user.rb:85-114",
+        "app/models/topic_user.rb:155-167",
+        "app/assets/javascripts/discourse/models/post-stream.js.es6:811-823",
+        "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6:4-10"
+      ],
+      "equivalent_path": "TopicsController#set_notifications → TopicUser.change",
+      "before_after": "set_notifications calls TopicUser.change, which sets notifications_reason_id/changed_at, creates the row if it is missing, and publishes to MessageBus. unsubscribe writes notification_level directly with save!, skips all of that, and raises when no row exists.",
+      "visible_effect": "The server changes the level, then perform_show_response preloads the topic JSON and renders :show. The Ember topicUnsubscribe route reads that preload through PostStream.loadTopicView and shows the topic-notifications-button with the new level.",
+      "failure_mode": "Missing TopicUser row → NoMethodError → 500. A NULL reason_id lets update_last_read/auto_track put the level back to tracking later, with nothing shown to the user. Reload or a cross-site GET lowers the level one more step.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The unsubscribe_link email text now interpolates %{unsubscribe_url}",
+      "location": "config/locales/server.en.yml:1852",
+      "status": "closed",
+      "evidence": [
+        "lib/email/message_builder.rb:61-69",
+        "lib/email/message_builder.rb:88-91",
+        "app/mailers/user_notifications.rb:294-295",
+        "app/models/topic.rb:703-721",
+        "app/mailers/rejection_mailer.rb:6-12"
+      ],
+      "equivalent_path": "Email::MessageBuilder#html_part/#body when add_unsubscribe_link is set",
+      "before_after": "Before, it needed only user_preferences_url. Now it also needs unsubscribe_url. The only caller in the repository that passes add_unsubscribe_link (user_notifications.rb:294) now supplies it, and the spec was updated to match.",
+      "visible_effect": "The email footer gets a second link to the absolute topic unsubscribe URL (Topic#url includes base_url).",
+      "failure_mode": "A caller that sets add_unsubscribe_link without unsubscribe_url would get an I18n interpolation error. None exists in the repository.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This PR adds a per-topic unsubscribe link to notification emails (GET /t/:slug/:id/unsubscribe) and an Ember page that shows the topic's new notification level. The new action has three problems. First, it writes the level directly with save! instead of going through TopicUser.change. That skips notifications_reason_id, so auto-tracking can later put the topic back to tracking without telling the user, and open tabs never get the MessageBus update. Second, it returns a 500 when the visiting user has no TopicUser row for the topic. Third, it is a state-changing GET with no CSRF protection and no confirmation, so a reload or a cross-site request lowers the level one more step each time. The email, locale, route and refactoring changes look correct.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 18,
+      "lines": 225,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.4328788
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4328788,
+    "usage": {
+      "input": 22,
+      "output": 8585,
+      "cacheRead": 254894,
+      "cacheWrite": 26264
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 87208,
+    "stop": "complete",
+    "notices": []
+  }
+}

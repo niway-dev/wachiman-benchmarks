@@ -1,0 +1,227 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3-flat` of sentry-greptile-3-flat against 83f40559985e1365a43f35ba3febb7ea4fabb5d5 (merge-base 83f4055)",
+    "repository": {
+      "name": "sentry-greptile-3-flat"
+    },
+    "base": {
+      "sha": "83f40559985e1365a43f35ba3febb7ea4fabb5d5",
+      "ref": "83f40559985e1365a43f35ba3febb7ea4fabb5d5"
+    },
+    "head": {
+      "sha": "2f1ccf00863c0c0f5df4581368118fefe3889cf1",
+      "ref": "pr-3-flat"
+    },
+    "title": "pr-3-flat",
+    "description": "feat(upsampling) - Support upsampled error count with performance optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pyproject.toml",
+      "sentry-repo",
+      "src/sentry/api/endpoints/organization_events_stats.py",
+      "src/sentry/api/helpers/error_upsampling.py",
+      "src/sentry/search/events/datasets/discover.py",
+      "src/sentry/testutils/factories.py",
+      "tests/sentry/api/helpers/test_error_upsampling.py",
+      "tests/snuba/api/endpoints/test_organization_events_stats.py"
+    ],
+    "reviewed": [
+      "pyproject.toml",
+      "sentry-repo",
+      "src/sentry/api/endpoints/organization_events_stats.py",
+      "src/sentry/api/helpers/error_upsampling.py",
+      "src/sentry/search/events/datasets/discover.py",
+      "src/sentry/testutils/factories.py",
+      "tests/sentry/api/helpers/test_error_upsampling.py",
+      "tests/snuba/api/endpoints/test_organization_events_stats.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/search/events/datasets/discover.py",
+      "line": 1048,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "upsampled_count sums sample_weight without ifNull, so events with no sample rate count as 0",
+      "body": "`sum(sample_weight)` is used directly. The only code that sets `sample_rate` at ingest is `_derive_client_error_sampling_rate` (src/sentry/event_manager.py:774-798). It only runs for allowlisted projects and only when the client sent a valid `client_sample_rate`. Events from before a project was allowlisted, and events with no or invalid client rate, have no sample rate. The comment says the column 'exists for all events', but nothing in the repo guarantees that. For those events the sum counts them as 0 (or NULL), so upsampled charts silently undercount, with no error. Wrap the column in a default of 1, e.g. `sum(ifNull(sample_weight, 1))`. I can't see the Snuba schema from this repo, so I don't know whether the column is Nullable or defaults to 0. If it defaults to 0, `ifNull` won't help and the aggregate needs a different fallback.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/search/events/datasets/discover.py",
+      "line": 1041,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "upsampled_count is registered as a public query function",
+      "body": "The neighbouring internal helpers (`column_hash`, `rounded_timestamp`, `examples`) set `private=True`. `upsampled_count` does not, so any user can put `upsampled_count()` in a field, yAxis or aggregate condition. They can do this on transactions, on non-allowlisted projects, or on events without sample weights. There it gives meaningless or zero results, or a Snuba error if the column is missing for the entity. It is only meant to be injected by `transform_query_columns_for_error_upsampling`, so add `private=True`. I did not check whether the transform's injected `upsampled_count() as count` column goes through a code path that rejects private functions. Check that before adding it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/helpers/error_upsampling.py",
+      "line": 27,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "60s cache around an option lookup makes allowlist changes lag, and the invalidator is never called",
+      "body": "The result of `_are_all_projects_error_upsampled` is cached for 60s per (org, project set). The cached value is only a lookup of `options.get(...)`, which is already cheap and in-process cached, so the cache adds a network round trip and no real saving. The cost is that for up to 60s after an operator removes a project from the allowlist, the endpoint still returns upsampled counts. This also contradicts the docstring of `_are_all_projects_error_upsampled` (lines 50-54), which says the allowlist is read fresh so the latest config is always used. `invalidate_upsampling_cache` (line 67) is defined but never called anywhere in the repo. It also has to rebuild the exact project-id set to find the key, so it could not work as a hook for an option change. Remove the cache and call the option directly. If you keep it, key it on a deterministic string (`','.join(map(str, sorted(ids)))`), not `hash(tuple(...))`, which can collide. Also delete the dead invalidator.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/helpers/error_upsampling.py",
+      "line": 135,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Substring match on `event.type:error` also matches negated and mixed queries, and reads the raw request query",
+      "body": "`'event.type:error' in query` is true for `!event.type:error`, so a negated query on allowlisted projects, which returns transactions and default events, gets `sum(sample_weight)`. It is also true for queries like `event.type:error OR event.type:transaction`. The docstring says this errs on the side of caution, but it errs towards applying the transform. The check also reads `request.GET['query']` rather than the `query` actually executed. In the dashboard-split paths of `_get_event_stats`, the executed query is rewritten, e.g. `(q) AND !event.type:transaction`. Parse the query or at least match with a boundary and a non-negation check. The `!event.type:error` and mixed cases need tests; `test_is_error_focused_query` (tests/sentry/api/helpers/test_error_upsampling.py:77) covers neither.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_events_stats.py",
+      "line": 220,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Eligibility is checked against the outer `dataset`, not `scoped_dataset`",
+      "body": "`_get_event_stats` receives `scoped_dataset`, and the dashboard-split branches (lines 372-452) call it with `discover` or the original dataset. But `is_errors_query_for_error_upsampled_projects` is passed the closed-over `dataset`. For a metrics-enhanced widget with a split, the outer dataset is a metrics dataset, so error queries run against `discover` are never upsampled. The same widget gets upsampled counts when it is not split. Pass `scoped_dataset` so the decision matches the dataset actually queried.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_events_stats.py",
+      "line": 218,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Redundant variables and comments that don't describe the code",
+      "body": "`upsampling_enabled = should_upsample` and `final_columns = query_columns` are aliases, and the same transform call is repeated in three branches. Comments such as 'cached result ensures consistent behavior', 'better query optimization and caching' and 'most current schema assumptions' describe nothing the code does. Compute `final_columns` once, before the `top_events` branch, and drop the comments. Lines 223, 234 and 278 also have trailing whitespace, which the pre-commit hooks will reject.",
+      "anchor": "diff"
+    },
+    {
+      "path": "sentry-repo",
+      "line": 1,
+      "severity": "fix",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Stray submodule pointer `sentry-repo` committed",
+      "body": "The pull request adds a gitlink at the repo root, `Subproject commit a5d29095...`. There is no `.gitmodules` in the repo and nothing references this path. It looks like an accidental `git add` of a nested checkout. Remove it from the pull request.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/testutils/factories.py",
+      "line": 344,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test factory sets `sample_rate` for every project, bypassing the allowlist and range validation in production",
+      "body": "Production `_derive_client_error_sampling_rate` (src/sentry/event_manager.py:774-798) only sets `sample_rate` for allowlisted projects, only for int/float values, and only when `0 < rate <= 1`. This helper sets it for every `store_event` call regardless of project, accepts anything `float()` can parse (e.g. strings, values >1 or negative), and swallows all exceptions. Every test that stores an event with `contexts.error_sampling` now gets a `sample_rate`, which production would not do. This is why the endpoint tests pass without mocking the option in the ingestion path, so they cannot catch an ingestion/query mismatch. Prefer exercising the real derive path by patching the option during `store_event`, or at least mirror its validation.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/api/helpers/test_error_upsampling.py",
+      "line": 19,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Public entry point, cache behaviour and topEvents paths are untested",
+      "body": "The tests cover only the private helpers. `is_errors_query_for_error_upsampled_projects`, including its cache hit and miss branches, has no test, and neither does `invalidate_upsampling_cache`. The endpoint tests only exercise `count()` with the default timeseries path. There is no test for `topEvents`, the RPC branch, multiple yAxis values, or `!event.type:error`. `self.snuba_params` in `setUp` is never used. The endpoint tests also mock `options` but leave the real cache enabled, so stale cache entries from earlier tests could change results.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/snuba/api/endpoints/test_organization_events_stats.py",
+      "line": 3626,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Count assertions say '1 event' but expect 10; no case for events missing a sample rate",
+      "body": "The comments on lines 3626-3627 say 'has 1 event' while the assertion is 10. That is correct for `client_sample_rate=0.1`, but the comment is misleading. No test stores an event without `error_sampling` in an allowlisted project, which is the case where `sum(sample_weight)` could undercount (see the discover.py finding). Add such a test.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "events-stats count() is rewritten to upsampled_count() as count for allowlisted error queries",
+      "location": "src/sentry/api/endpoints/organization_events_stats.py:220",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/endpoints/organization_events_stats.py:218-233",
+        "src/sentry/api/endpoints/organization_events_stats.py:294-299",
+        "src/sentry/api/bases/organization_events.py:527-609",
+        "src/sentry/event_manager.py:774-798",
+        "src/sentry/api/helpers/error_upsampling.py:27-40",
+        "src/sentry/api/helpers/error_upsampling.py:135-140"
+      ],
+      "equivalent_path": "Existing path passes query_columns unchanged to scoped_dataset.timeseries_query / top_events_timeseries / run_timeseries_query.",
+      "before_after": "Before: columns forwarded as parsed by get_query_columns. After: if eligible, 'count()' becomes 'upsampled_count() as count' before the query. Serialization (src/sentry/api/bases/organization_events.py:527-609) still resolves the axis column from the original query_columns, so the response key stays 'count'.",
+      "visible_effect": "Charts for allowlisted error projects show sum(sample_weight) instead of the raw event count.",
+      "failure_mode": "Events without sample_weight count as 0 or NULL and the chart undercounts silently. Cached eligibility lags option changes by up to 60s. `!event.type:error` queries are treated as error queries.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New cache read/write around the allowlist option lookup",
+      "location": "src/sentry/api/helpers/error_upsampling.py:27",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/helpers/error_upsampling.py:27-40",
+        "src/sentry/api/helpers/error_upsampling.py:67-74",
+        "src/sentry/event_manager.py:776",
+        "src/sentry/event_manager.py:1512",
+        "src/sentry/event_manager.py:1880"
+      ],
+      "equivalent_path": "Other allowlist checks call options.get directly (src/sentry/event_manager.py:776, 1512, 1880), with no cache.",
+      "before_after": "Siblings read the option each time. The new code caches the boolean for 60s keyed by hash(tuple(project_ids)).",
+      "visible_effect": "Allowlist changes take up to 60s to take effect on the endpoint.",
+      "failure_mode": "Cache backend errors from cache.get/set are not handled in this function. invalidate_upsampling_cache is never invoked, so nothing can invalidate the entry.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR rewrites `count()` to `sum(sample_weight)` on events-stats for allowlisted error projects. There are three main problems.\n\n- **Possible undercount (`ifNull`):** the aggregate has no `ifNull`, so events without a sample rate may count as 0. I couldn't read the Snuba schema, so this is medium confidence.\n- **Public function:** `upsampled_count` is registered as a public query function instead of `private=True`.\n- **Cache:** the 60s eligibility cache is pointless around an option lookup. It delays allowlist changes by up to 60s, and its invalidator is never called.\n\nThere are also smaller problems:\n- The `event.type:error` substring check also matches `!event.type:error` and mixed queries.\n- The eligibility check uses the outer `dataset` instead of `scoped_dataset`.\n- A stray `sentry-repo` submodule gitlink is committed.\n- The test factory sets `sample_rate` for every project, which production does not do.\n- Test coverage is thin: the public entry point, the cache, `topEvents` and the RPC path have no tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 486,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.37068619999999997
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "83f40559985e1365a43f35ba3febb7ea4fabb5d5"
+  },
+  "execution": {
+    "costUsdEstimate": 0.37068619999999997,
+    "usage": {
+      "input": 16,
+      "output": 14458,
+      "cacheRead": 297222,
+      "cacheWrite": 49088
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 116353,
+    "stop": "complete",
+    "notices": []
+  }
+}

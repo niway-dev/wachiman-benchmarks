@@ -1,0 +1,59 @@
+{
+  "pr": "cal.com-10967",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "New video booking references lose their credential ID, preventing credential-based follow-up operations.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/videoClient.ts:63-78 returns the video credential ID, but packages/core/EventManager.ts:158-170 writes undefined for every non-calendar reference; the supplied diff shows that video results previously retained result.credentialId. For a successful Zoom-style dedicated video booking, EventManager.ts:126-136 creates the meeting and handleNewBooking.ts:2114-2121 obtains its references, which are persisted at 2369 without the credential ID. When that booking is cancelled, packages/features/bookings/lib/handleCancelBooking.ts:486-503 only calls deleteMeeting if the video reference has credentialId, and has no legacy fallback. The external video meeting therefore remains undeleted.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "Location edits create calendar references without external-calendar or credential metadata.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/core/CalendarManager.ts:313-322 returns neither externalId nor credentialId from updateEvent, so EventManager.ts:201-209 indeed omits both fields on the newly constructed calendar references. However, CalendarManager returns updatedEvent rather than createdEvent, so those same new calendar references already have an empty uid at EventManager.ts:204, a problem present in the supplied base diff as well. packages/trpc/server/routers/viewer/bookings/editLocation.handler.ts:113-121 appends references with create and never deletes or overwrites the original correctly targeted references; EventManager.ts:495-548 still processes those originals. Thus the metadata omission is real, but the claimed loss of the booking's existing targets and consequent retargeting of valid event IDs is not established.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "Google event creation with a legacy destination lacking credentialId silently uses the primary calendar instead of the configured destination.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/prisma/schema.prisma:150-160 permits destination calendars with null credentialId, and EventManager.ts:375-380 explicitly supports those rows by selecting credentials by integration and calling createEvent(c, event). For a Google destination with externalId=\"secondary-calendar\" and credentialId=null, packages/core/CalendarManager.ts:234-236 passes the real numeric credential ID to the adapter. packages/app-store/googlecalendar/lib/CalendarService.ts:147-154 cannot match that ID to the null destination credential and uses primary. The supplied diff shows the old adapter used the destination externalId directly; this PR changes the target for that legacy path.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "Recurring cancellation repeats the entire deletion sweep for each calendar reference and still selects only the first reference of each recurrence.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/bookings/lib/handleCancelBooking.ts:418-447 loops through every current calendar reference and enters the recurring branch for each with a resolved credential. Within that loop, lines 449-463 again iterate all organizer calendar credentials and all updatedBookings, selecting only each booking's first calendar reference at 454, so two current references repeat the same deletion sweep twice. More seriously, construct a collective recurring booking with an organizer Google reference and a second host's reference on a different credential: EventManager.ts:338-370 now creates both, but this recurring branch never deletes the second reference's UID, even when that outer iteration resolved its credential. Thus cancelling all remaining bookings can leave the other host's external events intact; the repeated-call observation is true, although Google's adapter explicitly tolerates 404/410 at CalendarService.ts:327-335.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "Collective hosts' destination calendars are discarded when neither the event type nor the organizer has a destination calendar.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/bookings/lib/handleNewBooking.ts:987-994 collects the other collective hosts' destination calendars, but lines 1063-1067 initialize evt.destinationCalendar to null when both organizer-level choices are absent. For that state with a second host having a valid destination credential, the optional push at 1077-1078 does nothing, so EventManager.ts:338-370 never receives that host's destination. Its fallback at 384-395 only considers this.calendarCredentials and cannot recover the discarded host destination, leaving the host without the calendar event this PR otherwise creates. Choosing a non-Meet location avoids the separate missing-main-destination crash reported by finding 0.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "The unrelated loadUsers rewrite removes dynamic users' organization selection and changes error handling.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/features/bookings/lib/handleNewBooking.ts:724-761 removes the explicit organization relation select, rejects empty dynamicUserList and wraps errors into 400/500 HttpErrors; packages/prisma/selects/user.ts:36-50 includes organizationId but not the organization relation. The IsFixedAwareUser annotation at handleNewBooking.ts:352-355 still mentions organization, but users are cast at 870, and ensureAvailableUsers passes them to getUserAvailability at 379-390, whose implementation in packages/core/getUserAvailability.ts:144-220 does not read organization. No organization-property read occurs in handleNewBooking either, so the select change alone does not demonstrate broken dynamic booking. The scope and error-contract changes are real maintainability concerns, but no named valid booking path is shown failing because of this rewrite.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "pr": "sentry-greptile-3-flat",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "Events without an ingested sample_rate are undercounted by sum(sample_weight).",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/event_manager.py:774-798 only derives sample_rate for allowlisted projects with a valid numeric client rate, so missing rates are possible. src/sentry/search/events/datasets/discover.py:1046-1049 directly sums sample_weight, but this checkout contains no definition of that Snuba column or its ingestion default. Missing sample_rate therefore does not establish missing or zero sample_weight; a downstream default of 1 would refute the claimed undercount. The repository-local fallback at src/sentry/event_manager.py:1560-1565 concerns group counters rather than this column.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "upsampled_count is publicly callable even though the new endpoint uses it as an internal upsampling helper.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/search/events/datasets/discover.py:1041-1052 omits private=True, whose default is False in src/sentry/search/events/fields.py:1310. fields.py:1527-1535 and builder/base.py:728-738 consequently allow direct user resolution without an ACL, independently of the helper's allowlist. This establishes unintended API exposure, but the asserted zero results or missing-column failures depend on Snuba schema details absent here. Simply setting private=True would also reject the injected expression at api/helpers/error_upsampling.py:95 unless its caller receives an appropriate ACL.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The substring check treats negated and mixed event-type queries as error-only and ignores rewritten query strings.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/api/helpers/error_upsampling.py:135-138 returns True for both !event.type:error and event.type:error OR event.type:transaction. With an allowlisted project, helper lines 30-40 and endpoint organization_events_stats.py:220-222,295-301 replace count() with the weighted aggregate even for those queries. The endpoint also constructs different executed queries at lines 361-375 and 383-389 while the helper reads request.GET. The misclassification is certain, but a concrete wrong count or Snuba error for the included non-error rows depends on their external sample_weight schema/defaults, which this checkout does not define.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The endpoint adds redundant aliases, repeats the same transform, and contains misleading comments and trailing whitespace.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/api/endpoints/organization_events_stats.py:220-227 aliases should_upsample to upsampling_enabled and query_columns to final_columns. Lines 232-233,276-277,295-296 repeat the identical transformation in mutually exclusive branches; moving it before the branch preserves their behavior. Lines 223,234,278 contain trailing whitespace and .pre-commit-config.yaml:179 enables the trailing-whitespace hook. These are cleanup and formatting issues rather than an independently demonstrated runtime failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The PR accidentally adds an unconfigured sentry-repo gitlink at the repository root.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff adds sentry-repo:1 as mode 160000 pointing to a5d290951def84afdcc4c88d2f1f20023fc36e2a. The checkout's tracked-file index confirms that gitlink and contains no tracked .gitmodules entry; the only textual sentry-repo occurrences are unrelated fixture names in static/app/views/settings/organizationIntegrations/integrationRepos.spec.tsx:122-135. This is an unexplained repository artifact worth removing, but no application failure caused by it is established.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The test event factory derives sample_rate without the production allowlist and numeric range checks.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/testutils/factories.py:344-357 accepts every truthy float-convertible rate and never checks project eligibility; store_event calls it unconditionally at lines 1047-1049. In contrast, src/sentry/event_manager.py:776,785-787 requires an allowlisted project, an int/float, and 0 < rate <= 1. A non-allowlisted event with numeric client_sample_rate=0.1 therefore acquires sample_rate through the factory despite failing the production condition, as the unpatched setup at tests/snuba/api/endpoints/test_organization_events_stats.py:3569-3595 illustrates. This weakens test fidelity rather than directly changing production behavior; whether normalization preserves invalid strings is unnecessary to that conclusion.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "New upsampling tests omit public helper/cache and transformed topEvents/RPC coverage, with possible stale cache contamination.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/api/helpers/test_error_upsampling.py:6-11 imports only private predicates and the transform, and its tests at lines 36-101 never call the public cached entry point or invalidator; self.snuba_params at line 28 is unused. The added endpoint cases at tests/snuba/api/endpoints/test_organization_events_stats.py:3604-3722 exercise count() through the ordinary path and omit topEvents, multiple axes, and negated queries. However, the claimed cross-test cache contamination is refuted by src/sentry/testutils/cases.py:387-391, which clears the cache before each test. Also organization_events_stats.py:204 limits RPC to spans_rpc/ourlogs, both ineligible under api/helpers/error_upsampling.py:126-127, so transformed RPC behavior is not currently reachable.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "The endpoint test comments obscure the weighted count and the new tests omit allowlisted events with no sampling context.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/snuba/api/endpoints/test_organization_events_stats.py:3626-3627 assert 10 while noting that each bucket contains one event, consistent with the 0.1 sample rates at lines 3579 and 3592. Those comments are literally accurate about stored events but could better explain that 10 is an extrapolated count. The new setup supplies sampling context to both error events and none of the cases at lines 3604-3722 covers an allowlisted error without it. That missing boundary test is real, while an actual undercount remains dependent on the external Snuba defaults discussed in finding 0.",
+      "confidence": "high"
+    }
+  ]
+}

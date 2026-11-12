@@ -1,0 +1,168 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3` of discourse-graphite-3 against e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3 (merge-base e25638d)",
+    "repository": {
+      "name": "discourse-graphite-3"
+    },
+    "base": {
+      "sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+      "ref": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+    },
+    "head": {
+      "sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+      "ref": "pr-3"
+    },
+    "title": "pr-3",
+    "description": "Add BlockedEmail, to block signups based on email. Track stats of how many times each email address is blocked, and last time it was blocked. Move email validation out of User model and into EmailValidator. Signup form remembers which email addresses have failed and shows validation error on email field.",
+    "author": "Neil Lalonde"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 12,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Block lookup is an exact, case-sensitive match, so changing letter case gets past it",
+      "body": "`BlockedEmail.where(email: email)` compares the raw string. Signup stores the email exactly as typed (`User.new_from_params` does `user.email = params[:email]`, app/models/user.rb:87), and nothing downcases it on the User or the BlockedEmail side. If `bad@spammers.org` is blocked, signing up as `Bad@spammers.org` or `BAD@SPAMMERS.ORG` is accepted, and the match is never counted. Login already normalizes with `Email.downcase` (app/models/user.rb:127). Fix: normalize the email in `should_block?` and in a `before_validation` on BlockedEmail, or query with `lower(email) = lower(?)`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/validators/email_validator.rb",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "One signup attempt can bump match_count twice",
+      "body": "`should_block?` writes to the database (`match_count += 1`, `last_match_at`, `save`) and is called from a validator. `UsersController#create` validates the user twice in one request when `SiteSetting.call_discourse_hub?` is on: first `user.valid?` (app/controllers/users_controller.rb:168), then `user.save` (line 172). `email_changed?` is still true for an unsaved record, so the validator runs both times and one rejected signup adds 2 to `match_count`. The stats the PR advertises come out wrong with no sign of it. Fix: move the stats update out of validation (e.g. record the match in the controller once validation fails), or remember on the record that it was already checked.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 275,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Any server-side email error marks the address as \"invalid\", including \"already taken\"",
+      "body": "Line 274 checks `result.errors.email`, which is true for every email error: the uniqueness check (\"has already been taken\"), the domain whitelist/blacklist, and the new block. All of them push the email into `rejectedEmails`, and `emailValidation` (lines 69-74) then shows `user.email.invalid` next to the field. For an email that is well-formed but already registered, that inline message is wrong; only the flash says what actually happened. Showing `result.errors.email` as the reason would keep the inline message accurate.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/components/validators/email_validator_spec.rb",
+      "line": 9,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Validator spec covers only the BlockedEmail branch",
+      "body": "The whitelist/blacklist logic moved here from `User#email_validator`, but this spec only tests the blocked-email path, and only with `should_block?` stubbed. It doesn't test that the block check is skipped once a domain rule has already added an error (line 13). Some domain-rule coverage is still in spec/models/user_spec.rb, which goes through the full model. A case with a real `BlockedEmail` record would also catch normalization problems like the case-sensitivity issue above.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Signup validation calls BlockedEmail.should_block?, which also writes match statistics",
+      "location": "lib/validators/email_validator.rb:13",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/users_controller.rb:168-172",
+        "app/models/user.rb:46-47",
+        "app/models/user.rb:84-91",
+        "app/models/blocked_email.rb:11-19"
+      ],
+      "equivalent_path": "The old User#email_validator ran under `if: :email_changed?` and did not write to the database",
+      "before_after": "The controller calls user.valid? (when call_discourse_hub?) and then user.save, which validates again; should_block? runs on each pass and saves the BlockedEmail record each time",
+      "visible_effect": "The user sees the 'is not allowed.' error in the flash message; admins see match_count/last_match_at",
+      "failure_mode": "match_count is counted twice per attempt when the hub is on; letter case in the email gets past the block",
+      "evidence_checked": true
+    },
+    {
+      "action": "Create-account modal remembers emails the server rejected and fails emailValidation for them",
+      "location": "app/assets/javascripts/discourse/controllers/create_account_controller.js:274-276",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:17",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:69-74",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:282-285",
+        "app/controllers/users_controller.rb:195-200"
+      ],
+      "equivalent_path": "The other validations (nameValidation, passwordValidation) are computed properties that only check on the client",
+      "before_after": "On a failed createAccount, the flash is shown, the email is pushed to rejectedEmails and formSubmitted is reset; emailValidation recomputes through 'rejectedEmails.@each'",
+      "visible_effect": "The email field shows 'invalid' and submit is disabled while that email is entered",
+      "failure_mode": "rejectedEmails lives on the controller prototype (singleton), so it persists until page reload; it also catches 'already taken' errors and labels them invalid. An AJAX failure only flashes create_account.failed and adds nothing to the list",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The block can be bypassed by changing letter case, because the BlockedEmail lookup is case-sensitive and signup emails aren't normalized. The new stats are also off: a write inside validation runs twice per signup when the hub is enabled, so one attempt bumps match_count by 2. The client-side rejectedEmails list labels any server email error, including \"already taken\", as \"invalid\". The validator spec covers only the stubbed block path.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 178,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.2637554
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2637554,
+    "usage": {
+      "input": 10,
+      "output": 4597,
+      "cacheRead": 84757,
+      "cacheWrite": 19353
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 47991,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "pr": "sentry-greptile-3-flat",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "Substring matching treats negated or mixed event.type:error queries as error-only and applies error sample weights to transactions.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/api/helpers/error_upsampling.py:134-138 returns True for !event.type:error and event.type:error OR event.type:transaction; the discover branch at :124-127 performs no parsed-filter validation. For an allowlisted project containing a transaction, dataset=discover, yAxis=count(), query=!event.type:error passes the eligibility check (:30-40) and organization_events_stats.py:294-301 replaces the aggregation while leaving that transaction-selecting query intact. error_upsampling.py:93-95 replaces count with upsampled_count, whose definition at src/sentry/search/events/datasets/discover.py:1046-1050 sums sample_weight, despite the explicit contract at error_upsampling.py:105-107 that transactions lack this field. Thus this supported query applies an error-only aggregate to transaction rows and cannot preserve their event count; the exact storage-side symptom is not established here.",
+      "confidence": "medium"
+    },
+    {
+      "id": 2,
+      "claim": "transformAliasToInputFormat=1 returns zero counts because the rewritten aggregate result key differs from the original count() serializer lookup.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For an allowlisted project and dataset=discover, query=event.type:error, yAxis=count(), transformAliasToInputFormat=1, src/sentry/api/endpoints/organization_events_stats.py:205-207 enables alias translation and :294-323 sends the rewritten column and translation flag to timeseries_query. src/sentry/api/helpers/error_upsampling.py:95 emits upsampled_count() as count; src/sentry/search/events/builder/base.py:746-748 stores that entire input in FunctionDetails.field, and :1566-1572 plus :1613-1616 rename the result key to that entire string (invoked by src/sentry/snuba/discover.py:386). Meanwhile src/sentry/api/bases/organization_events.py:605-606 resolves the original count() column, and :75-76 preserves count() when translation is enabled. src/sentry/api/serializers/snuba.py:92 therefore reads the absent count() key with a default of zero, discarding a nonzero aggregate.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The PR accidentally adds a sentry-repo gitlink without a .gitmodules entry.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff adds sentry-repo:1 as mode 160000 pointing at a5d290951def84afdcc4c88d2f1f20023fc36e2a. The checkout index confirms that gitlink and has no tracked .gitmodules entry. This leaves an unexplained, unconfigured submodule reference, but no application call path or build dependency on it was established; the supported impact is repository hygiene.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Eligibility caching adds unnecessary cache work before rejecting unrelated datasets and duplicates an already locally cached option lookup.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/api/endpoints/organization_events_stats.py:219-222 calls the helper before dispatching any dataset query, and src/sentry/api/helpers/error_upsampling.py:30-40 always performs cache.get (and cache.set on misses) before checking dataset relevance at :103-130. src/sentry/utils/cache.py:4 imports the Django default cache, so a remote backend adds a network lookup, although src/sentry/conf/server.py:2106 defaults to DummyCache and a network round-trip is not universal. src/sentry/options/store.py:123-134 already checks an in-process cache first; error_upsampling.py:63 also does repeated list membership tests, while :38 retains eligibility for 60 seconds. These are concrete unnecessary operations and bounded staleness, without repository measurements demonstrating a significant performance regression.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The cache invalidation helper has no callers and the freshness documentation does not describe the public helper\u2019s cached behavior.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The only occurrence of invalidate_upsampling_cache in src and tests is its definition at src/sentry/api/helpers/error_upsampling.py:67; no option-change hook invokes it. The public helper returns cached eligibility at :30-32 for the 60-second lifetime set at :38, whereas the internal helper documentation at :50-53 emphasizes latest configuration. Strictly, that internal helper does execute options.get whenever it is actually called (:58), and the public docstring explicitly permits eventual consistency (:23-25), so this establishes unused code and misleading integration documentation rather than a proven consistency defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "Errors without client sample rates or predating allowlisting have null sample_weight and are omitted by sum(sample_weight).",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/search/events/datasets/discover.py:1046-1050 indeed sums sample_weight without a null fallback and declares default_result_type=\"number\". src/sentry/event_manager.py:774-787 only adds sample_rate for allowlisted projects with a valid client rate, but this checkout does not contain the downstream storage schema or ingestion conversion establishing sample_weight nullability/defaults; missing sample_rate does not prove missing sample_weight. The local issue-counter calculation at event_manager.py:1560-1566 explicitly defaults absent rates to weight 1, which also cautions against assuming null storage weights. Consequently neither historical nor SDK-without-rate events can be shown here to lose counts; the integer metadata suggestion is a separate minor consistency concern, not proof of the claimed data loss.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The new helper test violates the repository instruction to create models with factory helpers.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "CLAUDE.md:627 (Common Gotchas item 7) instructs tests to use self.create_* helpers instead of direct model creation. tests/sentry/api/helpers/test_error_upsampling.py:21 directly calls Organization.objects.create(name=\"test-org\"), while the same setup already uses self.create_project at :23-25. This is a confirmed test-convention violation with no demonstrated runtime failure.",
+      "confidence": "high"
+    }
+  ]
+}

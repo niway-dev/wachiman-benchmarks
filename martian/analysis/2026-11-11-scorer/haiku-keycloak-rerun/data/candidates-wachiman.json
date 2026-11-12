@@ -1,0 +1,166 @@
+{
+ "https://github.com/keycloak/keycloak/pull/37634": {
+  "wachiman": [
+   {
+    "text": "isAccessTokenId never checks the grant shortcut\n\nThe matcher reads the grant from the wrong position and inverts the check. The encoded id is session(2) + tokenType(2) + grant(2) + ':' (DefaultTokenContextEncoderProvider.java:79-81, 114-117), so the grant is at chars 4-5. Line 483 reads substring(3, 5), which is the second token-type char plus the first grant char. It also returns false when that slice EQUALS the expected grant, which is the opposite of what a match needs. Net effect: any `xxxxxx:<uuid>` passes. expectCodeToToken (line 145) would accept `onrtro:<uuid>` for a password-grant token. The four call sites (145, 173, 182, 244) therefore do not check the grant their names promise. Fix: `items[0].length() == 6 && items[0].substring(4, 6).equals(expectedGrantShortcut)` must hold, otherwise return false. The comment on line 482 ('starts at character 4th char') is also off by one.",
+    "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents.java",
+    "line": 483,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "client_credentials tokens are encoded with 'na', not the registered 'cc'\n\nThe 'cc' shortcut is registered here, but the grant never records it. ClientCredentialsGrantType.java:140-141 builds the token with responseBuilder(...).generateAccessToken() and never calls clientSessionCtx.setAttribute(Constants.GRANT_TYPE, ...). Compare OAuth2GrantTypeBase.java:109 and ResourceOwnerPasswordCredentialsGrantType.java:134, which do. initToken (TokenManager.java:1053) then gets a null attribute and encodes UNKNOWN 'na' (DefaultTokenContextEncoderProvider.java:57-60). Service-account access tokens therefore carry a '...na:<uuid>' id, with no error and no test covering it. Fix: set the attribute (OAuth2Constants.CLIENT_CREDENTIALS, or context.getGrantType()) before line 140 in ClientCredentialsGrantType.java.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/grants/ClientCredentialsGrantTypeFactory.java",
+    "line": 40,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "UMA permission tokens are encoded with 'na', not the registered 'pg'\n\n'pg' is registered here, but the UMA path never records it. PermissionGrantType.java:187 calls AuthorizationTokenService.authorize, which builds the RPT at AuthorizationTokenService.java:357-358 with responseBuilder(...).generateAccessToken() and no Constants.GRANT_TYPE attribute. The RPT id is therefore encoded as 'na'. Fix: set the attribute to OAuth2Constants.UMA_GRANT_TYPE before line 357 in AuthorizationTokenService.java. Confidence is medium because I read the call chain, not every branch of authorize().",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/grants/PermissionGrantTypeFactory.java",
+    "line": 40,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Non-standard token exchange tokens are encoded with 'na'\n\nOnly StandardTokenExchangeProvider sets the grant attribute (StandardTokenExchangeProvider.java:237). The V1, subject-impersonation and federated providers extend AbstractTokenExchangeProvider, and their token is built at AbstractTokenExchangeProvider.java:409-410 with no attribute, so their ids carry 'na' although 'te' is registered for this grant. Fix: set OAuth2Constants.TOKEN_EXCHANGE_GRANT_TYPE before line 409, if that method is reached by those providers and not overridden by StandardTokenExchangeProvider. I did not confirm each provider's call path.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/grants/TokenExchangeGrantTypeFactory.java",
+    "line": 42,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "testIncorrectGrantType passes for the wrong reason\n\nThe test catches RuntimeException, so any runtime failure passes. In this test, the factory's sessionFactory is never set (it is set only in postInit, DefaultTokenContextEncoderProviderFactory.java:66, and the test never calls postInit). For 'ac' the grant lookup misses (not in the test map), and getGrantTypeByShortcut then dereferences the null sessionFactory (DefaultTokenContextEncoderProviderFactory.java:121-125), throwing an NPE that the catch swallows. The intended failure is IllegalArgumentException from DefaultTokenContextEncoderProvider.java:93. Fix: expect IllegalArgumentException specifically (for example @Test(expected = IllegalArgumentException.class)), or assert on the message.",
+    "path": "services/src/test/java/org/keycloak/protocol/oidc/encode/DefaultTokenContextEncoderProviderTest.java",
+    "line": 82,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "rawTokenId is never null-checked; the grantType check is duplicated\n\nLine 73 repeats Objects.requireNonNull(grantType, ...) with the rawTokenId message, so rawTokenId is not checked at all and a null id is accepted and encoded as '...:null'. Current callers never pass null (initToken passes KeycloakModelUtils.generateId(), and the decoder passes a substring). Fix: requireNonNull(rawTokenId, ...) on that line.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/encode/AccessTokenContext.java",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Javadoc says 3-letter shortcuts; the format requires 2 letters\n\nEvery shortcut is 2 characters (ac, cc, ...), and the decoder requires exactly 6 characters for session + token type + grant (DefaultTokenContextEncoderProvider.java:74-81). postInit checks only uniqueness (DefaultTokenContextEncoderProviderFactory.java:81-86), so a 3-letter shortcut encodes fine but cannot be decoded. Fix: correct the Javadoc to 2 characters, and validate the length in postInit.",
+    "path": "server-spi-private/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeFactory.java",
+    "line": 30,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "New abstract method on an SPI interface breaks out-of-tree grant factories\n\nAdding getShortcut() without a default breaks every OAuth2GrantTypeFactory implementation not in this repo. postInit (DefaultTokenContextEncoderProviderFactory.java:72-74) calls getShortcut() on every registered grant factory, so an implementation compiled against the old interface fails at startup with AbstractMethodError. server-spi-private is an internal SPI, so this may be acceptable. If it is not, give the method a default that returns null and skip null shortcuts when building the maps.",
+    "path": "server-spi-private/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeFactory.java",
+    "line": 33,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Token creation now dereferences the session's client context unconditionally\n\ngetShouldUseLightweightToken calls session.getContext().getClient().getAttribute(...) with no null check (line 86). Before this PR it ran only inside mapper transforms. Now initToken calls it for every access token (TokenManager.java:1052-1054, DefaultTokenContextEncoderProvider.java:54). Callers that create access tokens without a session context client would throw an NPE: PolicyEvaluationService.java:289, ClientScopeEvaluateResource.java:223-224 and 254-255, and KeycloakIdentity.java:148. None of those files calls getContext().setClient. Question: is the context client set in those admin or REST paths? If not, a client with no lightweight-aware mapper now fails where it used to succeed. Fix would be a null check that defaults to the regular token.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/mappers/AbstractOIDCProtocolMapper.java",
+    "line": 86,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "PR body says 'shorter' token encoding, but the access token id gets longer\n\nThe PR body says 'Shorter encoding of access token'. In this part the access token id changes from a 36-character UUID to '<6 chars>:<36 chars>', i.e. 43 characters (DefaultTokenContextEncoderProvider.java:114-117). Question: is the 'shorter' claim about something other than the jti? If so, the PR description should say what it means.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/TokenManager.java",
+    "line": 1054,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unused import of TokenExchangeGrantTypeFactory\n\nThe import added on line 50 is never used. The only other reference to this file is OAuth2Constants.TOKEN_EXCHANGE_GRANT_TYPE on line 237. Remove the import.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/StandardTokenExchangeProvider.java",
+    "line": 50,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/36880": {
+  "wachiman": [
+   {
+    "text": "Client-to-client token exchange now throws instead of denying\n\ncanExchangeTo() throws UnsupportedOperationException (lines 147-150). AbstractTokenExchangeProvider.java:276 calls AdminPermissions.management(...).clients().canExchangeTo(...) for every non-self audience with no V2 guard, and MgmtPermissionsV2.clients() (MgmtPermissionsV2.java:64-68) now returns this class. Before this PR, MgmtPermissionsV2 inherited the V1 ClientPermissions.canExchangeTo, which returns false when no client.resource.<id> exists (ClientPermissions.java:336-340). The caller then produced a clean 403 'Client not allowed to exchange' (AbstractTokenExchangeProvider.java:277-280). After this PR the request ends in an unhandled UnsupportedOperationException (500). The unused private getEvaluationContext helper (lines 262-272) looks like the intended body. Either implement V2 exchange evaluation, or return false here until it exists. I did not read the feature gate of the enclosing method, so reachability depends on token exchange being enabled alongside FGAP v2.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 148,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Management-permissions endpoint throws under both feature flags\n\nisPermissionsEnabled (188-190), setPermissionsEnabled (193-195), resource (198-200) and getPermissions (203-205) all throw UnsupportedOperationException in V2. ClientResource.getManagementPermissions (ClientResource.java:705-713) and toMgmtRef (716-722) call them. ProfileHelper.requireFeature checks only the V1 flag (ClientResource.java:706), so with ADMIN_FINE_GRAINED_AUTHZ and ADMIN_FINE_GRAINED_AUTHZ_V2 both on, GET /clients/{id}/management/permissions returns 500. Before this PR the V2 realm used the V1 methods here. Implement these for V2, or make the endpoint return the disabled reference for V2.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 188,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Deleting a client fails when both FGAP flags are on\n\nThe listener now runs only when ADMIN_FINE_GRAINED_AUTHZ (V1) is on (line 77), then calls management(...), which picks MgmtPermissionsV2 whenever ADMIN_FINE_GRAINED_AUTHZ_V2 is on (lines 66-71). In that combination ClientRemovedEvent reaches ClientPermissionsV2.setPermissionsEnabled, which throws (ClientPermissionsV2.java:193-195). DefaultKeycloakSessionFactory.publish has no try/catch (DefaultKeycloakSessionFactory.java:86-90), and JpaRealmProvider.removeClient publishes before em.remove (JpaRealmProvider.java:1006-1021), so the client delete fails. The only FGAP test config (KeycloakAdminPermissionsServerConfig.java:28) enables V2 alone, so this path is not exercised. Give V2 a working setPermissionsEnabled(false), or skip the V2 cleanup explicitly.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+    "line": 89,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "getClientsWithPermission misses per-client grants and can return 'Clients'\n\nfindByType(server, 'Clients', ...) matches only rows whose type is 'Clients' (ResourceEntity.java:64, findResourceIdByType). Per-client resources are created without a type (AdminPermissionsSchema.java:104 calls resourceStore.create with no setType, and JPAResourceStore.java:62-79 never sets one), so they never match. Only the all-clients resource is typed, so if it carries the scope, line 140 adds its name 'Clients' as a client id. The caller AvailableRoleMappingResource.java:229-230 then calls realm.getClientById('Clients').getRolesStream(), which NPEs. Per-client grants are dropped silently. The caller reaches this only when ADMIN_FINE_GRAINED_AUTHZ is on (AvailableRoleMappingResource.java:217). The V1 version (ClientPermissions.java:666-687) finds its resources by type and strips the prefix. Fix by typing per-client resources at creation and excluding the all-clients resource by name, or by querying on owner.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 138,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Per-client check dereferences a 'Clients' resource that existing realms do not have\n\nAdminPermissionsSchema.init returns early when the admin-permissions client already exists (AdminPermissionsSchema.java:224-228), and the only code that creates the 'Clients' type resource is init (CLIENTS_RESOURCE_TYPE is referenced only in AdminPermissionsSchema.java and ClientPermissionsV2.java in non-test code). For a realm set up before this change, getResourceTypeResource returns null (line 217), and the default PolicyStore.findByResource(server, null) (PolicyStore.java:100-106) reaches JPAPolicyStore.java:215 resource.getId(), which throws NullPointerException. Every per-client check without a per-client resource then fails, for example GET /clients/{id} for an admin without manage-clients. Add a null guard that returns false, and decide whether the type resource should be created on upgrade. I did not find an upgrade path that creates it.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 217,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Client resources get a null display name\n\ngetResourceName handles only USERS (lines 310-322). For CLIENTS it falls through to resource.getDisplayName() (line 325). A per-client resource is created with only the client UUID as its name (lines 93-94, 104, 175-184), and nothing in this diff sets a display name. PolicyResourceService.java:213-218 therefore returns a null displayName for every client resource on a policy. Map CLIENTS to the client's clientId, as USERS maps to username.",
+    "path": "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java",
+    "line": 325,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Listener gate change is not in the PR description\n\nBefore this PR the listener ran for every flag combination. Now the whole block requires ADMIN_FINE_GRAINED_AUTHZ (V1). In V2-only mode, which is the mode the new tests run in, role and group removal no longer call setPermissionsEnabled(..., false), and client removal no longer runs the V1 cleanup. Is that intended? If yes, say so in the PR body (currently 'Add Client resource type and scopes to authorization schema'). If not, gate each event on the flag it needs.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+    "line": 77,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "MANAGE on all clients does not grant listing\n\ncanView() (86-88) accepts only the manage/view-clients roles or the VIEW permission. canView(ClientModel) (77-83) and canView(ClientScopeModel) (118-122) do accept MANAGE. canList() and canListClientScopes()/canViewClientScopes() are inherited and depend on canView() (ClientPermissions.java:240-244, 257-260, 488-491). So an admin with only manage-all gets 403 on GET /clients (ClientsResource.java:120) and GET /client-scopes (ClientScopesResource.java:91), while POST /clients (requireManage, which includes MANAGE at line 72-73) and POST /client-scopes (ClientScopesResource.java:117) succeed. Decide whether MANAGE should imply listing at the global level. If so, add hasPermission(MANAGE) to canView().",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 86,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Per-client check does not filter by permission resource id\n\nUserPermissionsV2.java:134-141 keeps only permissions whose resource id equals the user resource id. ClientPermissionsV2.hasPermission(client, scope) (lines 224-233) and the type-level variant (249-258) do not. If the evaluator can return permissions attached to the Clients type resource for a per-client resource, a per-client check would honour all-clients grants. If it cannot, the filter in the users code is dead. Which behaviour is intended?",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 224,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "requireView() Javadoc says it returns a boolean\n\nThe Javadoc for requireView() (lines 95-97) says 'Returns true if canView() returns true', but the method throws ForbiddenException. The same applies to requireViewClientScopes() (line 101: 'Returns true if canViewClientScopes returns true'). Use the 'Throws ForbiddenException if ... returns false' wording used by the other require* methods.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+    "line": 96,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unused helper and imports in ClientPermissionsV2\n\nThe private getEvaluationContext helper (262-272) is never called. The logger field (51) is unused. The Scope import (27) and the TOKEN_EXCHANGE static import (46) are unused. The helper is probably the intended body of canExchangeTo (see the first finding), so either wire it in or delete it.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 262,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Listing assertions pass for the wrong reason\n\nmyadmin holds query-users (RealmAdminPermissionsConfig.java:34), which satisfies canList() (ClientPermissions.java:243) regardless of client permissions. The assertions at lines 162-163 (testManageOnlyOneClient) and 279-280 (testManageAllClients) therefore pass even though the test says 'the caller can list' because of MANAGE. They would not catch the listing gap described in the ClientPermissionsV2.java:86 finding. Add a case with an admin that holds no query role.",
+    "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+    "line": 162,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "createClientPolicy has no caller\n\nA grep of tests/base finds only the definition at lines 136-149. Remove it, or use it in a test.",
+    "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/AbstractPermissionTest.java",
+    "line": 136,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Unused import java.util.Arrays\n\nThe moved createUserPermission helper was the only user of Arrays. Remove the import.",
+    "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypeEvaluationTest.java",
+    "line": 35,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "JUnit 4 fail() in a JUnit 5 test\n\nThe file imports org.junit.Assert.fail (line 25) but also uses org.junit.jupiter.api.Assertions. Use the JUnit 5 fail for consistency with the rest of the class.",
+    "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+    "line": 25,
+    "source": "wachiman-json"
+   }
+  ]
+ }
+}

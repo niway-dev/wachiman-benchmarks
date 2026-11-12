@@ -9,9 +9,20 @@ is in each run's `metrics.json`, under `judge_cost`.
 
 | Run | PRs | High+Critical | Recall | Precision | F1 (All) | F2 (Core) | False positives | Reviews total | $/PR median | $/PR p90 | $/1k changed lines | $/golden found | $/High+Critical found | Partial reviews |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [2026-11-12 · v1.9.0 · Opus 5.5 · high · repeat 3](runs/2026-11-12-v1.9.0-opus-5-5-high-r3/) | 50 | 48/66 | 64.7% | 39.9% | 49.3% | 57.9% | 169 | $25.59 | $0.49 | $0.63 | $1.21 | $0.23 | $0.53 | 0 |
+| [2026-11-12 · v1.9.0 · Opus 5.5 · high · repeat 2](runs/2026-11-12-v1.9.0-opus-5-5-high-r2/) | 50 | 52/66 | 67.6% | 40.6% | 50.8% | 59.8% | 171 | $25.60 | $0.46 | $0.63 | $1.21 | $0.22 | $0.49 | 0 |
+| [2026-11-12 · v1.9.0 · Sonnet 5.5 · high · repeat 3](runs/2026-11-12-v1.9.0-sonnet-5-5-high-r3/) | 50 | 54/66 | 71.1% | 36.2% | 48.0% | 59.2% | 217 | $16.95 | $0.27 | $0.54 | $0.80 | $0.14 | $0.31 | 1 |
+| [2026-11-12 · v1.9.0 · Sonnet 5.5 · high · repeat 2](runs/2026-11-12-v1.9.0-sonnet-5-5-high-r2/) | 50 | 52/66 | 67.6% | 35.8% | 46.8% | 55.9% | 210 | $17.07 | $0.29 | $0.55 | $0.81 | $0.15 | $0.33 | 0 |
+| [2026-11-11 · v1.9.0 · Opus 5.5 · medium](runs/2026-11-11-v1.9.0-opus-5-5-medium/) | 50 | 50/66 | 65.9% | 45.2% | 53.6% | 61.0% | 138 | $19.62 | $0.36 | $0.52 | $0.93 | $0.17 | $0.39 | 0 |
+| [2026-11-11 · v1.9.0 · Sonnet 5.5 · medium](runs/2026-11-11-v1.9.0-sonnet-5-5-medium/) | 50 | 44/66 | 59.5% | 49.0% | 53.8% | 57.5% | 107 | $8.31 | $0.12 | $0.26 | $0.39 | $0.08 | $0.19 | 0 |
+| [2026-11-11 · v1.9.0 · Sonnet 5.5 · high](runs/2026-11-11-v1.9.0-sonnet-5-5-high/) | 50 | 52/66 | 70.5% | 39.1% | 50.3% | 60.4% | 190 | $17.94 | $0.30 | $0.57 | $0.85 | $0.15 | $0.35 | 1 |
 | [2026-11-10 · v1.10.0 · Haiku 5.5 high + Opus 5.5 verifier (default)](runs/2026-11-10-v1.10.0-haiku-5-5-high-opus-verifier/README.md) | 50 | 45/66 | 61.3% | 26.0% | 36.5% | 47.0% | 302 | $28.62 | $0.55 | $0.91 | $1.48 | $0.27 | $0.64 | 0 |
 | [2026-11-07 · v1.9.0 · Haiku 5.5 · high · arm 1](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md) | 50 | 47/66 | 64.2% | 26.1% | 37.1% | 49.1% | 314 | $8.98 | $0.10 | $0.35 | $0.46 | $0.08 | $0.19 | 0 |
 | [2026-11-07 · v1.9.0 · Opus 5.5 · high](runs/2026-11-07-v1.9.0-opus-5-5/README.md) | 50 | 47/66 | 63.6% | 38.7% | 48.1% | 55.7% | 174 | $25.01 | $0.48 | $0.61 | $1.29 | $0.23 | $0.53 | 0 |
+
+The three runs of 2026-11-11 reviewed the corrected commits of Keycloak PRs 37634 and 36880; the rows
+below them are the stored originals, where those two PRs matched 0 of 9 goldens. The corrected totals
+and the side-by-side reading of all model arms are in [models.md](models.md).
 
 Reference tools, same judge, same 50 PRs (do not change between runs unless the judge route does):
 

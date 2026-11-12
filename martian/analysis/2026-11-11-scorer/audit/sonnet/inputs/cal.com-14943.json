@@ -1,0 +1,36 @@
+{
+ "pr": "cal.com-14943",
+ "checkout": "/tmp/audit-wt/cal.com-14943",
+ "audit_ids": [
+  0
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 179,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Reminders of users locked for SMS are deleted silently after two cron runs",
+   "body": "`twilio.scheduleSMS` returns `undefined` when `isLockedForSMSSending` is true (twilioProvider.ts:92-95). Before this change, those reminders stayed unscheduled and were picked up again once the user or team was unlocked. Now each cron run bumps `retryCount`, and the `retryCount > 1` branch of the `deleteMany` (line 39-41) removes the row on the second run after that. The reminder is permanently lost, with no log and no state visible to the user. The lock is an admin or billing state that can last much longer than two cron intervals. Either don't count the locked case as a retry (skip the update and just `continue`), or log the drop so it is visible."
+  },
+  {
+   "id": 1,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 38,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "retryCount delete clause has no method filter and drops rows after only two failures",
+   "body": "The second `OR` branch is `{ retryCount: { gt: 1 } }` with no `method: WorkflowMethods.SMS` filter, so it matches any WorkflowReminder (email, WhatsApp) whose `retryCount` exceeds 1. Today only this handler writes `retryCount`, so nothing else matches, but the column is generic and a later writer would have its rows deleted by the SMS cron. Add `method: WorkflowMethods.SMS` to that branch. Also, `gt: 1` gives a reminder only two attempts, so a short Twilio outage or a rate-limit error (`checkSMSRateLimit` throws at twilioProvider.ts:98) can permanently drop reminders that are still days from being due. Consider a higher threshold, named as a constant."
+  },
+  {
+   "id": 2,
+   "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+   "line": 190,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "DB update inside catch can throw and abort the whole batch",
+   "body": "The `prisma.workflowReminder.update` in the `catch` block is not guarded. If the DB call fails (the likely cause when the original error was a DB error too), the exception escapes the `for` loop. The remaining reminders are not processed and the handler returns a 500. Wrap the update in its own try/catch, or log and continue. Also, `retryCount: reminder.retryCount + 1` uses the value read at the start of the run, so overlapping cron runs can lose increments. `{ increment: 1 }` avoids that. The same update appears twice (lines 179 and 190), and a small helper would remove the duplication."
+  }
+ ]
+}

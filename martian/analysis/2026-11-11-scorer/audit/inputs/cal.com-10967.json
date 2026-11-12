@@ -1,0 +1,95 @@
+{
+ "pr": "cal.com-10967",
+ "checkout": "/tmp/audit-wt/cal.com-10967",
+ "audit_ids": [
+  2,
+  3,
+  5,
+  6,
+  7,
+  8
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/core/EventManager.ts",
+   "line": 119,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Google Meet booking with no destination calendar throws TypeError",
+   "body": "`const [mainHostDestinationCalendar] = evt.destinationCalendar ?? []` gives `undefined` when the array is empty or null. `handleNewBooking` sends `null` when neither the event type nor the organizer has a destination calendar (handleNewBooking.ts:1063-1067), and the other callers send `[]`. When the location is Google Meet, `mainHostDestinationCalendar.integration` then throws, so the booking fails. Before this change the code fell back to Cal Video here. Fix: use `mainHostDestinationCalendar?.integration`."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/organizations/create.handler.ts",
+   "line": 151,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Org slug condition is inverted",
+   "body": "The old code was `...(!IS_TEAM_BILLING_ENABLED && { slug })`: the slug was set right away only when billing is disabled, and when billing is enabled it was kept in `metadata.requestedSlug` until payment (features/ee/teams/api/upgrade.ts:45 publishes from `requestedSlug`). The new `IS_TEAM_BILLING_ENABLED ? { slug } : {}` flips this. With billing enabled, the org is published with its slug before anyone pays. With billing disabled (self-hosted), the org is created with no slug and no `requestedSlug`, so nothing can ever publish it. This rewrite is not part of the calendar change. Restore `!IS_TEAM_BILLING_ENABLED ? { slug } : {}` on line 151."
+  },
+  {
+   "id": 2,
+   "path": "packages/core/EventManager.ts",
+   "line": 170,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Video references lose their credentialId",
+   "body": "The old code saved `result.credentialId` for non-calendar results. Now it saves `isCalendarType ? result.credentialId : undefined`, so every `_video` booking reference is stored without a credentialId. Later updates and deletes of the video meeting that look up the credential by `reference.credentialId` then fall back or fail. Keep `result.credentialId` for both kinds of result."
+  },
+  {
+   "id": 3,
+   "path": "packages/app-store/office365calendar/lib/CalendarService.ts",
+   "line": 75,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Non-Google calendars always write to the first host's calendar id",
+   "body": "`EventManager.createAllCalendarEvents` now calls `createEvent(credential, event, ...)` once per host, each time with that host's credential and the full `destinationCalendar` array. Only Google uses the passed `credentialId` to pick its own entry. Office365 (this line), Lark (larkcalendar CalendarService.ts:128) and CalDAV (packages/lib/CalendarService.ts:156-163) always take `destinationCalendar[0]`, which is the main host's calendar. A second collective host on Outlook gets a request to `/me/calendars/<host1 id>/events` under their own token, which fails. A CalDAV host's calendar list is filtered down to nothing. Either way the second host gets no event. Pick the entry whose `credentialId` matches the credential, as Google does, or use the `externalId` that `CalendarManager.createEvent` now receives."
+  },
+  {
+   "id": 4,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 256,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "updateEvent/deleteEvent fallback can never match",
+   "body": "This branch only runs when `externalCalendarId` is falsy, and then it looks for `cal.externalId === externalCalendarId`, so it never finds a real calendar. Before, the fallback was `event.destinationCalendar?.externalId`. In `updateEvent`, `calendarId` is now `undefined` and the Google API rejects the call. In `deleteEvent` (line 317) the code falls back to `primary`, which deletes from the wrong calendar. This hits references saved without `externalCalendarId`: older bookings, and, after this PR, every event created through the no-credentialId path in `createAllCalendarEvents` (EventManager.ts:376-381), because `createEvent` is called there without an `externalId`. Fall back to the destination calendar whose `credentialId` matches this credential, or to the first entry."
+  },
+  {
+   "id": 5,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 1078,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Team members' calendars are dropped when the organizer has none",
+   "body": "If neither `eventType.destinationCalendar` nor `organizerUser.destinationCalendar` is set, `evt.destinationCalendar` is `null` (line 1067). `evt.destinationCalendar?.push(...teamDestinationCalendars)` then does nothing, so the other collective hosts' calendars are thrown away without any sign. Initialise it to `[]` and push into that."
+  },
+  {
+   "id": 6,
+   "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+   "line": 444,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Recurring cancellation repeats per reference and skips other hosts",
+   "body": "The recurring branch now sits inside `for (const reference of bookingCalendarReference)`. For every calendar reference it goes through all of the organizer's calendar credentials and deletes `updBooking.references.find(...)`, which is always the first calendar reference. With N host references, the organizer's event is deleted N times, and the other hosts' recurring events are never deleted, because only `bookingToDelete.user.credentials` is used and only the first ref of each booking is looked at. Run the recurring deletion once, outside the loop, over every `_calendar` reference of each booking, using each reference's own credential."
+  },
+  {
+   "id": 7,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 992,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Member calendars without credentialId end up on the organizer's credentials",
+   "body": "When a pushed team member's `destinationCalendar` has no `credentialId`, `createAllCalendarEvents` takes the else branch (EventManager.ts:376-381). That branch filters `this.calendarCredentials`, which are the organizer's credentials, by integration type, so it creates a second copy of the event in the organizer's calendar instead of the member's. Consider skipping such entries for non-organizer hosts, or resolving that member's credentials."
+  },
+  {
+   "id": 8,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 728,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "loadUsers turns validation errors into a 500",
+   "body": "An empty `dynamicUserList` now throws a plain `Error`. The catch block turns that into `HttpError(500, \"Unable to load users\")`, while before the code returned an empty list and handled it downstream. `error instanceof HttpError` can never be true inside this try block. Also, the `organization.slug` select was removed from the dynamic-user query, but `IsFixedAwareUser` (line 355) still declares it."
+  }
+ ]
+}

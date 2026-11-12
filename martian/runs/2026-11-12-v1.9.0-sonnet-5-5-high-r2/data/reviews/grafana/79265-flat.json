@@ -1,0 +1,189 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-79265-flat` of grafana-79265-flat against 7ddcd0c9611882858701f4f876fb8e449fe73980 (merge-base 7ddcd0c)",
+    "repository": {
+      "name": "grafana-79265-flat"
+    },
+    "base": {
+      "sha": "7ddcd0c9611882858701f4f876fb8e449fe73980",
+      "ref": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+    },
+    "head": {
+      "sha": "1ac848883795d232d69850166dd2016fc9162aef",
+      "ref": "pr-79265-flat"
+    },
+    "title": "pr-79265-flat",
+    "description": "Anonymous: Add configurable device limit",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/setting/setting.go"
+    ],
+    "reviewed": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/setting/setting.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 87,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Rejected device is cached before the limit check, so its next request is let through",
+      "body": "`tagDeviceUI` calls `a.localCache.SetDefault(key, ...)` at line 87, before `CreateOrUpdateDevice` at line 93. When the limit is reached, `CreateOrUpdateDevice` returns `ErrDeviceLimitReached`. The first request is rejected in `client.go:44-47`, but the cache entry stays. Every later request from that device within the 29-minute cache TTL (`impl.go:42`) hits the cache at line 83 and returns nil. `Authenticate` then returns an anonymous identity, so the limit is bypassed after one retry.\n\nA transient DB error has the same effect: the device is not stored, the cache says it is, and nothing retries for 29 minutes.\n\nFix: set the cache entry only after `CreateOrUpdateDevice` succeeds. `TestIntegrationBeyondDeviceLimit` calls the store directly, so it does not cover this path.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/client.go",
+      "line": 44,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Device tagging now runs synchronously in the auth path",
+      "body": "The old code tagged in a goroutine with its own 2-minute timeout and a `recover`. Now `TagDevice` runs inline with the request context. Each anonymous request whose device is not in the local cache waits for a COUNT query (when limit > 0) plus an upsert before authentication returns. A slow or locked DB therefore delays or fails anonymous requests, and cancelling the request cancels the write. The synchronous call is needed so the limit error can reject the request. Consider whether it should be synchronous only when `AnonymousDeviceLimit > 0`, and keep the async path otherwise so deployments without a limit don't pick up this latency.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 109,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Limit check is count-then-insert and can be exceeded under concurrency",
+      "body": "Lines 109-118 run a COUNT and then a separate upsert, with no transaction or lock. Concurrent requests from different new devices can all see `count < limit` and all insert, so the limit can be overshot, also across multiple Grafana instances. If a hard limit is intended, say in a comment that it is best-effort, or make the check and insert atomic.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "line": 51,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Limit test doesn't cover updating an existing device at the limit",
+      "body": "`TestIntegrationBeyondDeviceLimit` only checks that a second new device is rejected. The behaviour the comment at `database.go:108` promises is untested: with the limit reached, an already-registered device still updates without error. The `updated_at BETWEEN` branch in `updateDevice` is also untested for an expired device. Add a case that re-calls `CreateOrUpdateDevice` with the first device ID and expects NoError. Also, `UpdatedAt` is set to `time.Now().Add(-time.Hour)` while `CreatedAt` is left zero in both calls. Set `CreatedAt` too.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 16,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "30-day expiration constant is now defined three times",
+      "body": "`anonymousDeviceExpiration` is declared in `anonstore/database.go:16` and again in `api/api.go:18`. `thirtyDays` is also still defined in `anonimpl/impl.go:25`, and `pkg/api/admin.go:67` computes the same value locally. The limit count and the stats and listing queries must use the same window, so they can drift apart if only one is edited. Export one constant from `anonstore` and reuse it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/grafana-runtime/src/config.ts",
+      "line": 97,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Config field typed as `undefined`, and the backend always sends a number",
+      "body": "`anonymousDeviceLimit = undefined;` makes TypeScript infer the property type as `undefined` (or `any` without strict null checks). `GrafanaBootConfig` can then never hold a number, even though the boot data assigns one. Declare it as `anonymousDeviceLimit: number | undefined = undefined;`. The Go DTO (`pkg/api/dtos/frontend_settings.go:195`) is a non-omitempty `int64`, so the frontend receives `0` for 'no limit' and never `undefined`. Either document that 0 means unlimited or type it as `number`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous Authenticate now tags the device synchronously and rejects the request on ErrDeviceLimitReached",
+      "location": "pkg/services/anonymous/anonimpl/client.go:44",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/client.go:44-50",
+        "pkg/services/anonymous/anonimpl/impl.go:83-98",
+        "pkg/services/anonymous/anonimpl/impl.go:144-148",
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:105-118"
+      ],
+      "equivalent_path": "Previous goroutine-based TagDevice in the same function (removed); tagDeviceUI in impl.go",
+      "before_after": "Before: fire-and-forget goroutine with a 2-minute timeout and panic recovery, and errors only logged. After: inline call with the request ctx. ErrDeviceLimitReached returns (nil, err), other errors are logged and auth continues.",
+      "visible_effect": "With the limit reached, a new anonymous device gets an auth error instead of an anonymous session. The error is a plain fmt.Errorf with no HTTP status mapping, so the user probably sees a generic failure.",
+      "failure_mode": "The local cache is set before the DB write (impl.go:87), so the rejected device is let through on its next request until the 29-minute TTL expires (impl.go:42, 83-85). A DB error is likewise swallowed, and the device is cached as tagged.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Frontend settings expose anonymousDeviceLimit",
+      "location": "pkg/api/frontendsettings.go:198",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/frontendsettings.go:198",
+        "pkg/api/dtos/frontend_settings.go:195",
+        "pkg/setting/setting.go:1654",
+        "packages/grafana-runtime/src/config.ts:97"
+      ],
+      "equivalent_path": "AnonymousEnabled on the adjacent line",
+      "before_after": "Copied straight from hs.Cfg.AnonymousDeviceLimit, which is read in setting.go via MustInt64(0).",
+      "visible_effect": "The frontend receives 0 when unset, but the TS type says number | undefined.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The device limit works for the first rejection, but it can be bypassed. `tagDeviceUI` caches the device before the DB write succeeds, so a rejected device is let through on its next request for up to 29 minutes. Tagging is also now synchronous in the auth path, the limit check is count-then-insert and not atomic, and the test doesn't cover updating an existing device at the limit. The 30-day constant is now defined in several places, and the frontend config field is typed as `undefined`. I read all the files in this part and the repo's authn code. I did not check how the authn layer turns the plain `ErrDeviceLimitReached` into an HTTP response, so the message the user sees is unconfirmed.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 11,
+      "lines": 142,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.14458100000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+  },
+  "execution": {
+    "costUsdEstimate": 0.14458100000000002,
+    "usage": {
+      "input": 6,
+      "output": 4463,
+      "cacheRead": 50230,
+      "cacheWrite": 23729
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 41023,
+    "stop": "complete",
+    "notices": []
+  }
+}

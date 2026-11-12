@@ -1,0 +1,143 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-6` of discourse-graphite-6 against 7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7 (merge-base 7a5fbae)",
+    "repository": {
+      "name": "discourse-graphite-6"
+    },
+    "base": {
+      "sha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7",
+      "ref": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+    },
+    "head": {
+      "sha": "267d8be1f556ed59639ced396c885bb44586da19",
+      "ref": "pr-6"
+    },
+    "title": "pr-6",
+    "description": "UX: show complete URL path if website domain is same as instance domain",
+    "author": "Arpit Jalan"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 43,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "website_name leaks the website that untrusted_attributes hides from anonymous viewers of TL0 users",
+      "body": "`website` is listed in `untrusted_attributes` (line 109), so `include_website?` returns false when `scope.restrict_user_fields?(object)` is true. That is the case for a TL0 user viewed by an anonymous visitor (lib/guardian/user_guardian.rb:58-59). `website_name` is a plain attribute and is not in that list. Its filter method is named `include_website_name` without the `?` (line 153), so the serializer never calls it. When the profile is restricted, `website_name` still computes from `object.user_profile.website` and is serialized. Before this change, the client built `websiteName` from `model.website`, so a hidden website stayed hidden. Now user.hbs:66-71 shows the host, or host+path, of a TL0 (often spam) account to anonymous visitors. That undoes the anti-spam restriction. Fix: add `:website_name` to `untrusted_attributes` and delete the misnamed `include_website_name` (the untrusted filter already checks `present?`). Also add `website_name` to the list in the TL0 spec at spec/serializers/user_serializer_spec.rb:11.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 153,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`include_website_name` is missing the `?`, so it is dead code",
+      "body": "ActiveModel::Serializer only checks `include_<attr>?` methods (compare the generated `include_#{attr}?` at lines 9, 18 and 27). `include_website_name` without the `?` is never called, so `website_name` is always included, even when the website is blank or hidden. If the attribute moves into `untrusted_attributes` as suggested above, delete this method. Otherwise rename it to `include_website_name?`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 144,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Same-length host comparison treats unrelated hosts under a shared public suffix as the same site",
+      "body": "The branch at lines 144-146 drops the first label of both hosts and compares the rest. On a forum at `forum.co.uk`, the website `http://evil.co.uk/whatever` matches (`co.uk` == `co.uk`), so its full path is shown as if it were on the same site. It is display-only and the href is unchanged, but the rule doesn't do what its comment says. Comparing registrable domains, or limiting this to an exact parent-domain match like the `ends_with?` branch does, would avoid it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/serializers/user_serializer_spec.rb",
+      "line": 76,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test for the sibling-subdomain branch, a blank website, or a TL0-anonymous viewer",
+      "body": "The specs cover the exact-match, unrelated-host and parent-domain branches. They don't cover the `www.example.com` vs `forum.example.com` branch (line 144-146), a website with no host (e.g. `example.com` without a scheme, where `URI(...).host` is nil), or `website_name` being omitted for a TL0 user seen as anonymous. The last case would have caught the leak reported on line 43.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "The website label in the user profile header now comes from the server-computed `website_name` instead of the client-side `websiteName`",
+      "location": "app/assets/javascripts/discourse/templates/user/user.hbs:66",
+      "status": "closed",
+      "evidence": [
+        "app/serializers/user_serializer.rb:25-33",
+        "app/serializers/user_serializer.rb:105-111",
+        "app/serializers/user_serializer.rb:137-155",
+        "lib/guardian/user_guardian.rb:58-59",
+        "app/assets/javascripts/discourse/templates/user/user.hbs:66-71"
+      ],
+      "equivalent_path": "Removed controller property `websiteName` (`model.website.split('/')[2]`), which was derived from `model.website`",
+      "before_after": "Before: the label was the host and was shown only when `model.website` was serialized, i.e. not for TL0 users viewed anonymously. After: the label is the host or host+path from `UserSerializer#website_name`. That attribute ignores the untrusted-attribute restriction because it is not in `untrusted_attributes` and its include method lacks `?`.",
+      "visible_effect": "Anonymous visitors now see the website host or path of TL0 users, as text with an empty href. Everyone else sees the host+path when the site shares the forum's domain.",
+      "failure_mode": "When the URI does not parse or has no host, `website_name` returns nil and the globe or website block is hidden. That matches the old behaviour for a scheme-less URL.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This PR moves the profile header's website label to a new server-side attribute, `website_name`, which shows the full path when the website is on the forum's own domain. It has one blocker: `website_name` is not an untrusted attribute, and its `include_website_name` method lacks the `?`, so it is never called. Anonymous visitors can now see the website of TL0 users, which `website` itself is hidden from. Smaller points: the sibling-subdomain rule treats unrelated hosts under a shared public suffix (e.g. `.co.uk`) as the same site, and the specs miss that branch and the TL0 case.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 56,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.175243
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.175243,
+    "usage": {
+      "input": 6,
+      "output": 3630,
+      "cacheRead": 29015,
+      "cacheWrite": 12102
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 37472,
+    "stop": "complete",
+    "notices": []
+  }
+}

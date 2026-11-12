@@ -1,0 +1,117 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "No re-check of the cache after taking the write lock",
+      "body": "This is check-then-lock without a second check. Several requests can see a nil cache on the RLock fast path at the same time, for example the first page loads after startup. Each one then waits for the write lock and reads and parses `assets-manifest.json` again, one after another (lines 59-69), even though the first one has already filled `entryPointAssetsCache`. The result is still correct, but this is the duplicate work the cache is there to avoid, and the requests queue behind each other.\n\nSuggested fix: after `Lock()`, check again with `if cfg.Env != setting.Dev && entryPointAssetsCache != nil { return entryPointAssetsCache, nil }`. You could also use `sync.Once`/`singleflight` for the non-Dev path.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 41,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No concurrent test for the new locking",
+      "body": "The PR exists to remove a data race on `entryPointAssetsCache`, but no test calls `GetWebAssets` from several goroutines at once. Without one, `go test -race` can't catch the race if it comes back. A small test would cover it: start N goroutines calling `GetWebAssets` against the testdata manifest and check that they all get the same non-nil pointer. I only read `webassets_test.go` through the grep match at line 50, so I haven't confirmed that no such test exists elsewhere.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Guard the global entryPointAssetsCache with a sync.RWMutex: read it under RLock, then build and publish it under the write lock",
+      "location": "pkg/api/webassets/webassets.go:41-70",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:41-49",
+        "pkg/api/webassets/webassets.go:59-70",
+        "pkg/api/dtos/index.go:51-61",
+        "pkg/api/index.go:82",
+        "pkg/api/index.go:137",
+        "pkg/api/frontendsettings.go:62",
+        "pkg/middleware/recovery.go:141"
+      ],
+      "equivalent_path": "Before this change, the unsynchronised read at the same spot and the plain assignment at line 69. Callers: pkg/api/index.go:82, pkg/api/frontendsettings.go:62, pkg/middleware/recovery.go:141",
+      "before_after": "Before: concurrent requests read and wrote the pointer with no synchronisation (a data race). After: the read is under RLock and the build and assignment are under Lock. SetContentDeliveryURL mutates only the fresh result before it is published, so callers that share the cached pointer never see a half-mutated value. The cache is not checked again after Lock, so concurrent cache misses each rebuild it.",
+      "visible_effect": "No change to what users see. index.go passes the pointer into the index view data (Assets), and frontendsettings.go passes it into the settings DTO, so the same asset paths reach the page.",
+      "failure_mode": "If the manifest read fails, the cache is set to nil and the error is returned while the write lock is held; the deferred Unlock releases it. The next request tries again. This behaves the same as before the change.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The mutex fixes the data race on the global web-assets cache, and I found no correctness problem. The cached pointer is only changed before it is published, and all three callers just read it. Two optional suggestions: check the cache again after taking the write lock, so that concurrent first requests don't each parse the manifest again; and add a concurrent test so `go test -race` covers the fix. The PR body (\"Frontend Asset Optimization\") says little about the change, which is really a concurrency fix.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.1403906
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1403906,
+    "usage": {
+      "input": 8,
+      "output": 2362,
+      "cacheRead": 42953,
+      "cacheWrite": 10566
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 31009,
+    "stop": "complete",
+    "notices": []
+  }
+}

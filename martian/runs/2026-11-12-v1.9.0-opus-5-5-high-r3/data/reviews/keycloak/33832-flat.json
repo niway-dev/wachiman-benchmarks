@@ -1,0 +1,179 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-33832-flat` of keycloak-33832-flat against 10aca5552314d6e5c9226f3c6d0107861c38c693 (merge-base 10aca55)",
+    "repository": {
+      "name": "keycloak-33832-flat"
+    },
+    "base": {
+      "sha": "10aca5552314d6e5c9226f3c6d0107861c38c693",
+      "ref": "10aca5552314d6e5c9226f3c6d0107861c38c693"
+    },
+    "head": {
+      "sha": "b6ab976c03bb140daf6df420d81a563a5e66cf12",
+      "ref": "pr-33832-flat"
+    },
+    "title": "pr-33832-flat",
+    "description": "Add AuthzClientCryptoProvider for authorization client cryptographic operations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "authz/client/pom.xml",
+      "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Encoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "authz/client/src/main/resources/META-INF/services/org.keycloak.common.crypto.CryptoProvider",
+      "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java",
+      "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java",
+      "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java",
+      "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java"
+    ],
+    "reviewed": [
+      "authz/client/src/main/resources/META-INF/services/org.keycloak.common.crypto.CryptoProvider",
+      "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Encoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "authz/client/pom.xml",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java",
+      "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java",
+      "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java",
+      "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java",
+      "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "line": 57,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Removing the multiple-provider check lets a FIPS/non-FIPS mix on the classpath pick a provider silently",
+      "body": "Before this change, `detectProvider` threw `IllegalStateException` when more than one `CryptoProvider` was found. Now it sorts by `order()` and takes the first one. `DefaultCryptoProvider`, `WildFlyElytronProvider` and `FIPS1402Provider` all return 200 (DefaultCryptoProvider.java:83-85, WildFlyElytronProvider.java:76-78, FIPS1402Provider.java:114-116). When two of them are on the classpath, the stable sort keeps ServiceLoader (classpath) order, and the losers are logged only at debug level (lines 64-70). So a deployment that has both `keycloak-crypto-default` and `keycloak-crypto-fips1402` used to fail at startup. Now it can quietly run on the non-FIPS BouncyCastle provider, and nothing at default log levels says so. This affects every caller of `CryptoIntegration.init`: `KeycloakApplication.startup()` (services/.../KeycloakApplication.java:89), the admin CLI (`Globals.java:44`) and the testsuite `CryptoInitRule`. The Quarkus server is not affected because it calls `setProvider` explicitly (KeycloakRecorder.java:214). The new ordering only needs a fallback provider to lose against the real ones. Keep the fail-fast when two or more providers share the top `order()` value, and throw the same message as before.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+      "line": 42,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "One default-size EC key is used for ES256, ES384 and ES512, so the round trip compares truncated values",
+      "body": "`KeyPairGenerator.getInstance(\"EC\").genKeyPair()` makes one key on the JDK's default curve (P-256 on older JDKs, P-384 on newer ones), and all three tests use it. When the key's r/s are longer than `signLength/2` (for example a P-384 key under ES256, where r/s are up to 48 bytes and `len` is 32), `integerToBytes` (AuthzClientCryptoProvider.java:153-156) silently keeps only the last `len` bytes. `rsConcat` and `rsConcat2` are then both truncated the same way, so `assertArrayEquals` passes on a signature that cannot be valid. ES512 is never tested with a P-521 key either. The test can't catch a bug in the length handling. Generate a key per algorithm (`initialize(new ECGenParameterSpec(\"secp256r1\"/\"secp384r1\"/\"secp521r1\"))`). Also check that `asn1Des` verifies with `Signature.verify` against the public key, or equals the original `sign`, instead of only checking that the round trip is self-consistent.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "line": 114,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Two encoder calls build objects that are never used",
+      "body": "Lines 114-115 (`ASN1Encoder.create().write(rBigInteger)` and the same for `s`) build encoders and throw them away. The returned sequence builds its own encoders on lines 119-120. Remove both lines.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "AuthzClient.create(Configuration) now calls CryptoIntegration.init with the authz client's classloader",
+      "location": "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java:95",
+      "status": "closed",
+      "evidence": [
+        "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java:94-97",
+        "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:29-51",
+        "authz/client/src/main/resources/META-INF/services/org.keycloak.common.crypto.CryptoProvider:20",
+        "services/src/main/java/org/keycloak/services/resources/KeycloakApplication.java:89",
+        "integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:44"
+      ],
+      "equivalent_path": "KeycloakApplication.startup() and admin-cli Globals call CryptoIntegration.init(classLoader) the same way before using crypto",
+      "before_after": "Same as the siblings: init runs once (double-checked lock), and later calls are no-ops. If another provider was set first (for example by setProvider), it is kept.",
+      "visible_effect": "ECDSAAlgorithm.concatenatedRSToASN1DER/asn1derToConcatenatedRS now resolve a provider instead of throwing 'Please init first'",
+      "failure_mode": "If no provider is on the classpath, init throws IllegalStateException out of create(). With the authz client jar, its own service file guarantees at least one provider.",
+      "evidence_checked": true
+    },
+    {
+      "action": "detectProvider picks the highest order() provider instead of failing on several",
+      "location": "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:57",
+      "status": "closed",
+      "evidence": [
+        "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:55-73",
+        "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java:83-85",
+        "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java:76-78",
+        "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java:114-116",
+        "quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/KeycloakRecorder.java:210-222"
+      ],
+      "equivalent_path": "Quarkus KeycloakRecorder.setCryptoProvider picks the provider explicitly from FipsMode",
+      "before_after": "Before: more than one provider meant an IllegalStateException. After: AuthzClientCryptoProvider (100) loses to Default/Elytron/FIPS (200), but ties among those three are settled by classpath order.",
+      "visible_effect": "The wrong provider is chosen silently; the ignored providers are logged only at debug level",
+      "failure_mode": "A FIPS plus default classpath no longer fails fast (reported as a finding)",
+      "evidence_checked": true
+    },
+    {
+      "action": "ECDSAAlgorithm static helpers are served by AuthzClientCryptoProvider's ECDSA implementation",
+      "location": "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:100",
+      "status": "closed",
+      "evidence": [
+        "core/src/main/java/org/keycloak/crypto/ECDSAAlgorithm.java:45-51",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:125-163",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java:49-83"
+      ],
+      "equivalent_path": "core ECDSAAlgorithm delegates to CryptoIntegration.getProvider().getEcdsaCryptoProvider()",
+      "before_after": "DER to R||S conversion uses the minimal-DER BigInteger encoding; r/s are left-padded or truncated to signLength/2",
+      "visible_effect": "JWS ES* signatures produced by the client",
+      "failure_mode": "Malformed DER gives IOException. A key curve that doesn't match signLength is silently truncated. Every other provider method throws UnsupportedOperationException (for example getSignature, used by AsymmetricSignatureVerifierContext:63).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a minimal ECDSA-only crypto provider to the authz client and initialises crypto in `AuthzClient.create`. To make that work, `CryptoIntegration` now orders providers by `order()` and no longer fails when it finds several. The main problem is that the three real providers all return 200. A classpath that mixes FIPS and non-FIPS providers, which used to fail at startup, now silently picks one and logs it only at debug. This affects KeycloakApplication, the admin CLI and the testsuite; Quarkus is not affected because it sets the provider explicitly. The new test uses one default-size EC key for all three algorithms, so for at least two of them it checks a round trip on truncated r/s values and never verifies a signature. There is also a small cleanup: two unused encoder calls.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 12,
+      "lines": 682,
+      "maxRisk": 7,
+      "status": "reviewed",
+      "turns": 20,
+      "costUsd": 0.6183382000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "10aca5552314d6e5c9226f3c6d0107861c38c693"
+  },
+  "execution": {
+    "costUsdEstimate": 0.6183382000000001,
+    "usage": {
+      "input": 24,
+      "output": 10044,
+      "cacheRead": 400651,
+      "cacheWrite": 42154
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 20,
+    "durationMs": 104707,
+    "stop": "complete",
+    "notices": []
+  }
+}

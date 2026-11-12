@@ -1,0 +1,150 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-9` of discourse-graphite-9 against 728845d008f06828630a632e5c7d67e11bf15deb (merge-base 728845d)",
+    "repository": {
+      "name": "discourse-graphite-9"
+    },
+    "base": {
+      "sha": "728845d008f06828630a632e5c7d67e11bf15deb",
+      "ref": "728845d008f06828630a632e5c7d67e11bf15deb"
+    },
+    "head": {
+      "sha": "ecfa17b5a79dfdc91e7a4d50b42ae78a35d0a293",
+      "ref": "pr-9"
+    },
+    "title": "pr-9",
+    "description": "FEATURE: Localization fallbacks (server-side)",
+    "author": "Kane York"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "reviewed": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 17,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Fallback chain depends on the site's default_locale, but the process-wide translation cache key doesn't include it",
+      "body": "`FallbackLocaleList#[]` builds the chain from `SiteSetting.default_locale`, which is set per site in multisite and can be changed by an admin. The cached `I18n.translate` in `lib/freedom_patches/translate_accelerator.rb:71-76` stores results in one process-wide LRU keyed only by `\"#{key}#{config.locale}#{config.backend.object_id}\"`. Suppose a key is missing in the user's locale (say `ja`). The first site to translate it caches the string from *its* fallback locale (e.g. `fr`). Every other site on the same process then gets that `fr` string for `ja` users, even if its own default is `de`. Changing `default_locale` in admin also leaves stale fallback strings cached until the process restarts. Nothing errors or logs; users just see text in the wrong language. Fix: add `SiteSetting.default_locale` (or the joined fallback chain) to the cache key `k`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 20,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Fallback locales are only loaded for web requests, not in Sidekiq jobs",
+      "body": "The patched I18n loads locale files lazily, and only for `config.locale` (`lib/freedom_patches/translate_accelerator.rb:68`). The Fallbacks backend looks keys up in the fallback locales without loading them. `ensure_loaded!` is called only from `ApplicationController#set_locale` (`app/controllers/application_controller.rb:159`). Jobs set `I18n.locale = SiteSetting.default_locale` (`app/jobs/base.rb:151`) and never call it. `PostAlerter` also switches to `user.effective_locale` (`app/services/post_alerter.rb:138`) without loading the fallbacks. So in a Sidekiq process whose default locale is not `en`, `:en` may never be loaded. A key missing in the user's or site's locale then renders as `translation missing: …` instead of the English string, and that result is cached. This affects emails and notifications, which are built in jobs. Fix: call `I18n.fallbacks.ensure_loaded!` after the locale is set in `Jobs::Base` (and in `PostAlerter`'s `with_locale` block). Alternatively, load lazily inside the lookup.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 24,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No specs for the new fallback chain",
+      "body": "The change turns fallbacks on in every environment, including test and development; before, they were on only in production and profile. No spec covers the user → site default → `en` order, deduplication when they are the same, or `ensure_loaded!`. A spec that stubs `SiteSetting.default_locale` and checks a key present only in `en` or only in the site locale would protect this behaviour, including the multisite cache issue.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "set_locale now calls I18n.fallbacks.ensure_loaded! on every request",
+      "location": "app/controllers/application_controller.rb:159",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/application_controller.rb:152-160",
+        "lib/freedom_patches/translate_accelerator.rb:46-65",
+        "config/initializers/i18n.rb:20-22",
+        "app/jobs/base.rb:151"
+      ],
+      "equivalent_path": "I18n.translate lazily loads only config.locale via load_locale",
+      "before_after": "Before: only the current locale was loaded on first translate. After: the user locale, site default locale and :en are all loaded at request start, so the Fallbacks backend can find keys in them.",
+      "visible_effect": "Server-rendered strings missing in the user's locale show the site default or English text instead of 'translation missing'.",
+      "failure_mode": "load_locale is synchronized and rechecks @loaded_locales inside the mutex, so concurrent calls are safe. Jobs never call this, so fallbacks there may hit unloaded locales (reported as a finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "FallbackLocaleList#[] supplies the fallback chain to I18n::Backend::Fallbacks on every lookup",
+      "location": "config/initializers/i18n.rb:13-18",
+      "status": "closed",
+      "evidence": [
+        "config/initializers/i18n.rb:17",
+        "lib/freedom_patches/translate_accelerator.rb:67-77"
+      ],
+      "equivalent_path": "Previously Rails' config.i18n.fallbacks = true (production/profile only), falling back to I18n.default_locale",
+      "before_after": "Before: production fell back to :en only; test/dev had no fallbacks. After: every environment falls back user locale → SiteSetting.default_locale → :en.",
+      "visible_effect": "Strings reach users through I18n.t; with no args the result is cached process-wide by key+locale+backend, so the per-site fallback result can be served to other sites.",
+      "failure_mode": "The cache key leaves out the site default locale, so in multisite or after a default_locale change a stale or wrong-language string is served silently (reported as a finding).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change replaces Rails' `config.i18n.fallbacks = true` with a custom fallback chain: the user's locale, then the site's default locale, then English. It also adds code to make sure those locales are loaded during a web request. I found two bugs. First, the fallback result depends on the site's default locale, but the process-wide translation cache key doesn't include it. In multisite, or after an admin changes the default locale, users can silently see text in the wrong language. Second, the fallback locales are only loaded in web requests, not in Sidekiq jobs, so English fallback can fail in emails and notifications. The new behaviour also has no specs.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 46,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.2501892
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "728845d008f06828630a632e5c7d67e11bf15deb"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2501892,
+    "usage": {
+      "input": 8,
+      "output": 6614,
+      "cacheRead": 44106,
+      "cacheWrite": 13632
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 64838,
+    "stop": "complete",
+    "notices": []
+  }
+}

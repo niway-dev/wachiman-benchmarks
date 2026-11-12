@@ -1,0 +1,105 @@
+{
+ "pr": "cal.com-14740",
+ "checkout": "/tmp/audit-wt/cal.com-14740",
+ "audit_ids": [
+  2,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 168,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Emails are sent for `guests`, not the filtered `uniqueGuests`",
+   "body": "The handler filters out guests that are already attendees (line 74-78) but then calls `sendAddGuestsEmails(evt, guests)` with the unfiltered input. In `packages/emails/email-manager.ts:541` an attendee whose email is in `newGuests` gets `AttendeeScheduledEmail` (the \"booking confirmed\" mail) instead of `AttendeeAddGuestsEmail`. So an existing attendee that was submitted again is sent a fresh confirmation and does not get the \"guests added\" notice. Pass `uniqueGuests`. The comparison in the email manager is also case-sensitive (`newGuests.includes(attendee.email)`), so lowercase/normalize both sides if you normalize in the handler."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 48,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`isTeamAdminOrOwner` uses `&&`, so team admins are denied",
+   "body": "`isTeamAdmin` already returns true for ADMIN or OWNER (`packages/lib/server/queries/teams/index.ts:270`). `isTeamOwner` requires role OWNER (line 292). Joining them with `&&` means only owners pass; a team ADMIN who is not the organizer or an attendee gets FORBIDDEN, which contradicts the variable name. If admins should be allowed, drop the `isTeamOwner` call. If only owners should be allowed, rename the variable and drop `isTeamAdmin`."
+  },
+  {
+   "id": 2,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 52,
+   "severity": "consider",
+   "topic": "security",
+   "title": "Any attendee can add unlimited guests, which sends mail in the organizer's name",
+   "body": "The sibling `editLocation` is gated by `bookingsProcedure` (`util.ts:25-46`): organizer or collective-event member only. This handler also lets any attendee through (`isAttendee`, line 52, matched on `user.email`). Attendees are public bookers who supply their own email, so anyone with an account can book once and then add arbitrary addresses. Each added address is written to the organizer's calendar event and gets a confirmation email sent as the organizer. `addGuests.schema.ts:5` has no `.max()` on `guests`. The handler also does not check the event type's guest settings or the booking status (cancelled, rejected or past bookings are accepted). Please confirm attendees are meant to have this right. If so, cap the array length and reject non-accepted or past bookings."
+  },
+  {
+   "id": 3,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 77,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Blacklist and duplicate checks are case-sensitive, and duplicates inside `guests` are not removed",
+   "body": "The blacklist is lower-cased at line 71 but `guest` is compared as-is at line 77. `Bad@Example.com` passes when `bad@example.com` is blacklisted. `guest === attendee.email` (line 76) is also case-sensitive, so `A@x.com` is added as a second attendee next to `a@x.com`. The server also does not dedupe within `guests`; the uniqueness check exists only in the dialog (`AddGuestsDialog.tsx:26`), and the tRPC endpoint can be called directly. A repeated email creates two attendee rows. Lower-case the guests before filtering and dedupe with a Set."
+  },
+  {
+   "id": 4,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 92,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "DB write happens before calendar update with no failure handling",
+   "body": "Attendees are persisted at line 92, then `getTranslation`, `getUsersCredentials` and `eventManager.updateCalendarAttendees` run unguarded. If any of them throws, the client gets an error toast but the guests are already saved and no emails go out. Retrying then fails with `emails_must_be_unique_valid`. `editLocation` wraps its work in try/catch and logs calendar failures. Wrap the calendar step (log and continue) or run it before the write."
+  },
+  {
+   "id": 5,
+   "path": "packages/trpc/server/routers/viewer/bookings/addGuests.handler.ts",
+   "line": 55,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "`you_do_not_have_permission` has no translation key",
+   "body": "The FORBIDDEN message is `you_do_not_have_permission`, and the dialog shows `t(err.message)` (`AddGuestsDialog.tsx:43`). That key is not in `apps/web/public/static/locales/en/common.json`, so the user sees the raw string `FORBIDDEN: you_do_not_have_permission`. Add the key or reuse an existing one."
+  },
+  {
+   "id": 6,
+   "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+   "line": 89,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Stale `isInvalidEmail` error persists after a later successful add",
+   "body": "`isInvalidEmail` is set true at line 56 and reset only by the Cancel button (line 91). It is not reset when the input changes or in `onSuccess` (lines 36-41). Sequence: submit an invalid email, see the error, fix it, submit successfully. The dialog closes, but on the next open the \"Emails must be unique and valid\" message is still shown. The same happens if the dialog is closed via Esc or the overlay, because `onOpenChange={setIsOpenDialog}` skips the reset. Reset `isInvalidEmail` (and the value) when the dialog closes and in `onSuccess`, and clear it in `handleAdd` before validating."
+  },
+  {
+   "id": 7,
+   "path": "apps/web/components/dialog/AddGuestsDialog.tsx",
+   "line": 43,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Error toast fallback is dead, and the schema is rebuilt every render",
+   "body": "`${err.data?.code}: ${t(err.message)}` is always a non-empty string, so `|| t(\"unable_to_add_guests\")` never runs. For zod input errors `err.message` is a JSON blob, which the user would see. Use the translated message when it is a known key and fall back to `unable_to_add_guests` otherwise. Also, `ZAddGuestsInputSchema` (line 26) is created inside the component on each render; hoist it to module scope. The handler schema is a different, non-refined schema with the same name, which is confusing."
+  },
+  {
+   "id": 8,
+   "path": "packages/ui/form/MultiEmail.tsx",
+   "line": 46,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Hard-coded English tooltip and label without matching id",
+   "body": "The tooltip `content=\"Remove email\"` is not translated, although the file already uses `useLocale`. `<label htmlFor=\"emails\">` (line 21) points at an id no input has, so the label is not associated with any field. `EmailField` is also given `label={<></>}`. Use a `t()` key for the tooltip and drop or fix the `htmlFor`."
+  },
+  {
+   "id": 9,
+   "path": "packages/emails/email-manager.ts",
+   "line": 525,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "No tests for the new handler or emails",
+   "body": "The PR adds an authorization-sensitive handler (organizer, attendee and team-owner paths, blacklist and uniqueness filtering) and a new email fan-out (new guests get `AttendeeScheduledEmail`, others get `AttendeeAddGuestsEmail`). No unit or e2e test covers any of it. The `data-testid=\"add_members\"` on the dialog button suggests an e2e test was planned. Add at least a handler test for the permission matrix and the filtering."
+  }
+ ]
+}

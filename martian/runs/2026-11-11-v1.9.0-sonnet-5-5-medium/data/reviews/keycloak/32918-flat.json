@@ -1,0 +1,128 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-32918-flat` of keycloak-32918-flat against 272cfc68dcc88615396ae62ed1571918e9c58ad3 (merge-base 272cfc6)",
+    "repository": {
+      "name": "keycloak-32918-flat"
+    },
+    "base": {
+      "sha": "272cfc68dcc88615396ae62ed1571918e9c58ad3",
+      "ref": "272cfc68dcc88615396ae62ed1571918e9c58ad3"
+    },
+    "head": {
+      "sha": "7126610bd111fa7a760bcf239d92ab82722b08c0",
+      "ref": "pr-32918-flat"
+    },
+    "title": "pr-32918-flat",
+    "description": "Add caching support for IdentityProviderStorageProvider.getForLogin operations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+      "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java"
+    ],
+    "reviewed": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+      "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java",
+      "line": 381,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Cleanup removes IDP with literal alias \"alias\", leaking the created IDPs",
+      "body": "`getCleanup().addCleanup(testRealm().identityProviders().get(\"alias\")::remove)` targets an IDP named \"alias\", not `idp-alias-<i>`. The 20 IDPs created here (and `idp-alias-20` at line 425) are never removed, and the cleanup calls hit a non-existent IDP. The test leaves state behind that can break later tests in the same realm, such as ones that count IDPs. Use the created alias, e.g. `final String alias = \"idp-alias-\" + i;` then `get(alias)::remove`, and the same for line 425. Line 428 already removes idp-alias-1, so that cleanup would also need to tolerate a 404.",
+      "anchor": "diff"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "line": 100,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "remove() now always queries the delegate for the IDP",
+      "body": "`idpDelegate.getByAlias(alias)` now runs on every remove, even when the cached entry exists and the old code did not hit the store. This is needed to evaluate the login predicate, but you could take the model from `cached.getIdentityProvider()` in the cached branch and only call the delegate in the invalid branch. Removals are rare, so this is minor.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java",
+      "line": 378,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Brace-less if",
+      "body": "`if (i >= 10)` has no braces. Add them, for consistency with the rest of the file.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Cache login IDP lists per FetchMode in the Infinispan IDP provider, with selective invalidation on create/update/remove",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:214",
+      "status": "closed",
+      "evidence": [
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:173-211",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:214-255"
+      ],
+      "equivalent_path": "getByOrganization in the same class, which uses the same IdentityProviderListQuery pattern",
+      "before_after": "The new method mirrors getByOrganization: it checks isInvalid, reads or populates the query, resolves each id via getById, and falls back to the delegate if an id is missing. It does not check isInvalid(orgId) as getByOrganization does.",
+      "visible_effect": "Login page IDP lists come from the cache. They are invalidated only when an IDP's login eligibility or org link changes.",
+      "failure_mode": "If an IDP is removed, the missing id triggers an invalidation and a delegate fallback. No silent staleness found.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The caching logic mirrors getByOrganization and the invalidation rules look consistent with the test's expected counts. The main problem is in the test: the cleanup registrations use the literal alias \\\"alias\\\", so the created IDPs are never removed. There are also two minor points: remove() now always queries the delegate, and one `if` has no braces.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 271,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.11658480000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "272cfc68dcc88615396ae62ed1571918e9c58ad3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.11658480000000002,
+    "usage": {
+      "input": 4,
+      "output": 3078,
+      "cacheRead": 25488,
+      "cacheWrite": 20812
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 4,
+    "durationMs": 28494,
+    "stop": "complete",
+    "notices": []
+  }
+}

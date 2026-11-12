@@ -1,0 +1,56 @@
+{
+ "pr": "sentry-67876-flat",
+ "checkout": "/tmp/audit-wt/sentry-67876-flat",
+ "audit_ids": [
+  2,
+  3,
+  4
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 402,
+   "severity": "fix",
+   "topic": "security",
+   "title": "OAuth `state` is the pipeline signature, a public constant, so it gives no CSRF protection",
+   "body": "`pipeline.signature` is `md5_text(*pipe_ids)`, built from the view class names (src/sentry/pipeline/base.py:132-133). It is the same for every user and every session, and the tests hardcode it (`9cae5e88803f35ed7970fc131e6e65d3`). That means the check at line 412 cannot tell a real GitHub callback from a forged one. An attacker can get any victim who has a GitHub pipeline open to load `/extensions/github/setup/?code=<attacker code>&state=9cae5e\u2026`. The victim's pipeline then records the attacker's GitHub login as `github_authenticated_user`. The sibling `OAuth2AuthorizeView.dispatch` uses `secrets.token_hex()`, stores it with `pipeline.bind_state(\"state\", state)` and compares against `pipeline.fetch_state(\"state\")` (src/sentry/identity/oauth2.py:245-252, 325). Do the same here: generate a random token, bind it, and compare against the bound value."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 503,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`integration.metadata[\"sender\"]` raises KeyError for integrations created through the pipeline",
+   "body": "`build_integration` sets `metadata[\"sender\"]` only when `state.get(\"sender\")` is set (lines 376-377). Only the webhook `installation.created` handler passes a sender (src/sentry/integrations/github/webhook.py:202-207). If the pipeline creates the Integration (the `Integration.DoesNotExist` \u2192 `next_step()` path at line 481-482), its metadata has no `sender`. Later, if the OrganizationIntegration is removed and someone reinstalls, this line raises `KeyError`. The user sees a 500 in the install popup instead of the error page. Use `integration.metadata.get(\"sender\", {}).get(\"login\")` and decide what a missing sender should mean."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 423,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Token exchange and `get_user_info` failures are unhandled and show a 500",
+   "body": "`safe_urlopen` is outside the `try`. `get_user_info` calls `resp.raise_for_status()` (src/sentry/identity/github/provider.py:16) and is not wrapped at all (line 434). If GitHub times out, returns an SSL or connection error, or rejects the token on `/user`, the exception propagates and the popup shows a 500 instead of `github-integration-failed.html`. The opener is never notified through `postMessage`. The sibling `OAuth2CallbackView.exchange_token` wraps `safe_urlopen` and catches `SSLError`/`ConnectionError` (src/sentry/identity/oauth2.py:286-308). Move `safe_urlopen` into the `try`, catch exceptions around `get_user_info`, and return `error(...)` in both cases."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 482,
+   "severity": "consider",
+   "topic": "security",
+   "title": "No user check when the Integration row does not exist yet",
+   "body": "The new check compares the OAuth user with the installer. It runs only when an Integration row already exists and has no OrganizationIntegration. If the `installation` webhook has not been processed yet, or the Integration row was removed, `Integration.DoesNotExist` goes straight to `next_step()`. Any Sentry user who supplies that `installation_id` can then link it, as before this PR. To close this, check with the user's OAuth token that the installation is accessible to them (for example, GitHub's `GET /user/installations`) on this path too."
+  },
+  {
+   "id": 4,
+   "path": "tests/sentry/integrations/github/test_integration.py",
+   "line": 392,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "`test_installation_not_found` now tests a state mismatch, not a 404 installation",
+   "body": "The callback uses `state=ddd023d87a913d5226e2a882c4c4cc05`, but the pipeline signature is `9cae5e88803f35ed7970fc131e6e65d3`. So the request fails at the state check (integration.py:412-413), which renders \"Invalid installation request.\". It never reaches `build_integration`, where the stubbed 404 would raise \"The GitHub installation could not be found.\" (integration.py:355-356). The 404 path has lost its coverage. Use the valid state and assert the original message again. Add a separate test for a wrong state."
+  }
+ ]
+}
