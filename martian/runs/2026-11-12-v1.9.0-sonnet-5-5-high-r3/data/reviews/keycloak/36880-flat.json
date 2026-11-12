@@ -1,0 +1,250 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-36880-flat` of keycloak-36880-flat against b7b84d75d16e91d3f56ec527a260c53c5dd4396c (merge-base b7b84d7)",
+    "repository": {
+      "name": "keycloak-36880-flat"
+    },
+    "base": {
+      "sha": "b7b84d75d16e91d3f56ec527a260c53c5dd4396c",
+      "ref": "b7b84d75d16e91d3f56ec527a260c53c5dd4396c"
+    },
+    "head": {
+      "sha": "95d5490bb0cc82cb2f21b12fdf804a7ba552291b",
+      "ref": "pr-36880-flat"
+    },
+    "title": "pr-36880-flat",
+    "description": "Add Client resource type and scopes to authorization schema",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/MgmtPermissionsV2.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/AbstractPermissionTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionRESTTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypeEvaluationTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypePermissionTest.java"
+    ],
+    "reviewed": [
+      "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "services/src/main/java/org/keycloak/services/resources/admin/permissions/MgmtPermissionsV2.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/AbstractPermissionTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionRESTTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypeEvaluationTest.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypePermissionTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "line": 138,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "V2 getClientsWithPermission cannot return client ids",
+      "body": "`getClientsWithPermission` looks up resources with `findByType(server, \"Clients\", ...)` and adds `resource.getName()`. The per-client resources are created by `AdminPermissionsSchema.getOrCreateResource` (AdminPermissionsSchema.java:101-111) with `resourceStore.create(...)` and `updateScopes(...)`. That code never calls `setType`, so `findByType` does not match them. Only the \"Clients\" type resource (type set at AdminPermissionsSchema.java:250) matches. The set therefore holds the string \"Clients\" instead of client UUIDs, or nothing. The caller `AvailableRoleMappingResource.getRoleIdsWithPermissions` (rest/admin-ui-ext/.../AvailableRoleMappingResource.java:229-230) then runs `realm.getClientById(cid).getRolesStream()`. For \"Clients\" that is a null client, so it throws a NullPointerException. That path is reachable when both V1 and V2 features are enabled, because line 217 only skips it when V1 is off. Either set the type when creating per-client resources, or iterate by name and skip the type resource. Add a test.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "line": 193,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "setPermissionsEnabled throws in V2, and the client-removed listener calls it",
+      "body": "`ClientPermissionsV2.setPermissionsEnabled` throws `UnsupportedOperationException`. `AdminPermissions.registerListener` (AdminPermissions.java:89-91) still calls `management(...).clients().setPermissionsEnabled(client, false)` on `ClientRemovedEvent`. The new guard at AdminPermissions.java:77 only checks `ADMIN_FINE_GRAINED_AUTHZ` (V1). `ADMIN_FINE_GRAINED_AUTHZ_V2` depends only on AUTHORIZATION (Profile.java:58), so both features can be on. In that case `management()` returns `MgmtPermissionsV2`, and deleting any client fails with the exception, because the listener runs inside the client removal. Before this PR `clients()` was the V1 object, so it did not throw. The new `testManageAllClients` deletes a client only with V2 on, so it does not cover this. Make the listener skip the client branch when V2 is enabled, or make `ClientPermissionsV2.setPermissionsEnabled(false)` a no-op. Separately, with V2 only, deleting a client now leaves its per-client resource and permissions in the admin-permissions resource server. Consider removing those in V2 as well.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "line": 86,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "canView() ignores the all-clients MANAGE permission, but canView(ClientScopeModel) honours it",
+      "body": "`canView()` is true only for the MANAGE_CLIENTS/VIEW_CLIENTS roles or the all-clients `view` scope. A caller with only the all-clients `manage` scope gets `canView() == false`. `canViewClientScopes()` and `requireViewClientScopes()` delegate to `canView()`, so `ClientScopesResource.getClientScopes` (ClientScopesResource.java:93) returns an empty stream for that caller. Meanwhile `canView(ClientScopeModel)` (line 118-122) returns true for `manage`. Listing and per-item view disagree. In `ClientsResource` (lines 122, 148) `canView` is false, so each client is evaluated one by one. This is correct, but costs an authorization evaluation per client. Decide whether `manage` should imply `view` in `canView()`, as the V1 `canView()` does for the MANAGE_CLIENTS role, and align the two.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+      "line": 98,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Javadoc of void require* methods says \"Returns true\"",
+      "body": "`requireView()` (line 98) and `requireViewClientScopes()` (line 103) are `void`, yet their Javadoc says \"Returns {@code true} if ...\". It should say \"Throws ForbiddenException if ... returns false\", like the other `require*` methods in this change. `requireViewClientScopes()` should reference `canViewClientScopes()`. Line 129 also has a double space before \"returns\".",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+      "line": 262,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Dead code and unused imports",
+      "body": "`getEvaluationContext(...)` is private and never called. The `logger` field and the imports `Scope`, `TOKEN_EXCHANGE`, `EvaluationContext`, `ClientModelIdentity` and `DefaultEvaluationContext` (the last three used only by the dead method) are unused. The two `hasPermission` overloads and `hasGrantedPermission` repeat the same permission-scan loop; extract a helper. `UserPermissionsV2` also checks `permission.getResourceId().equals(resource.getId())`, and these methods do not.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+      "line": 25,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "JUnit 4 `fail` import in a JUnit 5 test",
+      "body": "`org.junit.Assert.fail` is imported. Every sibling test in this package uses `org.junit.jupiter.api.Assertions.fail` (PermissionRESTTest:27, UserResourceTypeEvaluationTest:25, UserResourceTypePermissionTest:26). This file already imports `org.junit.jupiter.api.Assertions`. Use the Jupiter one rather than rely on JUnit 4 being on the classpath transitively.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+      "line": 226,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Tests mutate shared myclient and are not restored; the admin client authenticates as myclient",
+      "body": "`realmAdminClient` logs in as `myclient` with secret \"mysecret\" (RealmAdminPermissionsConfig:35-37, and the `@InjectAdminClient` at line 70). `testConfigureOnlyOneClient` calls `generateNewSecret()` and `invalidateRotatedSecret()` (lines 226-227) on that same client and never restores the secret. After the token expires, or for any later admin client created from \"mysecret\", authentication can fail with 401. `testManageOnlyOneClient` also renames `myclient` and moves a default scope to optional. `onAfter` only removes permissions. Restore the secret, name and scopes, or use a dedicated target client.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest.java",
+      "line": 365,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Missing coverage for new V2 client paths",
+      "body": "No test covers: `canMapClientScopeRoles` / the `map-roles-client-scope` scope; `getClientsWithPermission`; deleting a client with permissions defined, with V1+V2 both on or with V2 only; a per-client negative-logic permission overriding an all-clients permission (the Users tests have this); or a caller with an all-clients `manage` permission listing client scopes. The last two correspond to the issues above.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "MgmtPermissionsV2.clients() now returns ClientPermissionsV2, so every auth.clients().canX/requireX call in ClientsResource, ClientResource, ClientScopesResource and RolePermissions evaluates V2 schema permissions",
+      "location": "services/src/main/java/org/keycloak/services/resources/admin/permissions/MgmtPermissionsV2.java:64",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:57-122",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:207-235",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissions.java:246-248",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/UserPermissionsV2.java:106-145",
+        "services/src/main/java/org/keycloak/services/resources/admin/ClientResource.java:705-720",
+        "services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/AbstractTokenExchangeProvider.java:276"
+      ],
+      "equivalent_path": "MgmtPermissionsV2.users() returning UserPermissionsV2 (MgmtPermissionsV2.java:56-61) and UserPermissionsV2.hasPermission (UserPermissionsV2.java:106-145)",
+      "before_after": "Before, clients() inherited the V1 ClientPermissions. After, it is the V2 object. canManage/canConfigure/canView(client), canMapRoles, canMapCompositeRoles and canMapClientScopeRoles use hasPermission(client, scope): per-client resource by client UUID, else the all-clients type resource when it has policies. The V2 version does not filter on permission.getResourceId() as the Users V2 version does. ClientPermissions.canList(ClientModel) and getAccess are inherited and dispatch virtually to the V2 canView/canManage.",
+      "visible_effect": "A caller with a Clients-type permission can view, update or list the clients covered by it. The tests assert 403 without the permission and success with it.",
+      "failure_mode": "V1-only methods (isPermissionsEnabled, resource, getPermissions, setPermissionsEnabled, canExchangeTo and the other *Permission getters) now throw UnsupportedOperationException. ClientResource.management/permissions is guarded by the V1 feature. AbstractTokenExchangeProvider:276 calls canExchangeTo with no V2 guard.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ClientRemovedEvent listener calls management(...).clients().setPermissionsEnabled(client,false), now behind an ADMIN_FINE_GRAINED_AUTHZ (V1) guard",
+      "location": "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java:77",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java:77-96",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:192-195",
+        "common/src/main/java/org/keycloak/common/Profile.java:56-58"
+      ],
+      "equivalent_path": "The same listener before the change ran unconditionally. The V1 ClientPermissions.setPermissionsEnabled(false) deleted the V1 permission objects (ClientPermissions.java:188-217).",
+      "before_after": "After the change the listener does nothing when V1 is off. With V1 and V2 both on, management() returns MgmtPermissionsV2 and clients() is ClientPermissionsV2, whose setPermissionsEnabled throws. With V2 only, per-client V2 resources and permissions are never cleaned up on client delete.",
+      "visible_effect": "With both features on, deleting a client fails with an exception. With V2 only, orphaned resources and permissions remain.",
+      "failure_mode": "The exception propagates from the provider event listener into the client removal. Visible as a 500 to the admin caller.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ClientPermissionsV2.getClientsWithPermission enumerates client resources via findByType(\"Clients\")",
+      "location": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:138",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:125-145",
+        "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java:101-111",
+        "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java:250",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissions.java:132",
+        "rest/admin-ui-ext/src/main/java/org/keycloak/admin/ui/rest/AvailableRoleMappingResource.java:217-231"
+      ],
+      "equivalent_path": "V1 ClientPermissions.getClientsWithPermission (ClientPermissions.java:667-687) uses findByType(server, \"Client\") on resources created with setType(\"Client\") (ClientPermissions.java:132)",
+      "before_after": "V1 resources carry a type, so findByType finds them. V2 per-client resources are created in AdminPermissionsSchema.getOrCreateResource without setType, so they are not found by type.",
+      "visible_effect": "The admin-UI available-role-mappings endpoint (AvailableRoleMappingResource:229) gets wrong client ids from this method.",
+      "failure_mode": "A null client leads to a NullPointerException in AvailableRoleMappingResource:230 when it dereferences realm.getClientById(\"Clients\"). Not logged or handled.",
+      "evidence_checked": true
+    },
+    {
+      "action": "AdminPermissionsSchema.resolveClient maps a client UUID or clientId to the UUID resource name when creating a Clients-type permission",
+      "location": "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java:175",
+      "status": "closed",
+      "evidence": [
+        "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java:89-99",
+        "server-spi-private/src/main/java/org/keycloak/authorization/AdminPermissionsSchema.java:164-184",
+        "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:214"
+      ],
+      "equivalent_path": "resolveUser (AdminPermissionsSchema.java:164-173)",
+      "before_after": "It is the same pattern as resolveUser: look up by id, then by the human-readable id, and return getId(). It is wired into getOrCreateResource at lines 93-94. ClientPermissionsV2.hasPermission looks up the resource by client.getId() (line 214), which matches the name written here.",
+      "visible_effect": "Permissions created with a clientId or UUID in the resources field attach to the same per-client resource.",
+      "failure_mode": "Unknown id gives IllegalStateException at line 98, the same as users.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 2.** Part 1 adds V2 client permissions (ClientPermissionsV2, a Clients resource type, tests). The per-client and all-clients checks mirror UserPermissionsV2 and look sound. I found two functional problems. (1) `getClientsWithPermission` uses `findByType`, but the per-client resources are created without a type, so the method cannot return client ids. That leads to a NullPointerException in the admin-UI available-role-mappings endpoint when V1 and V2 are both enabled. (2) The client-removed listener calls `setPermissionsEnabled`, which now throws in V2, so deleting a client fails when both features are on. With V2 only, no V2 cleanup happens on client delete. Smaller points: `canView()` ignores all-clients `manage` while `canView(ClientScopeModel)` honours it, javadoc on void `require*` methods says \\\"Returns\\\", dead code in ClientPermissionsV2, a JUnit 4 import, shared-state mutation in the tests (including rotating the secret of the client used as the admin client), and missing coverage for these paths. Nothing was built or run; all findings come from reading the code.\n\n**Batch 2 of 2.** I found nothing to flag in `UserResourceTypePermissionTest.java`. The change only adds the `client` argument to `getScopePermissionsResource(...)` and `createPermission(...)`, to match the new static signatures in `AbstractPermissionTest`. `client` is an inherited field, and every call site in the file is updated. The new `createPermission(client, permission)` overload resolves against the existing static helper in `AbstractPermissionTest`. The test logic and assertions are the same as before. I only read the code and did not run the tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 2",
+      "files": 9,
+      "lines": 970,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 28,
+      "costUsd": 0.6955041
+    },
+    {
+      "label": "Batch 2 of 2",
+      "files": 1,
+      "lines": 34,
+      "maxRisk": 2,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.0773877
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "b7b84d75d16e91d3f56ec527a260c53c5dd4396c"
+  },
+  "execution": {
+    "costUsdEstimate": 0.7728918,
+    "usage": {
+      "input": 32,
+      "output": 20109,
+      "cacheRead": 1007018,
+      "cacheWrite": 117759
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 32,
+    "durationMs": 188702,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-22345` of cal.com-22345 against c9a47dd0cebd121ff73f24e1f8c1829579daf8e3 (merge-base c9a47dd)",
+    "repository": {
+      "name": "cal.com-22345"
+    },
+    "base": {
+      "sha": "c9a47dd0cebd121ff73f24e1f8c1829579daf8e3",
+      "ref": "c9a47dd0cebd121ff73f24e1f8c1829579daf8e3"
+    },
+    "head": {
+      "sha": "da09bc0808e7c6df1bc10e00d5acf764d94c7cc7",
+      "ref": "pr-22345"
+    },
+    "title": "pr-22345",
+    "description": "Allow admins to update users (#22332)\nrefactor: GetAvailableSlotsService (#22321)\nRevert \"refactor: GetAvailableSlotsService (#22321)\" (#22334)\nfix: Hosts are able to cancel an event without providing any reason but with whitepsace characters (#22282)\nfix: center align dropdown indicator when menu is open (#22262)\nfix: fixes type issue in theme and password property of newUser seed data (#22232)\nchore: release v5.4.16\nfeat: Self hosted onboarding (#22102)\nfix: use raw query at InsightsBookingService\nfeat: convert InsightsBookingService to use Prisma.sql raw queries\nfeat: convert InsightsBookingService to use Prisma.sql raw queries\nfix: update InsightsBookingService integration tests for Prisma.sql format\nMerge branch 'fix/insights-booking-service' into devin/convert-insights-booking-service-1752054886\nfix: exclude intentionally skipped jobs from required CI check failure\nfix tests\nMerge branch 'devin/convert-insights-booking-service-1752054886' of github.com:calcom/cal.com into devin/convert-insights-booking-service-1752054886\nRevert \"fix: exclude intentionally skipped jobs from required CI check failure\"\nclean up tests\naddress feedback\nMerge branch 'main' into devin/convert-insights-booking-service-1752054886",
+    "author": "Eunjae Lee"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/lib/server/service/__tests__/insightsBooking.integration-test.ts",
+      "packages/lib/server/service/insightsBooking.ts"
+    ],
+    "reviewed": [
+      "packages/lib/server/service/insightsBooking.ts",
+      "packages/lib/server/service/__tests__/insightsBooking.integration-test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/lib/server/service/insightsBooking.ts",
+      "line": 106,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "getFilterConditions can return a bare top-level OR",
+      "body": "When only `eventTypeId` is set, `buildFilterConditions` returns `(\"eventTypeId\" = X) OR (\"eventParentId\" = X)` with no outer parentheses (lines 105-107, 114-122). `getFilterConditions()` is public and its result is cached and returned as is. `getBaseConditions` wraps it in parentheses (line 73), so that path is safe. Any caller that combines the public fragment with its own `AND` without wrapping it will get wrong precedence, which silently widens the result set. Authorization conditions are built the same way and have the same property. Wrapping the OR in its own parentheses at line 106 would remove the hazard. I found no other callers of this class in the repository today.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/lib/server/service/__tests__/insightsBooking.integration-test.ts",
+      "line": 435,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Caching tests removed, and new SQL branches left uncovered",
+      "body": "The `Caching` describe block is deleted. The service still caches in `getAuthorizationConditions` and `getFilterConditions` (insightsBooking.ts:83-95), so that behaviour no longer has a test. The new branches are not exercised either. They are the `userIdsFromTeam.length === 0` case for team scope (insightsBooking.ts:200), the org scope with no member users (insightsBooking.ts:166), and `getBaseConditions` with no filters. The only end-to-end `$queryRaw` test covers user scope with an `eventTypeId` filter. The org and team `ANY(...)` conditions are checked only by structural equality against a hand-written `Prisma.sql`, which never confirms that Postgres accepts the generated SQL. Add a test that runs the org or team condition against the view, and restore a cache test, for example by asserting that two calls return the same object.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Authorization and filter conditions are now built as parameterized Prisma.Sql fragments instead of Prisma where-inputs, and findMany is replaced by getBaseConditions",
+      "location": "packages/lib/server/service/insightsBooking.ts:68",
+      "status": "closed",
+      "evidence": [
+        "packages/lib/server/service/insightsBooking.ts:68-81",
+        "packages/lib/server/service/insightsBooking.ts:104-122",
+        "packages/lib/server/service/insightsBooking.ts:164-174",
+        "packages/lib/server/service/insightsBooking.ts:196-207",
+        "packages/lib/server/service/insightsRouting.ts:109-123"
+      ],
+      "equivalent_path": "The previous findMany that passed a `where` with `AND: [auth, filter]` to prisma.bookingTimeStatusDenormalized.findMany (removed in this diff). The sibling service insightsRouting.ts:109-123 still builds Prisma where-inputs.",
+      "before_after": "Before, the service ran the query and returned rows. Now it returns a Sql fragment and the caller must run `$queryRaw ... WHERE ${baseConditions}`. The fallbacks are equivalent: `{id:-1}` becomes `1=0`, an empty `userId in []` becomes an omitted branch, and a missing options object still yields NOTHING. Values are bound as parameters through `Prisma.sql`, so there is no injection path. The constructor still validates options with zod, so a team scope without a teamId is still rejected and yields NOTHING.",
+      "visible_effect": "No user-facing change inside this part. Nothing else in the repository imports InsightsBookingService, so no screen consumes it yet. This was checked by grep, which found only the service file and its integration test.",
+      "failure_mode": "If a fragment is composed without the parentheses that getBaseConditions adds, the top-level OR at line 106 or line 173 would change precedence. A failure inside the repositories (findAllByParentId and similar) rejects the promise to the caller. The cache is only set after a successful build, so a rejection is not cached.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The conversion of InsightsBookingService to parameterized `Prisma.sql` fragments looks correct. The values are bound as parameters, and the nesting and parenthesization match the updated test expectations. The empty-array cases now omit the branch, which gives the same result as before. Nothing else in the repository uses the service. Two minor points remain. The public `getFilterConditions` can return an unparenthesized OR. The Caching tests were removed, and the new SQL branches (empty team or org user lists) have no tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 345,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 6,
+      "costUsd": 0.12481690000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "c9a47dd0cebd121ff73f24e1f8c1829579daf8e3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.12481690000000001,
+    "usage": {
+      "input": 6,
+      "output": 3389,
+      "cacheRead": 46429,
+      "cacheWrite": 21568
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 6,
+    "durationMs": 30002,
+    "stop": "complete",
+    "notices": []
+  }
+}

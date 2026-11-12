@@ -1,0 +1,169 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-97529-flat` of grafana-97529-flat against 871af07203177ce59a24e742107119409274f48a (merge-base 871af07)",
+    "repository": {
+      "name": "grafana-97529-flat"
+    },
+    "base": {
+      "sha": "871af07203177ce59a24e742107119409274f48a",
+      "ref": "871af07203177ce59a24e742107119409274f48a"
+    },
+    "head": {
+      "sha": "3f9895e6194eb19d497f19d4e1c6f218f069b8ac",
+      "ref": "pr-97529-flat"
+    },
+    "title": "pr-97529-flat",
+    "description": "Unified Storage Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "reviewed": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/storage/unified/resource/server.go",
+      "line": 320,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Requests are no longer rejected after Stop()",
+      "body": "`Stop` sets `s.initErr` to \"service is stopping\" / \"service is stopped\" (lines 321, 328, 339). The only thing that turned that into a request error was the `s.Init(ctx)` call at the top of every handler, and this PR removed all of those calls (Create, Update, Delete, Read, List, Watch, Search, History, Origin, IsHealthy, PutBlob, GetBlob). After Stop, `s.cancel()` has run and the backend is stopped, yet handlers now run against it and fail with arbitrary backend or context errors, or hang in Watch. `initErr` is now written by `Stop` and read by nothing but `Init`'s return value, so those assignments do nothing. Add an explicit stopped/initErr check to the handlers, for example one shared helper, or drop the dead assignments and accept the new behaviour on purpose.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/storage/unified/resource/server.go",
+      "line": 258,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Init now runs eagerly inside NewResourceServer; startup failure and ordering change",
+      "body": "Init, which runs `lifecycle.Init` (SQL backend `dbProvider.Init` + Ping), `search.init` (a full index build via `GetResourceStats` and `ListIterator`) and `initWatcher`, now runs synchronously in the constructor. It used to run lazily on the first request. Any DB or index failure now makes `NewResourceServer` return an error, so startup is blocked and `sql.NewResourceServer` (`pkg/storage/unified/sql/server.go:77`), `apistore/restoptions.go` and `client.go` all fail. Two questions: (1) Are the resource tables guaranteed to exist at every call site, for example the apiserver `restoptions` path, which may run before migrations? (2) Is blocking startup on a full index build intended? The postgres skip added in `pkg/server/module_server_test.go` makes me wonder whether this is the cause. Also, on this error return (and the earlier ones after line 229) the `cancel` for `s.ctx` is never called, so the context leaks.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/storage/unified/search/bleve.go",
+      "line": 144,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "TotalDocs iterates the cache map without cacheMu",
+      "body": "`TotalDocs` ranges over `b.cache` without taking `cacheMu.RLock()`. `BuildIndex` writes the map under `cacheMu.Lock()` (lines 137-139). It is called from the Prometheus collector (`bleve_index_metrics.go:96`) and, with this PR, from `searchSupport.init` (`search.go:216`). It can run at the same time as a `BuildIndex` triggered by `getOrCreateIndex`, which gives a concurrent map read and write (a fatal runtime error in Go). The race existed before, but this PR adds a caller and narrows the lock window rather than fixing the read side. Take `RLock` in `TotalDocs`.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/storage/unified/search/bleve.go",
+      "line": 88,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "BuildIndex no longer serialized; same-key concurrent builds are unguarded",
+      "body": "Removing the lock held for all of `BuildIndex` stops `GetIndex` readers from blocking during a build, which is the intended speedup. But `getOrCreateIndex` (`search.go:287-307`) has no per-key guard. Two concurrent searches for a missing key now both run `bleve.New(dir)`/build in parallel. For file-backed indexes the second `bleve.New` fails on the existing directory. For memory indexes, both build in full and the last writer overwrites the cache entry, orphaning the other. Consider a per-key singleflight or re-check the cache under the lock before inserting.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/server/module_server_test.go",
+      "line": 35,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test skipped for postgres rather than fixed",
+      "body": "The test is disabled for postgres on the grounds that it \"works locally\" in Drone. This PR moves resource-server init into the constructor, which changes startup behaviour for this storage-server target. Please confirm the failure is not caused by that change. Otherwise the skip hides a regression in the one test that covers the storage server target on postgres.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "NewResourceServer now calls s.Init(ctx) eagerly with the internal watcher/admin context",
+      "location": "pkg/storage/unified/resource/server.go:258",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/server.go:258-262",
+        "pkg/storage/unified/resource/server.go:293-318",
+        "pkg/storage/unified/resource/server.go:320-342",
+        "pkg/storage/unified/sql/server.go:77"
+      ],
+      "equivalent_path": "Previously every handler called s.Init(ctx) lazily (sync.Once) with the request context",
+      "before_after": "Before: first request ran lifecycle.Init, initWatcher, search.init using the request ctx, and errors were returned per request. After: it runs once at construction with the admin 'watcher' ctx. Errors fail construction. Handlers no longer check initErr, which Stop sets.",
+      "visible_effect": "Startup takes as long as the index build; init failure aborts server construction; post-Stop requests are no longer rejected",
+      "failure_mode": "Init error returns nil,err and leaks s.cancel. After Stop, handlers proceed against a stopped backend.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Moved cacheMu locking in bleveBackend.BuildIndex to only the cache insert; added TotalDocs call in search init log",
+      "location": "pkg/storage/unified/search/bleve.go:137",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/search/bleve.go:60-69",
+        "pkg/storage/unified/search/bleve.go:137-139",
+        "pkg/storage/unified/search/bleve.go:144-154",
+        "pkg/storage/unified/resource/search.go:287-307",
+        "pkg/storage/unified/resource/bleve_index_metrics.go:96"
+      ],
+      "equivalent_path": "GetIndex takes RLock; TotalDocs takes no lock",
+      "before_after": "Before: BuildIndex held the write lock for the whole build, blocking GetIndex. After: only the map write is locked, so builds can overlap, and TotalDocs still reads the map unlocked.",
+      "visible_effect": "Searches no longer block on unrelated index builds; possible duplicate builds for the same key",
+      "failure_mode": "Concurrent map read/write in TotalDocs (metrics collector or init log) against BuildIndex insert; file-index build for same key fails on existing dir",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR moves resource-server init into `NewResourceServer`, removes the per-request `Init` calls, and narrows the bleve cache lock. The main defect is that `Stop` sets `initErr` to reject requests, and the removed `Init` calls were the only thing that enforced it, so handlers now run after Stop. Other points: `TotalDocs` still reads the cache map without a lock (and gains a caller), same-key concurrent builds are unguarded now that `BuildIndex` no longer holds the lock, eager init changes startup failure behaviour, and a postgres test skip may hide a regression. The tracing `ctx` reassignments and the logger swap look fine.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 82,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.2317497
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "871af07203177ce59a24e742107119409274f48a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2317497,
+    "usage": {
+      "input": 12,
+      "output": 8676,
+      "cacheRead": 134697,
+      "cacheWrite": 32874
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 70192,
+    "stop": "complete",
+    "notices": []
+  }
+}

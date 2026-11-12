@@ -1,0 +1,140 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-77754` of sentry-77754 against bb5a6837cb5b3d8d3b174e17d42ec14486ef8738 (merge-base bb5a683)",
+    "repository": {
+      "name": "sentry-77754"
+    },
+    "base": {
+      "sha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738",
+      "ref": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+    },
+    "head": {
+      "sha": "9501091c52ae94e8d916f79b35d21975b3f9cadb",
+      "ref": "pr-77754"
+    },
+    "title": "pr-77754",
+    "description": "fix(ecosystem): Breaks issue sync cycles\nPasses JSON instead of classes when queueing task\nremoves SourceType enum\nConverts from JSON to dictionaries instead\nRemoves minor change made to sync utils, adds test for assignment loop\nFix typing for optional assignment_source\nMore typing fixes\nFixes tests, adds new test for sync loop checks",
+    "author": "Gabe Villalobos"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/services/assignment_source.py",
+      "line": 18,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`queued` default is evaluated once at import time",
+      "body": "`queued: datetime = timezone.now()` calls `timezone.now()` when the class body runs, so every `AssignmentSource` built without an explicit `queued` gets the process start time. `from_integration` never passes `queued`, so every source created by `sync_group_assignee_inbound` carries that same stale timestamp. `to_dict()` then ships it to the celery task. Use `field(default_factory=timezone.now)`, and import `field` from `dataclasses`. `test_to_dict` only asserts `queued is not None`, so it would not catch this. Add a test that two sources built at different times have different `queued` values, for example with `freeze_time`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/mixins/issues.py",
+      "line": 416,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Unused `assignment_source` parameter added to abstract `sync_status_outbound`",
+      "body": "The abstract `sync_status_outbound` now takes `assignment_source`. Nothing in this PR passes it: the `sync_status_outbound` task calls `should_sync(\"outbound_status\")` and the status path has no source. The concrete implementations (jira, jira_server, vsts, example) are not updated, and they only accept it through `**kwargs` or not at all. The example integration's signature has no `**kwargs`. This change to the abstract signature is unrelated to assignee-cycle prevention, so either drop it or wire it through.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/models/test_groupassignee.py",
+      "line": 180,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Cycle-prevention is tested only for `assign`, and not through the new plumbing",
+      "body": "The new test covers `assign` with a matching source. Nothing covers `deassign` with a matching source, or a non-matching source, which should still sync outbound. Nothing covers the task's `assignment_source_dict` parsing in `sync_assignee_outbound`, or `sync_group_assignee_inbound` passing `AssignmentSource.from_integration(integration)`. The inbound-to-outbound path is the one this PR is meant to protect, so add a test that calls `sync_group_assignee_inbound` and asserts `sync_assignee_outbound` is not called for the source integration.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Inbound assignee sync now tags GroupAssignee.assign/deassign with an AssignmentSource, which is serialized to the outbound celery task and used by should_sync to skip the originating integration",
+      "location": "src/sentry/integrations/utils/sync.py:96",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/utils/sync.py:96-99",
+        "src/sentry/integrations/utils/sync.py:137-144",
+        "src/sentry/integrations/tasks/sync_assignee_outbound.py:53-61",
+        "src/sentry/integrations/mixins/issues.py:390-391",
+        "src/sentry/models/groupassignee.py:192-194",
+        "src/sentry/models/groupassignee.py:238-240",
+        "src/sentry/integrations/example/integration.py:152-158",
+        "src/sentry/conf/server.py:739"
+      ],
+      "equivalent_path": "Previous path: sync_group_assignee_inbound called assign/deassign with no source, so sync_group_assignee_outbound queued sync_assignee_outbound for every linked external issue, including the one that triggered the change.",
+      "before_after": "Before: assign/deassign -> sync_group_assignee_outbound -> apply_async(kwargs without source) -> task -> should_sync(key) only checks config. After: source flows groupassignee.py:192/238 -> sync.py:137-144 (to_dict) -> task (from_dict, tasks/sync_assignee_outbound.py:53-56) -> should_sync compares sync_source.integration_id with org_integration.integration_id (mixins/issues.py:390). Celery uses pickle (conf/server.py:739), so the datetime in the dict serializes. All concrete sync_assignee_outbound implementations accept **kwargs, so the extra assignment_source kwarg is safe.",
+      "visible_effect": "An external assignee change no longer echoes back to the same external tracker. Other integrations linked to the same group still sync.",
+      "failure_mode": "If from_dict gets malformed data it returns None and the sync proceeds as before, so cycle prevention is silently skipped. The `queued` timestamp is stale (import-time default) but nothing reads it.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The cycle-prevention plumbing is sound. The source is passed from inbound sync through `assign`/`deassign` and the celery task to `should_sync`. All `sync_assignee_outbound` implementations accept `**kwargs`, and celery's pickle serializer handles the datetime in the dict. The one real bug is that `AssignmentSource.queued` defaults to `timezone.now()` evaluated at import, so every source carries a stale timestamp. Two smaller points: an unused `assignment_source` parameter on the abstract `sync_status_outbound`, and test gaps for `deassign`, a non-matching source, and the inbound-to-outbound path.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 227,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.1837226
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1837226,
+    "usage": {
+      "input": 10,
+      "output": 6172,
+      "cacheRead": 101106,
+      "cacheWrite": 27968
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 50238,
+    "stop": "complete",
+    "notices": []
+  }
+}

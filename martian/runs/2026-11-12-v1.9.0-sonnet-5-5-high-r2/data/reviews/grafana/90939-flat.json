@@ -1,0 +1,103 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "No re-check of the cache after taking the write lock",
+      "body": "The cache is read under RLock at lines 41-43. If it is empty, the code takes the exclusive Lock at line 48 and reloads without checking the cache again. Concurrent callers on a cold cache, or after a failed load, queue on the mutex. Each one then re-reads and re-parses assets-manifest.json, and in the CDN case repeats the HTTP fetch, while holding the exclusive lock. The result is correct but the work is redundant. The fix is a second check after `Lock()`: `if cfg.Env != setting.Dev && entryPointAssetsCache != nil { return entryPointAssetsCache, nil }`. In Dev mode every call still takes the write lock and reloads, which matches the old behaviour but now serialises concurrent requests.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GetWebAssets now guards the package-level entryPointAssetsCache with an RWMutex: read under RLock, reload under Lock",
+      "location": "pkg/api/webassets/webassets.go:40",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:35-38",
+        "pkg/api/webassets/webassets.go:41-49",
+        "pkg/api/webassets/webassets.go:69-70"
+      ],
+      "equivalent_path": "The previous unsynchronised check-then-set of the same global, in the same function.",
+      "before_after": "Before, the cache was read and written with no synchronisation, which is a data race under concurrent requests. Now the read is under RLock (41-43) and the write is under Lock (48-69). The cache check, the manifest load and the cache assignment are otherwise unchanged, and a failed load still stores nil and returns the error (69-70). The only gap is that there is no second check after Lock.",
+      "visible_effect": "The page-rendering handler gets the same asset set as before, with no race on the global. Concurrent cold-start requests are serialised and each re-reads the manifest.",
+      "failure_mode": "If the manifest is missing or invalid, nil is cached and the error is returned. Every later call retries under the exclusive lock, as before, so it recovers when the file appears. The lock is released by defer, so a panic cannot leave it held.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change fixes the data race on the global asset cache correctly: reads use RLock, the reload uses Lock, and defer releases it. The one remark is a missing re-check after taking the write lock, which causes redundant manifest reloads under concurrent cold-start load but does not give wrong results.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.0516582
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.0516582,
+    "usage": {
+      "input": 4,
+      "output": 1568,
+      "cacheRead": 15302,
+      "cacheWrite": 8610
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 4,
+    "durationMs": 18633,
+    "stop": "complete",
+    "notices": []
+  }
+}

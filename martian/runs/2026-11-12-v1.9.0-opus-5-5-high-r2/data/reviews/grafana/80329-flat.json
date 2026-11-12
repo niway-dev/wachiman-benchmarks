@@ -1,0 +1,185 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80329-flat` of grafana-80329-flat against a886bd3c79a417a70b51509384d1f1ec3e87e96b (merge-base a886bd3)",
+    "repository": {
+      "name": "grafana-80329-flat"
+    },
+    "base": {
+      "sha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b",
+      "ref": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+    },
+    "head": {
+      "sha": "a17a7dcf9418c2c415ded93407dc77a43ebad1a3",
+      "ref": "pr-80329-flat"
+    },
+    "title": "pr-80329-flat",
+    "description": "Database Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "reviewed": [
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 534,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Debug logging left in at Error level, with every ID in the batch",
+      "body": "Six `r.log.Error(...)` calls (lines 534, 537, 554, 557, 576, 579) run on every batch of every cleanup cycle, including successful ones and empty batches. Each call logs the full `ids` slice: 100 IDs at the default `cleanupjob_batchsize` (pkg/setting/setting.go:710), and up to tens of thousands for large batch sizes. They also log `err`, which is always nil on lines 534/554/576 because the error was already returned above. Error-level output fires alerting and floods logs while nothing is wrong. Remove these calls, or turn them into one `Debug` line per run with counts only.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/cleanup/cleanup.go",
+      "line": 77,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Cleanup interval changed from 10 minutes to 1 minute",
+      "body": "This looks like a leftover from local testing. The ticker drives every cleanup job (snapshots, dashboard versions, images, annotations, invites, short URLs, query history; lines 96-105), so they now run 10× as often. The 9-minute timeout at line 89 was sized to fit inside the 10-minute interval. With a 1-minute ticker, a long run is followed straight away by another, so cleanup runs almost continuously. That works against a PR titled \"Database Performance Optimizations\". Restore `time.Minute * 10`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 611,
+      "severity": "fix",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Quadratic string building for inlined SQLite IDs",
+      "body": "`values = fmt.Sprintf(\"%s, %d\", values, v)` copies the whole string built so far on every iteration, so the cost is O(n²) in the batch size. This branch only runs when the batch size is above 999. At the 32767 batch size the new test uses, that is roughly 32767²/2 × ~7 bytes ≈ several GB of copying per DELETE, repeated for every batch and for the tag cleanup too. Build the list with `strings.Builder` or with `strconv.FormatInt` plus `strings.Join`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 615,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Placeholder count is unbounded on MySQL/Postgres",
+      "body": "On every driver except SQLite with batch size > 999, the DELETE gets one `?` per ID. PostgreSQL and MySQL prepared statements both cap bound parameters at 65535. So with `cleanupjob_batchsize` set above 65535, every batch now fails and annotation cleanup stops entirely: the error is returned from `CleanAnnotations` and only logged by `cleanUpOldAnnotations` (pkg/services/cleanup/cleanup.go:126-127). The old single-statement subquery had no such limit. Either cap the chunk size used in `deleteByIDs`, or inline the integer IDs for these drivers too (as the SQLite branch does).",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "line": 83,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Test case no longer runs the delete \"again\"",
+      "body": "Each subtest now creates fresh data and wipes it in `t.Cleanup`. This case therefore no longer re-runs the max-count cleanup on state the previous case left behind; it just creates 9 annotations (3 per type) with MaxCount 3. It is still a valid check, but the name now describes a scenario that isn't tested. Either rename it, or run `cleaner.Run` twice inside one subtest to keep the idempotency check.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "line": 120,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Cleanup registered after the setup assertions",
+      "body": "`t.Cleanup` is registered only after `createTestAnnotations` and the two count assertions have passed. If any of them fails via `require` (FailNow), the rows already inserted stay in the shared `fakeSQL`. Every later subtest then fails on its initial count assertion, which hides the real failure. Register the cleanup before inserting.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "CleanAnnotations / CleanOrphanedAnnotationTags now SELECT ids, then DELETE ... WHERE id IN (ids) in a separate session",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:528-581",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:528-581",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:584-630",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:643-661",
+        "pkg/services/cleanup/cleanup.go:123-131"
+      ],
+      "equivalent_path": "Previous single statement DELETE ... WHERE id IN (SELECT id FROM (SELECT ... LIMIT) a), run by executeUntilDoneOrCancelled",
+      "before_after": "Old: selection and delete happened atomically in one statement. New: the IDs are fetched in one session (fetchIDs, lines 584-595) and deleted in another (deleteByIDs, lines 621-628). Nothing re-checks the condition at delete time. MaxAge: `created` of an existing row does not move forward, so the fetched rows still match. Orphan tags: an annotation_id that is missing cannot reappear, because IDs are not reused. MaxCount: if newer annotations are deleted concurrently between fetch and delete, a fetched row may now fall inside the kept MaxCount window and be over-deleted. That is bounded by the number of concurrent deletions, and only rows that were already candidates for count-based eviction are affected.",
+      "visible_effect": "Annotations disappear from dashboards on the cleanup cycle; the counts reach the cleanup job's Debug log (cleanup.go:129).",
+      "failure_mode": "A fetch or delete error returns from untilDoneOrCancelled (lines 650-654) with a partial total. cleanUpOldAnnotations logs it at Error unless it is DeadlineExceeded (cleanup.go:126-127). No journal is involved, so the next cycle retries. If a delete affects 0 rows (rows already gone), the loop stops early and the next cycle picks up the rest.",
+      "evidence_checked": true
+    },
+    {
+      "action": "deleteByIDs chooses inline IDs vs placeholders based on DB type and configured batch size",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:605-618",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:605-618",
+        "pkg/setting/setting.go:710",
+        "pkg/infra/db/db.go:32"
+      ],
+      "equivalent_path": "Old subquery DELETE had no bound parameters",
+      "before_after": "SQLite with batch size > 999 inlines the int64 IDs; no injection risk, because they are integers formatted with %d. Every other case binds one placeholder per ID, which is unbounded for MySQL/Postgres.",
+      "visible_effect": "If parameter limits are exceeded, cleanup silently stops removing annotations; the only trace is an error log.",
+      "failure_mode": "On Postgres/MySQL, a batch size above 65535 makes every DELETE fail (reported as a finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cleanup ticker interval reduced to 1 minute",
+      "location": "pkg/services/cleanup/cleanup.go:77",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/cleanup/cleanup.go:74-121"
+      ],
+      "equivalent_path": "Previous 10-minute ticker, paired with the 9-minute timeout in clean()",
+      "before_after": "clean() runs all 8 jobs with a 9-minute timeout (lines 89-118). time.Ticker drops ticks while clean() is busy, so a long run is followed by another almost immediately.",
+      "visible_effect": "More DB load from background cleanup; expired snapshots and short URLs are removed sooner.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR splits annotation and orphan-tag cleanup into two steps: fetch the IDs, then delete them in a batch. The deletes are safe because their targets cannot change meaning between the two steps; the one exception is a small, bounded over-delete under concurrent deletes on the max-count path. Three things should be fixed. It leaves six Error-level debug log calls that print every ID on every batch. It changes the global cleanup interval from 10 minutes to 1, which looks like a leftover from testing. And it builds the inlined SQLite ID list in quadratic time. Also, MySQL/Postgres now bind one placeholder per ID, so a batch size above 65535 makes every cleanup DELETE fail. In the tests, one case name no longer matches what it tests, and the per-subtest cleanup is registered too late to stop failures cascading into later subtests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 261,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.4112538
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4112538,
+    "usage": {
+      "input": 10,
+      "output": 7800,
+      "cacheRead": 112469,
+      "cacheWrite": 29090
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 81027,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-32918-flat` of keycloak-32918-flat against 272cfc68dcc88615396ae62ed1571918e9c58ad3 (merge-base 272cfc6)",
+    "repository": {
+      "name": "keycloak-32918-flat"
+    },
+    "base": {
+      "sha": "272cfc68dcc88615396ae62ed1571918e9c58ad3",
+      "ref": "272cfc68dcc88615396ae62ed1571918e9c58ad3"
+    },
+    "head": {
+      "sha": "7126610bd111fa7a760bcf239d92ab82722b08c0",
+      "ref": "pr-32918-flat"
+    },
+    "title": "pr-32918-flat",
+    "description": "Add caching support for IdentityProviderStorageProvider.getForLogin operations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+      "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java"
+    ],
+    "reviewed": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java",
+      "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "line": 93,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Update-invalidation decision uses org-wrapped `isEnabled()`, so login caches can go stale",
+      "body": "`update()` gets `idpById` from `getById()` (line 91). That returns the org-aware wrapper from `createOrganizationAwareIdentityProviderModel` (lines 432-446). For an org-linked IDP its `isEnabled()` is false whenever the org is disabled or organizations are disabled in the realm. `registerIDPLoginInvalidationOnUpdate` (403-418) then evaluates `getLoginPredicate()` on that wrapper, so `original` counts as 'not a login IDP'.\n\nTake an org-linked, public, raw-enabled IDP in a disabled org. `getForLogin` caches its id, because the JPA delegate does not look at org state. An admin then sets `hideOnLogin` or `linkOnly` on it. Both `original` (wrapper, false) and `updated` (false, because the hide flag is set) fail the predicate, so line 405 returns early and nothing is invalidated. The cached id set still holds the IDP. When the org is re-enabled, `getById` returns the IDP with `isEnabled()` true. `OrganizationAwareIdentityProviderBean` only re-checks `isEnabled()` (lines 75 and 80), not hide or link-only. The hidden or link-only IDP then shows on the login page, with no error or log.\n\n`remove()` already avoids this by reading the raw model with `idpDelegate.getByAlias`. Do the same here: compare against `idpDelegate.getById(model.getInternalId())`. The `updated` model can also be a wrapper, because callers get it from `getByAlias`. For that reason, base the decision on the raw enabled flag, or on the persisted state, rather than on the wrapper's `isEnabled()`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java",
+      "line": 381,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Cleanup registered for alias \"alias\", so the 21 test IDPs are never removed",
+      "body": "`getCleanup().addCleanup(testRealm().identityProviders().get(\"alias\")::remove)` is used inside the loop (line 381) and again at line 425. The IDPs are created as `idp-alias-<i>`, so the cleanup targets a non-existent IDP. This copies the same literal at line 303. If the realm is not reset between test methods, `idp-alias-0..20` stay behind. They leak into later tests that count IDPs or call `getForLogin`, and into this test's own `assertNull` pre-check on the login cache keys. Use `\"idp-alias-\" + i` and `\"idp-alias-20\"`. `idp-alias-1` is removed by the test itself, so that cleanup must tolerate a 404.",
+      "anchor": "diff"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "line": 100,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "`remove()` now always does an extra DB lookup",
+      "body": "`idpDelegate.getByAlias(alias)` (line 100) now runs on every removal. Before, it ran only when the alias key was already invalidated in this session. In the normal case the cached branch (105-108) did not need it. The raw model is needed for the login-predicate check, but it could be loaded lazily or reused from the cached entry. This is a minor cost on a rare admin operation.",
+      "anchor": "diff"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java",
+      "line": 223,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "low",
+      "title": "REALM_ONLY entries are keyed by organizationId although the result ignores it",
+      "body": "For `FetchMode.REALM_ONLY` the delegate ignores `organizationId`. The search key at line 223 is still the org id, so each org id creates a separate, identical entry inside the same `IdentityProviderListQuery`. A small cost in map size, and each new key triggers an invalidate and re-add (lines 234-241). Use `\"\"` as the search key for REALM_ONLY.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "getForLogin served from the Infinispan realm cache (new IdP login list query keyed per FetchMode, with a search key per org)",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:214",
+      "status": "closed",
+      "evidence": [
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:214-255",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:168-211",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/IdentityProviderListQuery.java:52-54",
+        "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java:165-184",
+        "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java:75-80"
+      ],
+      "equivalent_path": "getByOrganization in the same class (lines 168-211), which uses the same IdentityProviderListQuery pattern: cache IDs, then resolve each id through getById.",
+      "before_after": "Before: the default SPI getForLogin ran a DB query (getAllStream with search options) on every login page render. After: the id set is cached per (realm, mode, orgId) and each id is resolved via getById. Like getByOrganization it checks isInvalid(cacheKey), loads on miss and falls back to the delegate if an id no longer resolves. It does not check isInvalid(orgId), which getByOrganization does; org-level changes only reach this path through the IdP update or remove invalidations, and the wrapper's isEnabled() is re-checked in OrganizationAwareIdentityProviderBean.",
+      "visible_effect": "The set of IdPs on the login page comes from the cached id set. It must be invalidated whenever login-eligibility or the org link changes.",
+      "failure_mode": "Stale cached sets are silent. One path was found: an update of an org-linked IdP in a disabled org does not invalidate, because the original model is org-wrapped (see the finding on line 93).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Conditional invalidation of login caches on IdP create, update and remove",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:382",
+      "status": "closed",
+      "evidence": [
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:84-93",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:111",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:382-418",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:432-446",
+        "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java:252-256",
+        "model/jpa/src/main/java/org/keycloak/organization/jpa/JpaOrganizationProvider.java:341-342"
+      ],
+      "equivalent_path": "registerIDPInvalidation and registerCountInvalidation, which always invalidate. The org link or unlink goes through JpaOrganizationProvider.add/removeIdentityProvider, which calls session.identityProviders().update (JpaOrganizationProvider.java:342, 371), so this new code sees org-link changes.",
+      "before_after": "Before: there was no login cache. After: create and remove invalidate only if the IdP passes the login predicate. Update skips invalidation when the login status and org link are unchanged. The predicate now also requires org-linked IdPs to have BROKER_PUBLIC set, which matches the JPA query options in getForLogin.",
+      "visible_effect": "The login page lists the correct IdPs after admin changes, as long as invalidation is not skipped wrongly.",
+      "failure_mode": "Skipped invalidation when `original` is the org-wrapped model: the finding on line 93.",
+      "evidence_checked": true
+    },
+    {
+      "action": "LoginFilter.getLoginPredicate now also requires org-linked IdPs to be public (BROKER_PUBLIC)",
+      "location": "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java:254",
+      "status": "closed",
+      "evidence": [
+        "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java:173-182",
+        "server-spi/src/main/java/org/keycloak/models/IdentityProviderStorageProvider.java:252-256",
+        "services/src/main/java/org/keycloak/forms/login/freemarker/model/IdentityProviderBean.java:225-227",
+        "services/src/main/java/org/keycloak/organization/forms/login/freemarker/model/OrganizationAwareIdentityProviderBean.java:85-97"
+      ],
+      "equivalent_path": "The JPA-side search options in default getForLogin (lines 173-182) and OrganizationAwareIdentityProviderBean.federatedProviderPredicate, which already applies a similar org/public check.",
+      "before_after": "Before: the predicate checked only enabled, link-only and hide-on-login. After: it also rejects org-linked IdPs that are not public. The only other caller is IdentityProviderBean.federatedProviderPredicate (IdentityProviderBean.java:226), so the non-org-aware bean now drops non-public org IdPs from the federated list.",
+      "visible_effect": "The non-org-aware login bean no longer lists non-public org-linked IdPs the user has federated identities with. The org-aware subclass already excluded them.",
+      "failure_mode": "None found.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The cache design follows the existing `getByOrganization` pattern, and the invalidation rules look correct for the cases the new test covers. I found one stale-cache bug: `update()` decides invalidation from the org-wrapped model, whose `isEnabled()` is false when the org is disabled. A login-eligible org-linked IdP that gets hidden or marked link-only in that state is left in the cached set, and it can reappear on the login page once the org is re-enabled. The new test has a cleanup that targets alias `\"alias\"` instead of the created `idp-alias-*` IDPs, so they are never removed. There are two minor notes: an extra DB lookup on every `remove()`, and REALM_ONLY entries keyed by org id although the result ignores it. I only read the code; nothing was built or run.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 271,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.39635419999999993
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "272cfc68dcc88615396ae62ed1571918e9c58ad3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.39635419999999993,
+    "usage": {
+      "input": 16,
+      "output": 14424,
+      "cacheRead": 315862,
+      "cacheWrite": 55124
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 123925,
+    "stop": "complete",
+    "notices": []
+  }
+}

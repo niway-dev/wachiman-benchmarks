@@ -1,0 +1,216 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-8` of discourse-graphite-8 against 4975fc28903a84418f546b2809370f19abf10e08 (merge-base 4975fc2)",
+    "repository": {
+      "name": "discourse-graphite-8"
+    },
+    "base": {
+      "sha": "4975fc28903a84418f546b2809370f19abf10e08",
+      "ref": "4975fc28903a84418f546b2809370f19abf10e08"
+    },
+    "head": {
+      "sha": "060cda77729cb1c4a827560e09e89a7b22078ba9",
+      "ref": "pr-8"
+    },
+    "title": "pr-8",
+    "description": "FIX: proper handling of group memberships",
+    "author": "Régis Hanol"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+      "app/assets/javascripts/admin/routes/admin_group_route.js",
+      "app/assets/javascripts/admin/templates/group.hbs",
+      "app/assets/javascripts/admin/templates/group_member.hbs",
+      "app/assets/javascripts/admin/views/group-member.js.es6",
+      "app/assets/javascripts/discourse/models/group.js",
+      "app/assets/javascripts/discourse/routes/group-members.js.es6",
+      "app/assets/javascripts/discourse/templates/components/admin-group-selector.hbs",
+      "app/assets/javascripts/discourse/templates/group/members.hbs",
+      "app/assets/javascripts/discourse/templates/user-selector-autocomplete.raw.hbs",
+      "app/assets/stylesheets/common/admin/admin_base.scss",
+      "app/controllers/admin/groups_controller.rb",
+      "app/controllers/groups_controller.rb",
+      "config/locales/client.en.yml",
+      "config/routes.rb",
+      "spec/controllers/admin/groups_controller_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+      "app/assets/javascripts/admin/routes/admin_group_route.js",
+      "app/assets/javascripts/admin/templates/group_member.hbs",
+      "app/assets/javascripts/admin/templates/group.hbs",
+      "app/assets/javascripts/admin/views/group-member.js.es6",
+      "app/assets/javascripts/discourse/models/group.js",
+      "app/assets/javascripts/discourse/routes/group-members.js.es6",
+      "app/assets/javascripts/discourse/templates/components/admin-group-selector.hbs",
+      "app/assets/javascripts/discourse/templates/group/members.hbs",
+      "app/assets/javascripts/discourse/templates/user-selector-autocomplete.raw.hbs",
+      "app/controllers/admin/groups_controller.rb",
+      "app/controllers/groups_controller.rb",
+      "config/locales/client.en.yml",
+      "config/routes.rb",
+      "spec/controllers/admin/groups_controller_spec.rb",
+      "app/assets/stylesheets/common/admin/admin_base.scss"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "totalPages is off by one when user_count is a multiple of limit",
+      "body": "`Math.floor(user_count / limit) + 1` gives 2 pages for exactly 50 members (limit 50), and 3 for 100. The pager then shows `1/2`, and `showingLast` (line 17) is false on the real last page. Clicking next sets `offset = min(50, 50) = 50`, and `findMembers` (group.js:23) requests offset 50, which returns an empty list. The admin sees a blank member list with `2/2`. Use `Math.ceil(user_count / limit)`.\n\nThe same state appears after removing the only member on the last page. `findMembers` clamps against the stale `user_count`, so the offset stays past the end and the list is empty. `offset` is not pulled back to the new last page.\n\nA `limit` of 0 would also divide by zero here. `GroupsController#members` passes `params[:limit]` through unvalidated.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/admin/groups_controller.rb",
+      "line": 90,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "remove_member bypasses callbacks: user_count and primary_group_id go stale",
+      "body": "`group.users.delete(user_id)` on a has_many :through (Rails 4.1.8, Gemfile.lock:30) deletes the join rows with `delete_all`. `GroupUser` callbacks do not run, so the `belongs_to :group, counter_cache: \"user_count\"` (group_user.rb:2) is not decremented. `groups.user_count` is what `BasicGroupSerializer` returns for the admin groups index, and the admin list will show the old count until `reset_counters` runs.\n\nThe code this replaces also cleared `users.primary_group_id` for removed members (`Group#destroy_deletions`, group.rb:287-295). The new path does not, so a removed user keeps the group as their primary group.\n\n`Group#remove(user)` (group.rb:276) destroys the `GroupUser` rows, so the counter cache is maintained. It also does not clear `primary_group_id`, so add that update to whichever path you use.\n\nFor a non-member `user_id`, `delete(id)` does a `find` and raises RecordNotFound (404). Prefer `group.group_users.where(user_id: user_id).destroy_all` plus the `primary_group_id` update.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/admin/groups_controller.rb",
+      "line": 73,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "add_members 500s for users already in the group, and the UI invites the duplicate",
+      "body": "`group.add(user)` is `users.push(user)` (group.rb:272). It inserts a new `group_users` row even if the user is already a member. The unique index `group_id,user_id` (group_user.rb:18) then raises RecordNotUnique, which is a 500. The old `usernames=` flow diffed against current members, so it never did this.\n\nThe new UI makes this easy to hit. `addMembers` in admin-group.js.es6:61-65 does not clear `usernames` (the TODO at line 62), so clicking Add twice, or adding a name already listed, submits an existing member. Skip users already in the group (e.g. `group.users.exists?(user.id)`), and clear the input after success.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/groups_controller.rb",
+      "line": 26,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Public group members page now silently truncates at 50 with no pagination UI",
+      "body": "`members` now defaults to `limit` 50 for every group. Before, only automatic groups were limited (default 200) and non-automatic groups returned everyone. The public page (`group-members.js.es6` route and `group/members.hbs`) only renders `members` from the first request. It has no pager and does not pass `limit` or `offset`. Members past the 50th are not visible to anyone on `/groups/:name/members`, and nothing tells the user the list is cut off.\n\nAdd pagination (or a load-more) to the public template, or keep a larger default for this page.\n\nThe pending spec in spec/controllers/groups_controller_spec.rb:72-85 still expects a bare array response. Update it for the new `{members, meta}` shape and un-pend it. There is no coverage of the new response.\n\nAlso, `limit` is unbounded and `-1` produces a SQL error (500).",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/admin/controllers/admin-group.js.es6",
+      "line": 63,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "usernames on the singleton controller leaks between groups",
+      "body": "`usernames` is controller state and is never reset. `setupController` in admin_group_route.js:11-14 sets only `model`. Names typed (or left after Add) for one group stay in the selector when the admin opens another group, and Add then adds them to that group. Reset `usernames` in `setupController` and after a successful add.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/controllers/admin/groups_controller_spec.rb",
+      "line": 115,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "remove_member specs use the wrong verb and miss the main effects",
+      "body": "The route is `delete \"members\"` (config/routes.rb:49), but the automatic-group spec calls `xhr :put, :remove_member`. Use `:delete`. The \"is able to remove a member\" spec only checks `users.count`. It does not check `user_count` or `primary_group_id`, which are the two side effects that differ from the previous implementation (see the finding on admin/groups_controller.rb:90). There is also no spec for add_members with an already-present member.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Admin removes a member from a group (removeMember -> DELETE /admin/groups/:id/members.json)",
+      "location": "app/assets/javascripts/discourse/models/group.js:40",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/admin/groups_controller.rb:84-97",
+        "app/models/group.rb:276-295",
+        "app/models/group_user.rb:2",
+        "app/assets/javascripts/discourse/models/group.js:23-37",
+        "app/assets/javascripts/discourse/models/group.js:40-49"
+      ],
+      "equivalent_path": "Group#remove (app/models/group.rb:276) and the old usernames= + destroy_deletions flow (group.rb:244-295)",
+      "before_after": "The old flow destroyed GroupUser rows and nulled users.primary_group_id. The new controller action calls group.users.delete(user_id), which uses delete_all and skips callbacks, so neither the counter cache nor primary_group_id is updated. On success the JS reloads the member list via findMembers.",
+      "visible_effect": "The member disappears from the admin list (list reloaded, user_count taken from meta.total). The groups index count and the user's primary group can stay stale.",
+      "failure_mode": "A failed request shows the default Discourse.ajax error popup and the list is not reloaded. A non-member id returns 404. If the last member on the last page is removed, the stale user_count keeps the offset past the end and the list is empty.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Admin adds members by username (addMembers -> PUT /admin/groups/:id/members.json)",
+      "location": "app/assets/javascripts/admin/controllers/admin-group.js.es6:61",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/admin/controllers/admin-group.js.es6:61-65",
+        "app/controllers/admin/groups_controller.rb:65-82",
+        "app/models/group.rb:272-274",
+        "app/models/group_user.rb:18"
+      ],
+      "equivalent_path": "Old save flow with saveWithUsernames/usernames= (diffed against current members)",
+      "before_after": "The old flow computed additions as expected minus current members. The new one pushes every listed user, and the input is never cleared (TODO at line 62).",
+      "visible_effect": "On success the member list reloads. If a listed user is already a member, the server hits the unique index and returns 500.",
+      "failure_mode": "The request failure is shown by the default ajax error handler. The typed names stay in the input, so a retry repeats the failure.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Public group members page loads members through model.findMembers() with paged API",
+      "location": "app/assets/javascripts/discourse/routes/group-members.js.es6:8",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/routes/group-members.js.es6:8-12",
+        "app/controllers/groups_controller.rb:22-35",
+        "app/assets/javascripts/discourse/templates/group/members.hbs:1-22"
+      ],
+      "equivalent_path": "Previous afterModel fetch, which returned all members (or 200 for automatic groups)",
+      "before_after": "The members request is now made in setupController and is not awaited, so the template renders empty and then fills in. The server caps the response at 50 and the page has no pager.",
+      "visible_effect": "Only the first 50 members are listed, with no indication of truncation.",
+      "failure_mode": "If the request fails, the model keeps its old members (or none) and the page shows an empty table.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed all 16 files in this part. The new member add/remove API and pager have several real defects. The pager's `totalPages` is off by one when the member count is a multiple of the page size, so the admin sees an empty last page. `remove_member` uses `delete_all` through the has_many, so `user_count` and `primary_group_id` are not updated. `add_members` returns 500 for users already in the group, and the UI doesn't clear the input, so a repeat click triggers it. The public members page now silently cuts off at 50 members with no pager. The reused controller keeps `usernames` between groups, and the remove spec uses the wrong HTTP verb. The remaining files showed nothing worth flagging.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 16,
+      "lines": 672,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 20,
+      "costUsd": 0.28656630000000005
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "4975fc28903a84418f546b2809370f19abf10e08"
+  },
+  "execution": {
+    "costUsdEstimate": 0.28656630000000005,
+    "usage": {
+      "input": 14,
+      "output": 10937,
+      "cacheRead": 207843,
+      "cacheWrite": 39096
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 20,
+    "durationMs": 95407,
+    "stop": "complete",
+    "notices": []
+  }
+}

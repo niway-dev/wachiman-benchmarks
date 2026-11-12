@@ -1,0 +1,167 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions ignores the feature flag; both branches return false",
+      "body": "`enableSqlExpressions` reads `FlagSqlExpressions`, negates it, and then returns `false` on both branches. So the flag lookup does nothing, and the name suggests a toggle check that never happens. If the goal is to switch SQL expressions off unconditionally (as the PR body says), drop the helper and return the error directly in `case QueryTypeSQL`, with a comment pointing to the DuckDB removal. If the goal is to honour the flag, the function should be `return h.features.IsEnabledGlobally(featuremgmt.FlagSqlExpressions)`. With the code as written, the next reader can't tell which one was meant.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql/parser.go",
+      "line": 23,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Legacy (non-expressionParser) path reports disabled SQL expressions as invalid SQL",
+      "body": "Only the `expressionParser` path (`pkg/expr/nodes.go:123-146` → `ReadQuery`) gets the new \"sqlExpressions is not implemented\" error. The default path, `buildCMDNode` → `UnmarshalSQLCommand` (`pkg/expr/nodes.go:159-160`) → `NewSQLCommand` → `sql.TablesList`, has no gate. `TablesList` now calls the stub `RunCommands`, which always returns \"not implemented\" (`pkg/expr/sql/db.go:16-18`). That logs `error serializing sql` at Error level, and `NewSQLCommand` turns it into the public BadRequest `sql-invalid-sql` / \"error reading SQL command\" (`pkg/expr/sql_command.go:30-35`). A user with a saved SQL expression is told their SQL is wrong, not that the feature is disabled, and every evaluation writes an error log line plus a warning. Consider returning a dedicated \"SQL expressions are not supported\" error early in `NewSQLCommand` (or `UnmarshalSQLCommand`) so both paths behave the same.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql/db.go",
+      "line": 12,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Unused DB.TablesList stub and stale DuckDB naming",
+      "body": "Nothing calls `(*DB).TablesList`: all callers use the package-level `sql.TablesList` in parser.go. The stub can go. `parser.go:23` still names the variable `duckDB` and still builds a DuckDB-only `json_serialize_sql` command that can never run now. A short comment on `DB` saying it is a placeholder after removing go-duck would make the stub's purpose clear.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "SQL expression parsed via ExpressionQueryReader (expressionParser flag on)",
+      "location": "pkg/expr/reader.go:128-132",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-138",
+        "pkg/expr/reader.go:194-200",
+        "pkg/expr/nodes.go:123-146"
+      ],
+      "equivalent_path": "Legacy buildCMDNode switch → UnmarshalSQLCommand (pkg/expr/nodes.go:159-160)",
+      "before_after": "Before: parsed SQLExpression and built SQLCommand via DuckDB TablesList. After: always returns error 'sqlExpressions is not implemented' before reading the body, since enableSqlExpressions always returns false.",
+      "visible_effect": "buildCMDNode returns the error (nodes.go:141-143); the query request fails with that message.",
+      "failure_mode": "Always fails, and visibly; the feature flag has no effect.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQL expression parsed via legacy path (expressionParser flag off)",
+      "location": "pkg/expr/sql/parser.go:22-30",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/nodes.go:159-166",
+        "pkg/expr/sql_command.go:51-69",
+        "pkg/expr/sql_command.go:25-36",
+        "pkg/expr/sql/db.go:16-18",
+        "pkg/expr/sql/parser.go:26-30"
+      ],
+      "equivalent_path": "ReadQuery SQL case gate in pkg/expr/reader.go:129-132",
+      "before_after": "Before: TablesList ran DuckDB json_serialize_sql. After: RunCommands stub returns 'not implemented'; TablesList logs Error and returns error; NewSQLCommand returns BadRequest sql-invalid-sql.",
+      "visible_effect": "User sees public message 'error reading SQL command' (pkg/expr/sql_command.go:33-35).",
+      "failure_mode": "Visible error, but it is misleading: it says the SQL is invalid, not that the feature is disabled.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand.Execute uses sql.NewInMemoryDB().QueryFramesInto",
+      "location": "pkg/expr/sql_command.go:96-105",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:96-105",
+        "pkg/expr/sql/db.go:20-22",
+        "pkg/expr/sql_command.go:30-36"
+      ],
+      "equivalent_path": "Previous duck.NewInMemoryDB().QueryFramesInto",
+      "before_after": "Now always returns error, which is put in rsp.Error. In practice it can't be reached, because NewSQLCommand already fails at TablesList.",
+      "visible_effect": "If it were ever reached, the node result would carry error 'not implemented'.",
+      "failure_mode": "Error is surfaced through rsp.Error, not dropped silently.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR removes the go-duck dependency, puts stubs that always return \"not implemented\" in its place, and makes the expressionParser reader reject SQL expressions. I found no blockers. The dependency file changes are consistent: hashes moved from go.sum to go.work.sum. Three findings, all at \"consider\": (1) `enableSqlExpressions` reads the feature flag but returns false on both branches, so the check does nothing and the intent is unclear. (2) The legacy, non-expressionParser path has no gate, so a disabled SQL expression shows the misleading BadRequest \"error reading SQL command\" and writes an Error log line every time. (3) `DB.TablesList` is an unused stub, and DuckDB naming is left over in parser.go.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.4108584
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4108584,
+    "usage": {
+      "input": 12,
+      "output": 4551,
+      "cacheRead": 161312,
+      "cacheWrite": 35941
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 50708,
+    "stop": "complete",
+    "notices": []
+  }
+}

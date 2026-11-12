@@ -1,0 +1,235 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-93824-flat` of sentry-93824-flat against de11fb0166a7244115bb066edd65ec0d6b7e365c (merge-base de11fb0)",
+    "repository": {
+      "name": "sentry-93824-flat"
+    },
+    "base": {
+      "sha": "de11fb0166a7244115bb066edd65ec0d6b7e365c",
+      "ref": "de11fb0166a7244115bb066edd65ec0d6b7e365c"
+    },
+    "head": {
+      "sha": "887e493ec6fdf48cfbed712ba4a427bf757ed737",
+      "ref": "pr-93824-flat"
+    },
+    "title": "pr-93824-flat",
+    "description": "Span Buffer Multiprocess Enhancement with Health Monitoring",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "CLAUDE.md",
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/spans/consumers/process/factory.py",
+      "src/sentry/spans/consumers/process/flusher.py",
+      "tests/sentry/spans/consumers/process/test_consumer.py",
+      "tests/sentry/spans/consumers/process/test_flusher.py"
+    ],
+    "reviewed": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/spans/consumers/process/factory.py",
+      "src/sentry/spans/consumers/process/flusher.py",
+      "tests/sentry/spans/consumers/process/test_consumer.py",
+      "tests/sentry/spans/consumers/process/test_flusher.py",
+      "CLAUDE.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 254,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Hung flusher process is no longer killed: isinstance(process, multiprocessing.Process) is False for SpawnProcess",
+      "body": "The old `_ensure_process_alive` called `self.process.kill()` unconditionally (catching ValueError). The new code only kills when `isinstance(process, multiprocessing.Process)`. The processes here come from `self.mp_context.Process` (line 105), where `mp_context = multiprocessing.get_context(\"spawn\")`. That class is `multiprocessing.context.SpawnProcess`, which subclasses `BaseProcess` directly, not the generic `multiprocessing.Process` class. So I expect the isinstance check to be False and `kill()` to never run. I could not read the stdlib source in this checkout, which is why confidence is medium. The attribute's own annotation at line 68 names `SpawnProcess`, not `Process`.\n\nWhen the cause is `hang`, the old process is still alive. `_create_process_for_shards` (line 259) then starts a second flusher for the same shards, and both run against the same Redis queues and share the same `healthy_since` and `backpressure_since` values. The hung process stays alive and can resume later, so the same segments can be produced to Kafka twice or the process can leak. The same check in `join` (line 346) means `terminate()` never runs there either. That one was already in the old code, but it should be fixed together.\n\nFix: check `isinstance(process, threading.Thread)` and skip those, or check `multiprocessing.context.SpawnProcess`. Do the same in `join`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 301,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "get_memory_info is run once per flusher process, and every call queries the whole Redis cluster",
+      "body": "`SpansBuffer.get_memory_info` returns `iter_cluster_memory_usage(self.client)` (buffer.py:375-376), which calls `INFO` on every master node of the cluster, not just the shard's node (memory.py:82-105). With N flusher processes, `submit()` now makes N identical cluster-wide INFO sweeps. `submit()` is hit on every batch, and only when `max-memory-percentage < 1.0`. `used` and `available` are both multiplied by N, so the ratio stays correct and nothing is wrong, but the extra work is pure waste. Query the cluster once, for example with one buffer or the consumer's own `buffer`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 199,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Inconsistent metric tag name ('shards' vs 'shard'), and a comma-joined string used as the tag value",
+      "body": "`spans.buffer.flusher.wait_produce` is tagged `shards`. `flusher.produce`, `segment_size_bytes` and `flusher_unhealthy` use `shard`. The `shard` tag also holds a comma-joined list such as \"0,1,2,3\" (line 144) in the produce and segment_size metrics, but a single shard id in `flusher_unhealthy` (line 244). Dashboards cannot join these series on one tag. Pick one name and one value format, for example a process index tag.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 127,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Dead code: _create_process_for_shard is unused, and `if not process` can never be true",
+      "body": "`_create_process_for_shard` (lines 127-132) has no caller anywhere in the repository. The `if not process: continue` check (lines 222-223) is always False, because a Process or Thread object is always truthy and `self.processes` is only ever filled with started processes. Remove both.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 32,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Docstring says one process per shard, but the number of processes is capped by max_processes",
+      "body": "The class docstring says \"Creates one process per shard\". The code creates `min(max_processes, len(assigned_shards))` processes and shares shards between them round-robin (lines 60-66). The CLI default is `--flusher-processes 1`, so by default there is one process for all shards. Reword it to match. The `:param` list is also missing `max_processes`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 51,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Invalid or empty values for flusher_processes are not validated",
+      "body": "`max_processes or len(...)` turns 0 into 'one process per shard'. A negative `--flusher-processes` makes `num_processes` negative. With any assigned shards, `i % self.num_processes` then yields a key that is not in `process_to_shards_map`, and construction fails with a KeyError. The click option is a plain `int` with no `IntRange(min=1)`. Use `type=click.IntRange(min=1)` in `consumers/__init__.py:432-437`. Separately, with no assigned shards, `num_processes` is 0 and no flusher process starts at all. Before this change one was always started. That case is harmless, since there is nothing to flush.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+      "line": 62,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "The added time.sleep(0.1) is a no-op because the test patches time.sleep",
+      "body": "Line 15 does `monkeypatch.setattr(\"time.sleep\", lambda _: None)`. That replaces the `sleep` attribute of the `time` module, so `time.sleep(0.1)` at line 62 also does nothing. The comment 'Give flusher threads time to process' describes behaviour that never happens, and the race between setting drift=9000 and `step.join()` setting `stopped` is unchanged. A flusher thread that has not yet looped past the drift change when `stopped` is set exits without flushing, and `(msg,) = messages` then fails. Use a bounded poll loop on `messages` with the real sleep (saved before patching). The added `transaction=True` marker is not explained anywhere.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+      "line": 85,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The new test checks only the process/shard bookkeeping, not that multi-shard flushing or restarts work",
+      "body": "`test_flusher_processes_limit` asserts the process count and that the shard counts sum to 4. It never sends spans through a flusher that owns several shards. It does not check that the shards are partitioned without overlap, and it does not exercise `_ensure_processes_alive` (restart, or the MAX_PROCESS_RESTARTS error) for per-process state. That is where the bug on flusher.py:254 sits. `messages` and `commits` are unused. Add a test with a crashed or hung process and one with spans on multiple shards.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Restart an unhealthy flusher process (dead or hung) per process index",
+      "location": "src/sentry/spans/consumers/process/flusher.py:218-259",
+      "status": "open",
+      "evidence": [
+        "src/sentry/spans/consumers/process/flusher.py:105",
+        "src/sentry/spans/consumers/process/flusher.py:254",
+        "src/sentry/spans/consumers/process/flusher.py:68"
+      ],
+      "equivalent_path": "Old SpanFlusher._ensure_process_alive: unconditionally process.kill() (ValueError ignored), then _create_process()",
+      "before_after": "Before: kill ran for every unhealthy process, including hung ones. After: kill is gated by isinstance(process, multiprocessing.Process), while processes are created from the spawn context (SpawnProcess).",
+      "visible_effect": "A hung flusher stays alive next to its replacement, and both flush the same shards. This can produce duplicate segments or leak processes.",
+      "failure_mode": "Never killed on 'hang'. After more than MAX_PROCESS_RESTARTS restarts the consumer raises RuntimeError, which is the intended crash path.",
+      "open_question": "Is SpawnProcess an instance of multiprocessing.Process? From CPython knowledge it is not; I could not read the stdlib source in the checkout.",
+      "candidates": [
+        "Lib/multiprocessing/context.py"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Aggregate redis memory info across per-process buffers in submit()",
+      "location": "src/sentry/spans/consumers/process/flusher.py:297-304",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/buffer.py:375-376",
+        "src/sentry/processing/backpressure/memory.py:82-105",
+        "src/sentry/spans/consumers/process/flusher.py:299-303"
+      ],
+      "equivalent_path": "Old code: list(self.buffer.get_memory_info()), a single cluster INFO sweep",
+      "before_after": "Before: one sweep. After: one full-cluster sweep per flusher buffer, with the results summed.",
+      "visible_effect": "The used/available ratio is unchanged, so hard-backpressure behavior is the same, but N times more Redis INFO calls per submit.",
+      "failure_mode": "If Redis INFO raises, submit raises as before. Nothing new.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bound on SpanFlusher.join waiting for all flusher processes",
+      "location": "src/sentry/spans/consumers/process/flusher.py:328-347",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/consumers/process/flusher.py:332",
+        "src/sentry/spans/consumers/process/flusher.py:337-347"
+      ],
+      "equivalent_path": "Old join: a single while-alive loop bounded by deadline, then terminate()",
+      "before_after": "After: a deadline shared across the processes, checked with a break before each process, and a per-process inner loop bounded by the same deadline. The overall bound is `timeout` plus the 0.1s sleep. With timeout None (or 0, since `if timeout` is falsy) the wait is unbounded until each process exits after seeing `stopped`. The old code was the same.",
+      "visible_effect": "On shutdown, a stuck flusher blocks join indefinitely when no timeout is passed. The same applies when a timeout is passed and `next_step.join` has already used it up.",
+      "failure_mode": "terminate() is never reached for spawn processes because of the isinstance issue (flusher.py:346), so the processes are left running after the deadline. They are daemon processes and die with the parent.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New --flusher-processes CLI option wired through the factory to SpanFlusher",
+      "location": "src/sentry/consumers/__init__.py:430-438",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/consumers/__init__.py:46-48",
+        "src/sentry/consumers/__init__.py:430-438",
+        "src/sentry/spans/consumers/process/factory.py:41",
+        "src/sentry/spans/consumers/process/factory.py:74",
+        "src/sentry/spans/consumers/process/flusher.py:51"
+      ],
+      "equivalent_path": "The other click options in multiprocessing_options, which are named after the factory kwargs",
+      "before_after": "The option name flusher_processes matches the factory kwarg at factory.py:41, and it is passed as max_processes at factory.py:74. The CLI default of 1 keeps the old single-process behavior, while the factory's own default None means one process per shard.",
+      "visible_effect": "Operators can run more than one flusher process. The default behavior is unchanged.",
+      "failure_mode": "Negative values crash at construction with a KeyError. 0 means one process per shard.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change splits the span flusher into several processes, each with its own shard subset and buffer, and adds a --flusher-processes CLI option that defaults to 1, so default behavior is unchanged. The main problem is in restart handling. The kill of a hung process is now gated by `isinstance(process, multiprocessing.Process)`, which I expect is False for spawn-context processes. A hung flusher then stays alive beside its replacement and both flush the same shards. I could not read the stdlib source to confirm this, so confidence is medium. The rest is minor: N redundant cluster-wide memory queries per submit, inconsistent metric tags, dead code, a stale docstring, a test whose `time.sleep` is patched out, and a new test that checks only bookkeeping. Nothing was run, since this was a read-only review.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 249,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.3198839
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [
+      "CLAUDE.md"
+    ],
+    "baseSha": "de11fb0166a7244115bb066edd65ec0d6b7e365c"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3198839,
+    "usage": {
+      "input": 16,
+      "output": 10528,
+      "cacheRead": 290159,
+      "cacheWrite": 46389
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 102339,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -2,7 +2,8 @@
 
 - **Last updated:** 2026-11-12
 - **Scope:** Wachiman v1.9.0, no verifier, the same 50 PRs (173 goldens, 66 High or Critical), one run
-  per row, every row judged by the same route ([reference/](reference/README.md)).
+  per row, every row judged by the same route ([reference/](reference/README.md)). Sonnet high and Opus
+  high have three runs each: [run-to-run range](#run-to-run-range).
 - **This is the page to read first.** It joins the five model arms, the audit of what the judge calls
   false positives, the scorer experiment and the comparison with other tools. Each claim links to the
   report that holds its data.
@@ -19,8 +20,9 @@ For the main reviewer two arms remain: **Sonnet high** (most found, $0.36 per PR
 (fewer minor comments, $0.39 per PR). The recommendation written on 2026-11-12 is Sonnet high, because
 the plan is to order and section minor findings with a score, not to reduce them
 ([scorer](analysis/2026-11-11-scorer/README.md)). **Decided 2026-11-12:** the owner chose Sonnet high; it is
-the product default since [wachiman#192](https://github.com/niway-dev/wachiman/pull/192). Two repeat runs
-of Sonnet high are measuring run-to-run variance.
+the product default since [wachiman#192](https://github.com/niway-dev/wachiman/pull/192). Three runs of
+each model support it: Sonnet high finds at least as much as Opus high at about 32% lower cost, and
+posts about 34 more unlisted comments per run ([run-to-run range](#run-to-run-range)).
 
 ## The five arms
 
@@ -45,6 +47,34 @@ Raw data: [Opus high](runs/2026-11-07-v1.9.0-opus-5-5/README.md),
 [Sonnet high](runs/2026-11-11-v1.9.0-sonnet-5-5-high/),
 [Sonnet medium](runs/2026-11-11-v1.9.0-sonnet-5-5-medium/),
 [Haiku high](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md).
+
+## Run-to-run range
+
+Sonnet high and Opus high, three runs each of the same 50 PRs. The table above keeps the first run of
+each.
+
+| Reviewer | Run | Goldens found | High+Critical | Judge false positives | F1 (All) | F2 (Core) | Findings | $/PR mean |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Sonnet 5.5 high | 1 | 122 | 52 | 190 | 50.3% | 60.4% | 304 | $0.36 |
+| Sonnet 5.5 high | 2 | 117 | 52 | 210 | 46.8% | 55.9% | 319 | $0.34 |
+| Sonnet 5.5 high | 3 | 123 | 54 | 217 | 48.0% | 59.2% | 327 | $0.34 |
+| Opus 5.5 high | 1 ¹ | 117 | 51 | 177 | 50.1% | 58.4% | n/a ² | about $0.50 |
+| Opus 5.5 high | 2 | 117 | 52 | 171 | 50.8% | 59.8% | 282 | $0.51 |
+| Opus 5.5 high | 3 | 112 | 48 | 169 | 49.3% | 57.9% | 277 | $0.51 |
+| **Sonnet 5.5 high, mean** | | 120.7 | 52.7 | 205.7 | 48.4% | 58.5% | 316.7 | $0.35 |
+| **Opus 5.5 high, mean** | | 115.3 | 50.3 | 172.3 | 50.1% | 58.7% | | $0.51 |
+
+- **Found:** Sonnet 117 to 123 goldens and 52 to 54 High+Critical; Opus 112 to 117 and 48 to 52. The
+  ranges touch, so three runs show Sonnet finds at least as much, not that it finds more.
+- **Unlisted comments:** Sonnet 190 to 217, Opus 169 to 177. The ranges do not overlap: Sonnet posts
+  more of them in every run, which is why its F1 is about 2 points lower.
+- **Cost:** Sonnet $16.95 to $17.94 per 50 reviews, Opus $25.59 to about $26. About 32% lower.
+- **One run moves by itself** up to 6 goldens, 4 High+Critical and 27 judge false positives with
+  nothing changed. Differences of that size between any two single-run rows above are not a ranking.
+
+Raw data: Sonnet [run 2](runs/2026-11-12-v1.9.0-sonnet-5-5-high-r2/),
+[run 3](runs/2026-11-12-v1.9.0-sonnet-5-5-high-r3/); Opus
+[run 2](runs/2026-11-12-v1.9.0-opus-5-5-high-r2/), [run 3](runs/2026-11-12-v1.9.0-opus-5-5-high-r3/).
 
 ## What effort buys
 
@@ -104,8 +134,11 @@ Report: [scorer experiment](analysis/2026-11-11-scorer/README.md).
 
 ## Limits
 
-- One run per arm. A difference of 1 to 3 High+Critical goldens is inside one run's variance, so the
-  table does not rank arms that sit close.
+- One run per arm for Opus medium, Sonnet medium and Haiku high. A single run moves by up to 4
+  High+Critical goldens ([run-to-run range](#run-to-run-range)), so the table does not rank arms that
+  sit close. That includes "Opus medium finds the same as Opus high": one medium run sits inside the
+  high range, no more.
+- The four repeat runs of 2026-11-12 were judged with 8 calls in flight.
 - The Sonnet medium judge step ran twice: its first pass failed on every call because the working
   directory was removed mid-run. The reviews are from the first pass and were not repeated.
 - Opus medium was judged with 8 calls in flight, the other two runs of 2026-11-11 with 2. Batch size

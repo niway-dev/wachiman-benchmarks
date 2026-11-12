@@ -1,0 +1,169 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-6` of discourse-graphite-6 against 7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7 (merge-base 7a5fbae)",
+    "repository": {
+      "name": "discourse-graphite-6"
+    },
+    "base": {
+      "sha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7",
+      "ref": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+    },
+    "head": {
+      "sha": "267d8be1f556ed59639ced396c885bb44586da19",
+      "ref": "pr-6"
+    },
+    "title": "pr-6",
+    "description": "UX: show complete URL path if website domain is same as instance domain",
+    "author": "Arpit Jalan"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/controllers/user.js.es6",
+      "app/assets/javascripts/discourse/models/user.js.es6",
+      "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "app/serializers/user_serializer.rb",
+      "spec/serializers/user_serializer_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 43,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "website_name gets around the TL0 untrusted-attribute restriction",
+      "body": "`website` is listed in `untrusted_attributes` (line 109). Because of that, its `include_website?` returns false when `scope.restrict_user_fields?(object)`, which is a TL0 user viewed by an anonymous visitor (lib/guardian/user_guardian.rb:58-60). This is the anti-spam rule that keeps new accounts' links away from crawlers. `website_name` is not in that list, and its guard `include_website_name` (line 153) has no `?`, so ActiveModel::Serializers never calls it. The result is that the website's host, or host plus path when it matches the forum's domain, is serialized for every TL0 user to anonymous visitors. user.hbs:66-71 then renders that text in the profile header, even though `model.website` is absent. A spammer's TL0 account now shows its domain to anonymous visitors and crawlers again. Fix: add `:website_name` to `untrusted_attributes`, which generates `include_website_name?` with both the restriction and the presence check, and delete the misnamed method at lines 153-155. Then add `website_name` to the list in the spec at spec/serializers/user_serializer_spec.rb:11.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 153,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`include_website_name` never runs (missing `?`)",
+      "body": "ActiveModel::Serializers looks for `include_<attr>?`. Every other guard in this file has the `?` (for example lines 161 and 169). This method is dead code, so `website_name: null` is emitted for every user without a website, and the guard does nothing for the restricted case. Using `untrusted_attributes` as described in the blocker above fixes this as well.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/templates/user/user.hbs",
+      "line": 66,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Header website text goes stale after editing the website in preferences",
+      "body": "Before this change, `websiteName` was computed from `model.website` (the removed controller property), so the header followed the edited value. Now `model.website_name` only comes from the server. `User#save` (models/user.js.es6:209-213) copies back only `bio_excerpt`, and `user.findDetails()` runs only in the parent route's `afterModel` (routes/user.js.es6:50-55). Preferences is a child of the `user` resource (app-route-map.js.es6:56,74), so moving between child routes does not re-run it. After saving a new website, the header link's `href` points to the new URL while its text still shows the old host. If the user had no website before, nothing appears until a full reload. Fix: set `website_name` from the PUT response in `save`, which means the update endpoint must return it, or reload details after saving.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/serializers/user_serializer.rb",
+      "line": 144,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "\"Same parent domain\" check matches unrelated hosts under public suffixes",
+      "body": "When both hosts have the same number of labels and more than two, the check compares everything after the first label. A forum at `forum.co.uk` therefore treats `http://evil.co.uk/x` as its own site and shows `evil.co.uk/x`. The same happens for any `*.github.io` or `*.herokuapp.com` pair. The code also re-parses `URI(website.to_s)` up to three times and re-splits `discourse_host` repeatedly. Parse once and compare against the forum's registrable domain, or limit the full-path case to an exact host match or a `www.` prefix.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/serializers/user_serializer_spec.rb",
+      "line": 76,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test for the sibling-subdomain branch or for absent/restricted website_name",
+      "body": "No test reaches the branch at user_serializer.rb:144-146 (`www.example.com` website on `forum.example.com`). No test checks that `website_name` is omitted when the website is blank, which would have caught the missing `?`. The TL0 test at lines 11-14 does not list `website_name`, which would have caught the bypass. Also, `context \"has a website name\"` reads as an assertion rather than a context description.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Profile header shows the website label from the new server-computed `website_name` instead of the client-computed `websiteName`",
+      "location": "app/assets/javascripts/discourse/templates/user/user.hbs:66",
+      "status": "closed",
+      "evidence": [
+        "app/serializers/user_serializer.rb:43",
+        "app/serializers/user_serializer.rb:105-111",
+        "app/serializers/user_serializer.rb:25-33",
+        "app/serializers/user_serializer.rb:137-155",
+        "lib/guardian/user_guardian.rb:58-60",
+        "app/assets/javascripts/discourse/templates/user/user.hbs:66-73"
+      ],
+      "equivalent_path": "Removed controller property `websiteName` (host taken from model.website) and the `website` attribute, which is filtered by untrusted_attributes",
+      "before_after": "Before: the label was taken from model.website, so it was hidden whenever `website` was withheld for TL0 users viewed anonymously. After: website_name is serialized without that restriction, and its guard `include_website_name` lacks `?` so it never runs.",
+      "visible_effect": "Anonymous visitors see the website host of TL0 users as plain text in the profile header.",
+      "failure_mode": "URI parse errors are rescued to nil, so no label is shown. That is silent but harmless.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Saving a new website in preferences, then viewing the profile header",
+      "location": "app/assets/javascripts/discourse/models/user.js.es6:166",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/models/user.js.es6:209-213",
+        "app/assets/javascripts/discourse/routes/user.js.es6:50-55",
+        "app/assets/javascripts/discourse/routes/app-route-map.js.es6:56",
+        "app/assets/javascripts/discourse/routes/app-route-map.js.es6:74"
+      ],
+      "equivalent_path": "Before, the computed property recalculated from model.website. Now website_name is loaded once in user route afterModel via findDetails.",
+      "before_after": "Before: the label updated immediately after the edit. After: website_name stays as loaded and save() refreshes only bio_excerpt.",
+      "visible_effect": "The header shows the old host text next to the new href, or no website at all, until a reload.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR moves the website label to a server-computed `website_name`. This bypasses the TL0 restriction: `website_name` isn't in `untrusted_attributes` and its include guard lacks `?`, so anonymous visitors see the website host of TL0 users. The label also no longer updates after the user edits their website in preferences. The domain-matching heuristic treats unrelated hosts under shared suffixes as the same site, and the tests miss both the branch that handles sibling subdomains and the restriction case.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 56,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 18,
+      "costUsd": 0.3493542
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3493542,
+    "usage": {
+      "input": 22,
+      "output": 7186,
+      "cacheRead": 205531,
+      "cacheWrite": 20555
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 18,
+    "durationMs": 78877,
+    "stop": "complete",
+    "notices": []
+  }
+}

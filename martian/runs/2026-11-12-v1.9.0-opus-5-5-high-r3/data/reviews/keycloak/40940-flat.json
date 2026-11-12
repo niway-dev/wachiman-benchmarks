@@ -1,0 +1,132 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-40940-flat` of keycloak-40940-flat against 7fd37690c44c7068cb19ecee3aa6ff99c46a821d (merge-base 7fd3769)",
+    "repository": {
+      "name": "keycloak-40940-flat"
+    },
+    "base": {
+      "sha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d",
+      "ref": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+    },
+    "head": {
+      "sha": "58db8ffad86bb46e3b996d5667d66897ba735757",
+      "ref": "pr-40940-flat"
+    },
+    "title": "pr-40940-flat",
+    "description": "Fix concurrent group access to prevent NullPointerException",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "reviewed": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+      "line": 155,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Reader thread is never joined, so the test can pass without checking anything",
+      "body": "The reader thread starts at line 139 and nothing waits for it. Line 155 sets `deletedAll` and line 157 asserts right away. Two things go wrong:\n- A request that is still running when the deletes finish can add its exception after the assertion has already run. The test then passes even though the race happened, and the stray thread keeps using `managedRealm.admin()` while the next test runs.\n- Nothing checks that the reader made any request while deletes were happening. If the thread is slow to start, the test passes without testing the race at all.\n\nAlso, `catch (Exception e)` misses `Error`s (for example an `AssertionError`), and those die silently with the thread.\n\nFix: keep a reference to the `Thread`, call `join()` (with a timeout) after line 155, count completed reads with an `AtomicInteger` and assert the count is > 0, and catch `Throwable`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "line": 256,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "The three sibling `getSubGroupsStream` overloads have the same null dereference",
+      "body": "`getSubGroupsCount` now handles `modelSupplier.get()` returning null when the group was deleted after it was cached. The overloads at lines 256, 262 and 268 still call `modelSupplier.get().getSubGroupsStream(...)` directly, so a concurrent delete gives the same NPE there. `GroupResource.getSubGroups` reaches this through `group.getSubGroupsStream(search, exact, -1, -1)` (services/.../GroupResource.java:180). These are probably less exposed, because the resource looks the group up first, but the race window is the same. Consider applying the same guard, or throwing `NotFound`, in all four methods.",
+      "anchor": "outside"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "line": 275,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A deleted group is still returned in the list, now with `subGroupCount: null`",
+      "body": "When the database row is gone, `getSubGroupsCount()` now returns null. `GroupUtils.populateSubGroupCount` stores that null in the representation (GroupUtils.java:90), and `GroupsResource.getGroups` returns the group in the listing (GroupsResource.java:120-125). The NPE is gone, but a client gets a just-deleted group whose `subGroupCount` is null, while every other entry has a number. The admin UI and clients that treat the field as always present may break on it. Consider filtering such groups out of the stream in `GroupsResource`/`GroupUtils`, or returning `0L`, so the list stays consistent.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GroupAdapter.getSubGroupsCount returns null instead of throwing an NPE when the cached group's database row no longer exists",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:274-275",
+      "status": "closed",
+      "evidence": [
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:54",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:298-300",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:256",
+        "services/src/main/java/org/keycloak/utils/GroupUtils.java:89-92",
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupsResource.java:112-128",
+        "core/src/main/java/org/keycloak/representations/idm/GroupRepresentation.java:40"
+      ],
+      "equivalent_path": "The sibling lazy-model calls in the same class (getSubGroupsStream overloads at lines 256/262/268) dereference modelSupplier.get() without a null check; getDelegateForUpdate throws IllegalStateException when the result is null.",
+      "before_after": "Before: getGroupModel() was called directly (a fresh DB lookup each time) and its null result was dereferenced, which threw an NPE. After: the memoized LazyModel is used and a null model yields a null count.",
+      "visible_effect": "GroupUtils.populateSubGroupCount sets subGroupCount=null on the representation. GroupsResource.getGroups still includes the deleted group in the JSON response.",
+      "failure_mode": "No exception. The concurrently deleted group appears once in the list with a null subGroupCount, and nothing is logged.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The fix stops the NPE in the cached `GroupAdapter.getSubGroupsCount()` when a group is deleted while it is being listed: a missing model now gives a null count. The other changes are harmless: an added `@Override` and the removal of an unused private helper (`StringUtil` is in the same package, so no import was left behind). Main issue: the new concurrency test never joins its reader thread. An exception raised after the deletes finish is missed, and the test can pass without a single concurrent read. Smaller points: the deleted group still shows up in the response, now with a null `subGroupCount`, and the three `getSubGroupsStream` overloads still have the same null dereference.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 62,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.288041
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.288041,
+    "usage": {
+      "input": 14,
+      "output": 4538,
+      "cacheRead": 124605,
+      "cacheWrite": 21538
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 57453,
+    "stop": "complete",
+    "notices": []
+  }
+}
