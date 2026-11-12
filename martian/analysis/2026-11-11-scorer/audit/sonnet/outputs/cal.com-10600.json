@@ -1,0 +1,41 @@
+{
+  "pr": "cal.com-10600",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "A valid backup code plus any nonempty totpCode authenticates without checking either the password or the TOTP.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For an ordinary CAL user with 2FA enabled and an unused backup code, the credentials provider accepts both fields at packages/features/auth/lib/next-auth-options.ts:61-65. Sending that email, the valid backup code, an incorrect password and totpCode=\"000000\" bypasses password verification at next-auth-options.ts:121-129, enters the backup-code branch at lines 131-156 and skips the TOTP branch at lines 157-186. After consuming the code it returns the authenticated user at lines 205-214; the rate limit at lines 109-111 does not require a password or validate the supplied TOTP. Although TOTP-only password skipping predates this PR, allowing the newly added backup code to take that path is newly exposed.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "Dismissing the backup-code step through the dialog leaves the settings state and retained modal step stale after enabling 2FA.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/pages/api/auth/two-factor/totp/enable.ts:56-65 enables 2FA before returning success, while apps/web/components/settings/EnableTwoFactorModal.tsx:134-136 only advances to DisplayBackupCodes. The modal forwards onOpenChange unchanged at EnableTwoFactorModal.tsx:166, and packages/ui/components/dialog/Dialog.tsx:70,87-90 forwards to Radix without blocking Escape or outside dismissal. Dismissing via Escape therefore calls only apps/web/pages/settings/security/two-factor-auth.tsx:64, leaving the switch and badge bound to the old query at lines 46,54-55, since invalidation occurs only in onEnable at lines 65-68. The modal remains mounted at lines 62-72 with its step retained, so reopening before any independent refetch displays the previous codes; only its explicit Close button resets state and calls onEnable at EnableTwoFactorModal.tsx:266-270. There is no X button in this dialog wrapper, and an independent query refetch may eventually correct the page, but neither qualification prevents the Escape path.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "A truthy non-string backupCode reaches replaceAll and causes an unhandled server error in the disable route.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "An authenticated 2FA-enabled user with stored backup codes and, for a CAL account, a correct password passes apps/web/pages/api/auth/two-factor/totp/disable.ts:16-44. A JSON body containing backupCode:123 enters the truthiness check at disable.ts:48, passes the stored-code/key checks and then throws TypeError on replaceAll at line 61, with no local catch or type validator. This produces a server error rather than an invalid-code response, but requires malformed authenticated input, does not disable 2FA because the write is later at lines 102-110, and has no demonstrated consequence beyond error handling. The ordinary UI supplies strings, so this is low-impact input hardening.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "Backup-code login, reuse rejection and disabling lack automated coverage.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/playwright/login.2fa.e2e.ts:12 explicitly leaves login and disabling with backup codes as TODOs. Its login path at lines 62-81 fills TOTP fields, and its disable path at lines 132-157 also uses TOTP; the added backup-code checks at lines 110-125 only click download, copy and close. Searching test/spec/e2e files in the checkout found no other backup-code behavior tests. Thus the newly added validation/consumption logic at packages/features/auth/lib/next-auth-options.ts:131-156 and backup-code disable/clear logic at apps/web/pages/api/auth/two-factor/totp/disable.ts:48-66,107 lack direct tests; this is a real coverage concern, not itself a runtime failure.",
+      "confidence": "high"
+    }
+  ]
+}

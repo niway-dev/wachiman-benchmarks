@@ -1,0 +1,106 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "No second cache check after taking the write lock",
+      "body": "When the cache is still empty (first requests after startup, or after a load that failed), every caller that got `nil` under the RLock (41-43) waits on `Lock()` here. Each one then reads and parses `assets-manifest.json` again, one after another. Nothing checks whether an earlier holder has already filled the cache. Re-checking `cfg.Env != setting.Dev && entryPointAssetsCache != nil` right after line 49 and returning early would make the startup herd parse the manifest only once. This doesn't affect correctness: the result is the same either way.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GetWebAssets now reads the global cache under an RWMutex and recomputes it under the write lock",
+      "location": "pkg/api/webassets/webassets.go:40-71",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:41-49",
+        "pkg/api/webassets/webassets.go:69-70",
+        "pkg/api/index.go:82-85",
+        "pkg/api/index.go:137",
+        "pkg/api/frontendsettings.go:62-66",
+        "pkg/middleware/recovery.go:141-144"
+      ],
+      "equivalent_path": "Previously the same function read and wrote entryPointAssetsCache without synchronization. Callers are index.go, frontendsettings.go and the recovery middleware.",
+      "before_after": "Before: there was a data race on the package-level pointer. After: reads go through RLock and the reload is serialized under Lock. The returned *EntryPointAssets is shared, but callers only read it: index.go puts it into IndexViewData.Assets and frontendsettings.go only hashes its fields.",
+      "visible_effect": "No visible change. The index page and frontend settings get the same assets.",
+      "failure_mode": "If the read fails, the cache is set to nil and the error goes to callers, the same as before. index.go returns the error and recovery.go falls back to empty assets. The next request retries under the lock. There is no double-check after Lock, so concurrent cold-start callers each re-read the file.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This PR adds an RWMutex around the global web-assets cache, which fixes the data race on `entryPointAssetsCache`. I traced all three callers: none of them change the shared result, so the fix is correct. The only suggestion (optional) is a second cache check after the write lock is taken, so concurrent first requests don't each re-read the manifest. The PR description (\"Frontend Asset Optimization\") says nothing specific about the change, so there was no claim to check against the code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 6,
+      "costUsd": 0.1419462
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1419462,
+    "usage": {
+      "input": 8,
+      "output": 1795,
+      "cacheRead": 43671,
+      "cacheWrite": 12160
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 6,
+    "durationMs": 30736,
+    "stop": "complete",
+    "notices": []
+  }
+}

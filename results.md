@@ -4,7 +4,7 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-07, Martian Code Review Bench run added.
+- **Last updated:** 2026-11-12, Martian model arms and false-positive audit added.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
   checked against the code by reading, not by running the app.
@@ -13,6 +13,11 @@ no claim the reports do not.
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 
 ## Martian's Code Review Bench (2026-11-07, public PRs)
+
+**Update 2026-11-12:** five model arms (Opus high and medium, Sonnet high and medium, Haiku high) and
+the audit of the judge's false positives are read together in [martian/models.md](martian/models.md).
+Short version: Opus medium matches Opus high for less; Sonnet high finds the most; of 85 audited Opus
+false positives, 34 are real defects missing from the golden set, 47 are true but minor and 2 are wrong.
 
 One blind run of Wachiman 1.9.0 · Opus 5.5 on Martian's 50 public PRs, every row judged the same way
 ([report](martian/runs/2026-11-07-v1.9.0-opus-5-5/README.md); every run: [martian/history.md](martian/history.md)):

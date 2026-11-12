@@ -1,0 +1,122 @@
+{
+  "https://github.com/keycloak/keycloak/pull/37634": {
+    "wachiman": {
+      "skipped": false,
+      "true_positives": [
+        {
+          "golden_comment": "In AccessTokenContext constructor, the fourth Objects.requireNonNull validates grantType twice instead of validating rawTokenId, allowing null rawTokenId values to pass validation.",
+          "severity": "Critical",
+          "category": "bug",
+          "matched_candidate": "rawTokenId null check tests grantType instead\n\nLine 73 calls `Objects.requireNonNull(grantType, \"Null rawTokenId not allowed\")`, which checks `grantType` a second time. A null `rawTokenId` gets through, and `encodeTokenId` (DefaultTokenContextEncoderProvider.java:117) then produces an id like `onrtac:null` without any error. It should be `requireNonNull(rawTokenId, ...)`.",
+          "confidence": 1.0,
+          "reasoning": "Both comments identify the exact same bug: in the AccessTokenContext constructor, the fourth Objects.requireNonNull incorrectly validates grantType instead of rawTokenId. Both note that grantType is checked twice and that this allows null rawTokenId values to pass validation. The candidate even adds helpful context about the downstream effect (producing 'onrtac:null')."
+        },
+        {
+          "golden_comment": "In isAccessTokenId, the substring for the grant shortcut and the equality check look inverted: the grant shortcut occupies indices 4\u20135 (substring(4,6)), and a match should return true (combined with UUID check), not false.",
+          "severity": "High",
+          "category": "bug",
+          "matched_candidate": "isAccessTokenId never checks the grant shortcut: wrong offset and inverted condition\n\nThe encoded prefix is `<session 2><tokenType 2><grant 2>` (DefaultTokenContextEncoderProvider.java:114-117), so the grant shortcut is `substring(4, 6)`, not `substring(3, 5)`. For `onrtac` the code reads `ta`, which never equals any grant shortcut. The condition is also inverted: it returns `false` when the shortcut *matches*. Together these mean the matcher accepts any `xxxxxx:<uuid>` whatever the grant, so `expectCodeToToken`, `expectDeviceCodeToToken`, `expectRefresh` and `expectAuthReqIdToToken` never check the grant type, which is the thing this PR adds. If you fix only the offset, every correct token fails instead. Suggested fix: `if (items[0].length() != 6 || !items[0].substring(4, 6).equals(expectedGrantShortcut)) return false;`.",
+          "confidence": 0.98,
+          "reasoning": "Both comments identify the same two issues in isAccessTokenId: (1) wrong substring indices - should be substring(4,6) not substring(3,5) for the grant shortcut, and (2) the equality condition is inverted, returning false when it should return true on a match. The candidate provides more detail and context but identifies exactly the same underlying bugs."
+        },
+        {
+          "golden_comment": "Javadoc mentions \"usually like 3-letters shortcut\" but some implementations use 2-letter shortcuts (\"ac\", \"cc\", \"rt\", \"te\", \"pc\", \"ci\", \"ro\"). Consider updating documentation to reflect actual usage pattern.",
+          "severity": "Low",
+          "category": "doc_defect",
+          "matched_candidate": "Javadoc says '3-letters' shortcut, but the decoder requires exactly 2 characters and nothing checks the length\n\n`getTokenContextFromTokenId` rejects any prefix that is not 6 characters long (DefaultTokenContextEncoderProvider.java:74-76) and reads the grant as `substring(4, 6)`. A custom grant that follows this javadoc and returns a 3-letter shortcut gets encoded without error by `encodeTokenId`, but its ids then fail to decode. Say \"exactly 2 characters\" in the javadoc and validate the length (and non-null) in `DefaultTokenContextEncoderProviderFactory.postInit`. A null shortcut currently throws an NPE from `ConcurrentHashMap.put` at startup with no useful message. A third-party `OAuth2GrantTypeFactory` compiled before this change has no `getShortcut()` at all, so it hits `AbstractMethodError` in `postInit`. A default method, or a clear error, would make that failure easier to understand.",
+          "confidence": 0.95,
+          "reasoning": "Both comments identify the same core issue: the Javadoc mentions '3-letters shortcut' but the actual implementation uses/requires 2-letter shortcuts. The golden comment notes that implementations use 2-letter shortcuts like 'ac', 'cc', etc. The candidate issue explains the same discrepancy but adds technical detail about why this matters (decoder requires exactly 2 characters via substring(4,6) logic). Both suggest updating the documentation to reflect the actual 2-character usage pattern."
+        },
+        {
+          "golden_comment": " Catching generic RuntimeException is too broad. The implementation throws IllegalArgumentException specifically - catch that instead for more precise testing.",
+          "severity": "Low",
+          "category": "bug",
+          "matched_candidate": "testIncorrectGrantType passes on a NullPointerException, not the intended validation\n\nThe factory is built without `postInit`, so `sessionFactory` is null. For the unknown shortcut `ac`, `getGrantTypeByShortcut` falls into the refresh branch and calls `sessionFactory.getProviderFactoriesStream(...)` (DefaultTokenContextEncoderProviderFactory.java:125), which throws an NPE. Because the test catches the broad `RuntimeException`, it passes because of that NPE and never reaches the `IllegalArgumentException` at DefaultTokenContextEncoderProvider.java:93. Mock or stub the session factory and catch `IllegalArgumentException`.",
+          "confidence": 0.95,
+          "reasoning": "Both comments identify the same core issue: catching RuntimeException is too broad and the test should catch IllegalArgumentException instead. The candidate goes further by explaining WHY this is problematic - the test actually passes due to a NullPointerException rather than the intended IllegalArgumentException. Both recommend catching IllegalArgumentException specifically for more precise testing."
+        }
+      ],
+      "false_positives": [
+        {
+          "candidate": "Client credentials (and UMA, legacy token exchange) tokens are encoded with grant 'na', so 'cc'/'pg' are never written\n\nThe grant type attribute is only set in `OAuth2GrantTypeBase.createTokenResponse` (auth code, device, CIBA), the ROPC grant, refresh, pre-authorized code and `StandardTokenExchangeProvider`. `ClientCredentialsGrantType` builds its token via `tokenManager.responseBuilder(...).generateAccessToken()` (ClientCredentialsGrantType.java:140) and never sets `Constants.GRANT_TYPE`. So `DefaultTokenContextEncoderProvider` falls back to `UNKNOWN` (DefaultTokenContextEncoderProvider.java:57-60), and every client-credentials access token gets the id `trrtna:...`/`onrtna:...` instead of `..cc:...`. The same gap exists for `AuthorizationTokenService.java:357` (UMA `pg`) and the V1 `AbstractTokenExchangeProvider.java:409`. Nothing errors, but the encoded context is wrong for these grants, which defeats the feature for its most common machine-to-machine case. Set `clientSessionCtx.setAttribute(Constants.GRANT_TYPE, context.getGrantType())` before generating the token in these paths, and add an AssertEvents expectation for client credentials."
+        }
+      ],
+      "false_negatives": [],
+      "errors": [],
+      "total_candidates": 5,
+      "total_golden": 4,
+      "tp": 4,
+      "fp": 1,
+      "fn": 0,
+      "errors_count": 0,
+      "precision": 0.8,
+      "recall": 1.0,
+      "tool": "wachiman",
+      "repo_name": "local:37634",
+      "pr_url": "https://github.com/keycloak/keycloak/pull/37634"
+    }
+  },
+  "https://github.com/keycloak/keycloak/pull/36880": {
+    "wachiman": {
+      "skipped": false,
+      "true_positives": [
+        {
+          "golden_comment": "Inconsistent feature flag bug causing orphaned permissions. The AdminPermissions event listener, responsible for cleaning up permissions upon role, client, or group removal, is incorrectly guarded by the ADMIN_FINE_GRAINED_AUTHZ (V1) feature flag. This is inconsistent with other methods in the class that use ADMIN_FINE_GRAINED_AUTHZ_V2. Consequently, if ADMIN_FINE_GRAINED_AUTHZ_V2 is enabled but V1 is not, the permission cleanup logic will not execute, leading to orphaned permission data. Cleanup should occur regardless of which fine-grained authorization version is enabled.",
+          "severity": "High",
+          "category": "bug",
+          "matched_candidate": "In V2, deleting a client leaves its permission resource behind\n\nWith V2 on, the new guard skips the listener entirely, and `ClientPermissionsV2.setPermissionsEnabled` throws anyway (line 193). Nothing removes the resource named after the deleted client's UUID, or the scope permissions that reference it, from the admin-permissions resource server. Those orphaned permissions stay listed and keep being evaluated. Consider a V2-specific cleanup on `ClientRemovedEvent`.",
+          "confidence": 0.85,
+          "reasoning": "Both comments identify the same underlying bug: when V2 is enabled, the permission cleanup logic doesn't execute, leading to orphaned permissions. The golden comment explains the root cause (listener guarded by V1 flag while other methods use V2), while the candidate focuses on the specific consequence for clients ('With V2 on, the new guard skips the listener entirely'). Both recognize that orphaned permissions result and that V2-specific cleanup is needed. The candidate is narrower in scope (clients only vs roles/clients/groups) but identifies the same fundamental issue."
+        },
+        {
+          "golden_comment": "In getClientsWithPermission(String scope), iterating resourceStore.findByType(server, AdminPermissionsSchema.CLIENTS_RESOURCE_TYPE) and returning resource.getName() will only ever consider the type-level 'Clients' resource (per-client resources have no type) and return its name, while AvailableRoleMappingResource#getRoleIdsWithPermissions expects actual client IDs to pass to realm.getClientById, which can lead to incorrect behavior or a null client and subsequent failures.",
+          "severity": "High",
+          "category": "bug",
+          "matched_candidate": "getClientsWithPermission searches by a type the per-client resources never get\n\n`AdminPermissionsSchema.getOrCreateResource` creates the per-client resource without calling `setType` (`AdminPermissionsSchema.java:103-111`). Only the resource-type resource gets a type (`AdminPermissionsSchema.java:250`). So `findByType(server, \"Clients\")` can only match the `Clients` type resource. A per-client grant is never returned, and an all-clients grant returns the literal name `\"Clients\"` instead of client IDs. V1 avoids this by setting the type to `\"Client\"` when it creates each resource (`ClientPermissions.java:132`). Any caller that narrows results by this set silently gets the wrong answer. Either set the type on per-client resources, or look them up some other way.",
+          "confidence": 0.95,
+          "reasoning": "Both comments identify the same issue: getClientsWithPermission uses findByType to search for CLIENTS_RESOURCE_TYPE, but per-client resources don't have a type set (only the type-level 'Clients' resource does). This means the method only finds the type-level resource and returns 'Clients' as the name instead of actual client IDs. The golden comment emphasizes the downstream impact (AvailableRoleMappingResource expecting client IDs for realm.getClientById), while the candidate explains the root cause (getOrCreateResource doesn't call setType for per-client resources). Both identify the same bug with the same consequence."
+        },
+        {
+          "golden_comment": "Remove unused getEvaluationContext private method in ClientPermissionsV2 - it is defined but never called",
+          "severity": "Low",
+          "category": "style",
+          "matched_candidate": "Dead code and unused imports\n\nNothing uses the private `getEvaluationContext` (line 262), the `logger` field (line 51), or the imports `Scope` and `TOKEN_EXCHANGE` / `ClientModelIdentity` (only the dead method uses the last one). Remove them.",
+          "confidence": 1.0,
+          "reasoning": "The candidate issue explicitly identifies the unused `getEvaluationContext` method at line 262, calling it dead code that nothing uses. This is exactly the same issue as the golden comment, which asks to remove the unused getEvaluationContext private method. The candidate also identifies additional related unused code (logger, imports), but the core issue about getEvaluationContext is a direct match."
+        }
+      ],
+      "false_positives": [
+        {
+          "candidate": "canView() ignores the all-clients MANAGE permission, so global managers fail realm-level view checks\n\n`canManage()` (line 73) returns true for an all-clients MANAGE permission, but `canView()` only checks `canViewClientDefault()` and the VIEW scope. V1 (`ClientPermissions.java:287-289`) treats manage as implying view. Take an admin whose only grant is all-clients MANAGE: `requireView()` fails at `RealmAdminResource.java:1197` and `ClientInitialAccessResource.java:123`. `canViewClientScopes()`/`requireViewClientScopes()` is false (`RealmAdminResource.java:241`, `ClientScopesResource.java:93`), even though `canManageClientScopes()` is true. `RolePermissions.java:167` also relies on `canView()`. `canView(ClientScopeModel)` (line 121) already ORs VIEW with MANAGE. Do the same here: `|| hasPermission(MANAGE)`."
+        },
+        {
+          "candidate": "Javadoc on void require* methods says \"Returns true\"\n\n`requireView()` (line 95-98) and `requireViewClientScopes()` (line 100-103) return void and throw ForbiddenException. Their Javadoc says \"Returns {@code true} if ...\". Reword it to match the other require* docs. The `canView()` Javadoc should also mention MANAGE once that check is added."
+        }
+      ],
+      "false_negatives": [
+        {
+          "golden_comment": "In hasPermission(ClientModel client, String scope), the resource lookup uses findByName(server, client.getId(), server.getId()), but AdminPermissionsSchema.getOrCreateResource creates per-client resources with the owner set to resourceServer.getClientId(), so this lookup will never find those resources and will always fall back to the 'all-clients' resource, effectively ignoring client-specific permissions.",
+          "severity": "High",
+          "category": "bug"
+        },
+        {
+          "golden_comment": "In ClientPermissionsV2.hasPermission, the method getResourceTypeResource could return null, leading to a NullPointerException in findByResource. Defensive null checks are needed to prevent this issue.",
+          "severity": "High",
+          "category": "bug"
+        }
+      ],
+      "errors": [],
+      "total_candidates": 5,
+      "total_golden": 5,
+      "tp": 3,
+      "fp": 2,
+      "fn": 2,
+      "errors_count": 0,
+      "precision": 0.6,
+      "recall": 0.6,
+      "tool": "wachiman",
+      "repo_name": "local:36880-flat",
+      "pr_url": "https://github.com/keycloak/keycloak/pull/36880"
+    }
+  }
+}

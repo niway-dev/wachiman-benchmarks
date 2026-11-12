@@ -1,0 +1,104 @@
+{
+ "pr": "sentry-greptile-2-flat",
+ "checkout": "/tmp/audit-wt/sentry-greptile-2-flat",
+ "audit_ids": [
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/api/paginator.py",
+   "line": 838,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "OptimizedCursorPaginator is a copy of Paginator, so it fails on the audit log's datetime key",
+   "body": "The audit log endpoint orders by `-datetime`, so `self.key` is `\"datetime\"`. The class copies `Paginator.get_item_key` and `value_from_cursor` (lines 838-843), not the `DateTimePaginator` versions the endpoint used before. `get_item_key` runs `math.floor`/`math.ceil` on a `datetime`, which raises `TypeError`. `build_cursor` calls `key(results[0])` and `key(results[-1])` (`src/sentry/utils/cursors.py:122,137`), so any request with `optimized_pagination=true` that returns rows ends in a 500. `value_from_cursor` also returns the raw cursor int. `build_queryset` then compares the `datetime` column to that int, where `DateTimePaginator` converts it to a datetime. Subclass `DateTimePaginator`, or reuse its key and cursor-value conversion."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/api/paginator.py",
+   "line": 877,
+   "severity": "blocker",
+   "topic": "security",
+   "title": "Negative-offset path: false safety claim, and it crashes on user input",
+   "body": "`cursor.offset` comes straight from the user's `cursor` query parameter (`Cursor.from_string` accepts any int, `src/sentry/utils/cursors.py:59`). With `enable_advanced_features` and `offset < 0`, the code runs `queryset[cursor.offset:stop]`. Django does not support negative slicing and raises `AssertionError: Negative indexing is not supported`, so a crafted cursor such as `0:-5:0` gives a 500. The comments are wrong on three points: the ORM does not handle negative slicing, no data beyond the pagination bounds is reachable this way, and 'permissions are checked at the queryset level' has no bearing on offset. The branch has no working use. Remove it, and the `enable_advanced_features` flag with it, rather than ship a 'privileged' mode that only produces errors. The queryset is already filtered by `organization_id` at `organization_auditlogs.py:48`."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/api/paginator.py",
+   "line": 182,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Change to shared BasePaginator.get_result alters every paginator, and its comment is wrong",
+   "body": "This hunk is in `BasePaginator.get_result`, so it affects every paginator subclass in the API, not only the audit log. For forward cursors a negative offset is now clamped to 0, where before it raised. Clamping a user-supplied offset hides a malformed cursor and returns page 1 content for it. For `is_prev` cursors the offset is still passed through unchanged, so negative offsets still hit Django's negative-index assertion (500). The comments ('allow negative offsets', 'underlying queryset will handle boundary conditions') say the opposite of what the code does. Revert this hunk. If invalid offsets need handling, reject them with a `BadPaginationError`, which `paginate` turns into a 400 (`src/sentry/api/base.py:540`). The same unrelated comments were added to `Cursor.__init__` (`src/sentry/utils/cursors.py:26-27`), which still accepts negatives without validation."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+   "line": 71,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "enable_advanced is computed for every request and dereferences a nullable member",
+   "body": "`RpcUserOrganizationContext.member` is `RpcOrganizationMember | None` (`src/sentry/organizations/services/organization/model.py:346`). Line 71 runs `organization_context.member.has_global_access` for every non-superuser request, even when `optimized_pagination` is absent. A caller with no org membership gets an `AttributeError` (500) from the default audit-log listing, which worked before. I did not trace which auth types leave `member` as None, so confidence is medium. Compute it lazily (`use_optimized and (...)`) and guard `member is None`. Also drop the trailing whitespace on lines 72 and 89."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+   "line": 68,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Undocumented, unused 'optimized_pagination' query flag gated on admin status",
+   "body": "The PR is about spans buffer eviction, but this adds a new public query flag on the audit log API with a second paginator. No test covers it, and it is not in `AuditLogQueryParamSerializer`. The two `paginate` branches are identical apart from the paginator class, so they can collapse into one call. Unless there is a demonstrated need, remove the change from this PR."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 62,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Segments over 1000 spans are now truncated with no log or metric",
+   "body": "The old flush path logged an error and incremented `spans.buffer.flush_segments.segment_span_count_exceeded` when a segment was too large. This PR deletes that check in `buffer.py`. Now `zpopmin` in Lua silently drops the lowest-scored spans (the earliest `end_timestamp_precise`), and the truncated segment is flushed as if complete. Nothing records that spans were lost, so operators cannot see the loss. The eviction can also drop spans that other spans reference as parents. Have the script return the evicted count, and have the Python side emit a metric and log. Compare `max_segment_spans` (default 1001, `buffer.py:150`) with the hard-coded 1000 in the script. The constructor parameter is now unused (`buffer.py:150,158`). Either pass the limit to the script as an ARGV or remove the parameter."
+  },
+  {
+   "id": 6,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 30,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Redirect-depth cap cut from 10000 to 1000 without explanation",
+   "body": "The loop bound dropped 10x, and the comment about trees deeper than the bound not joining correctly was deleted. Chains deeper than 1000 now stop early and are attached to the wrong set key, so the segment splits. This is unrelated to eviction. Justify it in the PR, or revert and keep the comment."
+  },
+  {
+   "id": 7,
+   "path": "src/sentry/scripts/spans/add-buffer.lua",
+   "line": 47,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "ZUNIONSTORE sums scores for duplicate members",
+   "body": "The default aggregate is SUM. A span payload that is re-delivered (same bytes) or present in both the child key and the set key gets double its `end_timestamp_precise`. It then sorts as the newest span and is evicted last by `zpopmin`, whatever its real end time. Pass `AGGREGATE MAX` (or `MIN`) so scores stay real timestamps."
+  },
+  {
+   "id": 8,
+   "path": "tests/sentry/spans/test_buffer.py",
+   "line": 497,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "No test covers the new eviction behaviour",
+   "body": "The test changes only add `end_timestamp_precise` to existing `Span(...)` calls. Nothing exercises the 1000-span cap, the choice of which spans `zpopmin` removes, the merge of two sets that together exceed the cap, or the `zunionstore` count logic in `add-buffer.lua`. The `segment_span_count_exceeded` path was deleted without a replacement test. Add a test that inserts more than 1000 spans with distinct timestamps and asserts that the oldest are dropped, plus one for the merge case. Add tests for the audit log endpoint and `OptimizedCursorPaginator` too. A single request with `optimized_pagination=true` would have exposed the `TypeError` above."
+  },
+  {
+   "id": 9,
+   "path": "src/sentry/spans/consumers/process/factory.py",
+   "line": 141,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Missing end_timestamp_precise raises KeyError and fails the whole batch",
+   "body": "`val[\"end_timestamp_precise\"]` is read with indexing, in the same loop that builds the whole batch. A single span payload without the field raises `KeyError` and crashes the consumer's batch step. I did not confirm whether the ingest schema marks the field as required. If it is required, the `cast(SpanEvent, ...)` documents that. If not, use `.get` with a fallback, such as the message timestamp."
+  }
+ ]
+}

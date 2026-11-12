@@ -1,0 +1,147 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80329-flat` of grafana-80329-flat against a886bd3c79a417a70b51509384d1f1ec3e87e96b (merge-base a886bd3)",
+    "repository": {
+      "name": "grafana-80329-flat"
+    },
+    "base": {
+      "sha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b",
+      "ref": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+    },
+    "head": {
+      "sha": "a17a7dcf9418c2c415ded93407dc77a43ebad1a3",
+      "ref": "pr-80329-flat"
+    },
+    "title": "pr-80329-flat",
+    "description": "Database Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "reviewed": [
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/cleanup/cleanup.go",
+      "line": 77,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Cleanup ticker interval reduced from 10 minutes to 1 minute",
+      "body": "The ticker now fires every minute, so every cleanup job (not just annotations) runs 10x more often. The PR is about annotation batching, and nothing explains the change. It looks like a leftover from debugging. Restore `time.Minute * 10`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 534,
+      "severity": "fix",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Debug logging at Error level, including full ID lists",
+      "body": "Lines 534, 537, 554, 557, 576 and 579 log at Error level on every batch, even on success. They dump `ids` (up to the batch size, which can be 32k or more) and the raw `cond`. Combined with the 1-minute ticker this floods the logs and gives false error alerts. Remove these lines, or log a count at Debug level. The `x, y` variable names should also be `affected, err`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 608,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "SQLite parameter limit comparison and non-SQLite parameter limits",
+      "body": "The inline-IDs path is chosen from the configured batch size, not from `len(ids)`. That is safe, because the inlined values are int64. The 999 limit is only true for SQLite older than 3.32. The test name says ≥3.32.0, which allows 32766. The other path still uses placeholders for large batches on Postgres (65535 limit). A batch size above that fails there, which the old single-statement SQL did not. Consider chunking the deletes by ID count.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 656,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Loop terminates on affected==0, which can loop forever or stop early",
+      "body": "If the fetched IDs are non-empty but the delete affects 0 rows (for example, concurrent deletion), the loop ends early. This is acceptable. The reverse case can matter: the orphan-tag query is re-run in each iteration and is fine. The max-count query with OFFSET is fine too. No change is needed, but the comment about under-deleting is accurate only for inserts.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "line": 19,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "40003-row integration case is heavy",
+      "body": "The new case inserts 40k annotations and 80k tags, and runs with batch size 32767. This can slow CI. Also, `createTestAnnotations` calls `require` inside the `WithDbSession` closure. It also sets explicit IDs, which will conflict if a previous subtest's cleanup fails.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Batched delete of annotations by selecting IDs first and then deleting by ID list",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:528",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:528-539",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:597-630",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:643-661"
+      ],
+      "equivalent_path": "Previous single-statement DELETE ... WHERE id IN (SELECT ...) via executeUntilDoneOrCancelled",
+      "before_after": "Old: one statement per batch. New: SELECT ids, then DELETE by IDs in a separate session. The selected IDs are not re-checked against the age or count condition at delete time. Rows are only removed by ID, so a concurrent change between the two steps is not re-verified. Impact is limited, since the rows already matched the criteria and are deleted either way.",
+      "visible_effect": "Fewer deadlocks on MySQL. More log noise, because the new log lines are at Error level.",
+      "failure_mode": "A fetch or delete error returns the partial total and the error. Context cancellation returns ctx.Err(). Orphaned tags are cleaned on a later run, so nothing is lost.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The batching rewrite is reasonable, but it leaves debug logging at Error level in the production path. It also changes the cleanup ticker from 10 minutes to 1 minute with no explanation. Both should be fixed before merge. The test additions are fine, apart from the cost of the large case.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 261,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 3,
+      "costUsd": 0.09676900000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+  },
+  "execution": {
+    "costUsdEstimate": 0.09676900000000001,
+    "usage": {
+      "input": 4,
+      "output": 2038,
+      "cacheRead": 24370,
+      "cacheWrite": 18486
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 3,
+    "durationMs": 21884,
+    "stop": "complete",
+    "notices": []
+  }
+}

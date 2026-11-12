@@ -1,0 +1,761 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3` of discourse-graphite-3 against e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3 (merge-base e25638d)",
+    "repository": {
+      "name": "discourse-graphite-3"
+    },
+    "base": {
+      "sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+      "ref": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+    },
+    "head": {
+      "sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+      "ref": "pr-3"
+    },
+    "title": "pr-3",
+    "description": "Add BlockedEmail, to block signups based on email. Track stats of how many times each email address is blocked, and last time it was blocked. Move email validation out of User model and into EmailValidator. Signup form remembers which email addresses have failed and shows validation error on email field.",
+    "author": "Neil Lalonde"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "lib/validators/email_validator.rb",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Each signup attempt increments match_count twice, and the count can be rolled back",
+      "body": "`BlockedEmail.should_block?` (called here) writes `match_count` and `last_match_at` every time it runs (app/models/blocked_email.rb:14-16). The validator runs on every `valid?` and `save` while `email_changed?` holds. UsersController#create calls `user.valid?` (app/controllers/users_controller.rb:168) unconditionally, then `user.save` (line 172), which validates again, so one signup attempt bumps the count by 2. The same happens for `do_nothing` entries, where the count is the only thing recorded. The PR says the table tracks how many times each address is blocked, so the stat is wrong with no error shown. When the call runs inside a transaction that later rolls back, the increment is undone too: EmailToken.confirm (app/models/email_token.rb:45-55) and InviteRedeemer via `Invite.transaction` (app/models/invite_redeemer.rb:4-6, 47). Fix: record the match once per attempt, for example after `user.save` returns false in UsersController#create, and keep the validator a pure lookup.",
+      "origin": "introduced",
+      "originReason": "BlockedEmail.should_block? and the call to it from the validator are both new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "app/models/blocked_email.rb",
+          "line": 11
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "UsersController#create calls user.valid? (line 168) and then user.save (line 172). Save validates again while email_changed? is still true, so should_block? runs twice. For do_nothing entries the save succeeds and the count goes up by 2. For :block entries the second increment happens inside save's own transaction, which Rails 3.2 rolls back when validation fails, so the net change is 1. That is the rollback problem the finding describes, and it also hits EmailToken.confirm and InviteRedeemer.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 168
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 172
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/validators/email_validator.rb",
+            "line": 13
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/email_token.rb",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite_redeemer.rb",
+            "line": 4
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/user.rb",
+      "line": 47,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Invite to a blocked address ends in an unhandled 500 when the invitee clicks the link",
+      "body": "`validates :email, email: true` now rejects blocked addresses. On invite redemption, InviteRedeemer#create_new_user calls `User.create_for_email` (app/models/invite_redeemer.rb:47), which calls `user.save!` (app/models/user.rb:103). That raises RecordInvalid, which rolls back the Invite.transaction, so the invite stays pending. Nothing rescues it: InvitesController#show calls `invite.redeem` with no rescue (app/controllers/invites_controller.rb:12), and ApplicationController's rescue_from Exception re-raises (app/controllers/application_controller.rb:38-47). Compare EmailToken.confirm, which rescues RecordInvalid (app/models/email_token.rb:57-58). The blacklist already had this problem for blacklisted domains; the PR widens it to every blocked address. Invite creation does not check the blocklist (app/models/invite.rb:23-33), so the failure only appears at click time. Decide whether invites to blocked addresses should be refused at creation or handled in InvitesController.",
+      "origin": "introduced",
+      "originReason": "The base already failed this way for blacklisted domains; the new blocklist check extends the same failure to each blocked address.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "lib/validators/email_validator.rb",
+          "line": 13
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "create_for_email calls save! (user.rb:103), which now raises RecordInvalid for a blocked address. Neither InviteRedeemer nor InvitesController#show rescues it, ApplicationController's rescue_from re-raises, and Invite creation only checks for an existing user, not the blocklist.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/user.rb",
+            "line": 103
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite_redeemer.rb",
+            "line": 47
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/invites_controller.rb",
+            "line": 12
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/application_controller.rb",
+            "line": 47
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite.rb",
+            "line": 26
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 274,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Any server email error, including 'already taken', is remembered as a rejected address for the whole page session",
+      "body": "Line 274 pushes the email into `rejectedEmails` for every `errors.email` response, which includes the uniqueness error 'has already been taken' (users_controller.rb:195-200 returns `errors.to_hash` for all validations). Two effects: (1) the field then shows the generic `user.email.invalid` reason (line 71-72), where before the PR a taken address got only the server flash and no red field; (2) the list is never cleared (line 17; nothing else in app/assets/javascripts/discourse touches `rejectedEmails`), so the address stays blocked client-side until the page reloads, even if the server state changes. Consider storing only the blocklist error, or clearing the entry when the email changes.",
+      "origin": "introduced",
+      "originReason": "In the base the response had no errors/values keys and the JS had no rejectedEmails list; both were added here.",
+      "originEvidence": [
+        {
+          "snapshot": "base",
+          "path": "app/controllers/users_controller.rb",
+          "line": 197
+        }
+      ],
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "The controller returns errors.to_hash, which holds every email error including uniqueness, and line 274 pushes the email into rejectedEmails whenever errors.email is present. Nothing ever clears rejectedEmails, so the field stays marked failed with the generic 'invalid' text until the page reloads.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 274
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 198
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 11,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "should_block? writes to the database; the name and the public set_defaults hide that",
+      "body": "`should_block?` increments and saves a record on every match (lines 13-17), so a predicate name hides a write that runs during validation. `set_defaults` on line 21 is public for no reason. Rename the method to something like `record_match_and_check_blocked`, or split the counting out of the predicate, and make `set_defaults` private.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "should_block? increments match_count and saves the record (lines 13-17), so the predicate writes to the database. set_defaults is a public instance method even though it is only used as a before_validation callback.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 11
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 21
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 14,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "match_count is a read-modify-write, so concurrent signups can lose increments",
+      "body": "`record.match_count += 1` followed by `record.save` (lines 14-16) reads the count, adds one in Ruby and writes the result back. Two concurrent attempts against the same address can both read N and both write N+1. The save result is also ignored, so a failed save does not show. `BlockedEmail.where(id: record.id).update_all(['match_count = match_count + 1, last_match_at = ?', now])` makes the increment atomic in one statement.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "match_count is read into Ruby, incremented and written back with save, whose return value is ignored. Two concurrent matches can therefore both write N+1. The impact is minor because the field is only a statistic.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 16
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 14,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Spec stubs should_block?, so the counting side effect is never observed through validation",
+      "body": "spec/components/validators/email_validator_spec.rb:11 and :17 stub `BlockedEmail.should_block?`, so the validator spec never runs the counting code and cannot catch the double increment on a signup (see lib/validators/email_validator.rb:13). Nothing in the diff covers a user save with a blocked address, the stats after one attempt, the whitelist branch (where the block check must be skipped), or the new `errors`/`values` JSON keys in UsersController#create. Add a User-level spec that checks match_count after one `valid?` and after one `save`.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c6",
+        "status": "supported",
+        "reason": "Both validator specs stub BlockedEmail.should_block?. No other spec references BlockedEmail except blocked_email_spec, which calls should_block? directly, so no test checks the counting through a User valid?/save.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/components/validators/email_validator_spec.rb",
+            "line": 11
+          },
+          {
+            "snapshot": "head",
+            "path": "spec/components/validators/email_validator_spec.rb",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "spec/models/blocked_email_spec.rb",
+            "line": 20
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/locales/server.en.yml",
+      "line": 734,
+      "severity": "info",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Blocked signups get an explicit error, which tells any client that an address is on the blocklist",
+      "body": "The `blocked` message is returned in plain text for any POST /users with a blocked address (lib/validators/email_validator.rb:13-14, users_controller.rb:195-200). The honeypot path answers bots with a fake success (users_controller.rb:158), so the code already hides some decisions. Is it intended that anyone who submits an address can learn whether it is blocked? If not, a generic message or the fake-success path would avoid that.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c7",
+        "status": "supported",
+        "reason": "A blocked address does get a distinct 'is not allowed.' error in the create response, so a client can tell it is on the blocklist. The same response already reveals uniqueness ('has already been taken') and blacklisted domains, so the extra exposure is small and this is a design question.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "config/locales/server.en.yml",
+            "line": 734
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/validators/email_validator.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 197
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 158
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "db/migrate/20130724201552_create_blocked_emails.rb",
+      "line": 3,
+      "severity": "info",
+      "topic": "question",
+      "confidence": "high",
+      "title": "No admin interface or seed for managing blocked_emails",
+      "body": "The PR adds the table and the check but no way to add or remove entries except the console or SQL. The PR body does not claim otherwise; I note it so the author can confirm it is planned work.",
+      "origin": "unknown",
+      "verification": {
+        "status": "unverified",
+        "reason": "",
+        "checked": []
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Signup submits an email that is on the blocklist",
+      "location": "lib/validators/email_validator.rb:13",
+      "status": "closed",
+      "evidence": [
+        "lib/validators/email_validator.rb:13-15",
+        "app/controllers/users_controller.rb:168",
+        "app/controllers/users_controller.rb:172",
+        "app/controllers/users_controller.rb:195-200",
+        "app/models/blocked_email.rb:11-19",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:273-276"
+      ],
+      "equivalent_path": "lib/validators/email_validator.rb:8-11 (the blacklist branch in the same validator)",
+      "before_after": "Before: a blacklisted domain adds one error and nothing else. After: a blocked address adds the same kind of error (user.email.blocked) and also increments match_count and last_match_at in BlockedEmail.should_block?, once per validation run.",
+      "visible_effect": "The flash shows 'Email is not allowed.' through users_controller.rb:195-200 and create_account_controller.js:273. The email field goes red through rejectedEmails (create_account_controller.js:274-276).",
+      "failure_mode": "match_count is incremented twice per attempt (users_controller.rb:168 and :172), so the stat is wrong with no error shown. See the first finding.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Client remembers a rejected email and blocks resubmitting it",
+      "location": "app/assets/javascripts/discourse/controllers/create_account_controller.js:69-74",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:17",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:69-74",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:96",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:274-276",
+        "app/assets/javascripts/discourse/controllers/login_controller.js:150-157"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/controllers/create_account_controller.js:76-83 (the authOptions check, which also returns a failed or ok InputValidation from emailValidation)",
+      "before_after": "Before: the server was the only check, and a rejected address could be resubmitted. After: a rejected string fails client-side and disables submit until the field changes.",
+      "visible_effect": "The submit button is disabled and the email field shows user.email.invalid.",
+      "failure_mode": "rejectedEmails is never cleared (line 17). It survives closing and reopening the modal, since the controller is a singleton and login_controller.js:150-157 does not reset it. Any server email error, including 'already taken', is stored. See the second finding.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Invite link is opened for an address that is on the blocklist",
+      "location": "app/models/invite_redeemer.rb:47",
+      "status": "closed",
+      "evidence": [
+        "app/models/invite_redeemer.rb:4-6",
+        "app/models/invite_redeemer.rb:47",
+        "app/models/user.rb:93-103",
+        "app/controllers/invites_controller.rb:8-14",
+        "app/controllers/application_controller.rb:38-47",
+        "app/models/email_token.rb:57-58",
+        "app/models/invite.rb:23-33"
+      ],
+      "equivalent_path": "app/models/email_token.rb:44-59 (EmailToken.confirm rescues RecordInvalid and returns nil)",
+      "before_after": "Before: an invite to a blacklisted domain already raised RecordInvalid here. After: a blocked address also raises it, through the same user.save! at app/models/user.rb:103.",
+      "visible_effect": "The invitee gets the generic error page from ApplicationController's rescue_from (application_controller.rb:38-47), not a message about the block.",
+      "failure_mode": "The invite stays unredeemed because the transaction rolls back (invite_redeemer.rb:4-6), and the block counter update inside that transaction is lost too. See the third finding.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Existing user requests an email change to a blocked address, then clicks the confirmation link",
+      "location": "app/models/email_token.rb:44-59",
+      "status": "closed",
+      "evidence": [
+        "app/models/email_token.rb:44-59",
+        "app/controllers/users_controller.rb:265-286",
+        "app/controllers/users_controller.rb:288-294"
+      ],
+      "equivalent_path": "app/models/email_token.rb:57-58 (the rescue that returns nil on RecordInvalid)",
+      "before_after": "Before: a blacklisted domain failed at confirmation. After: a blocked address fails at confirmation the same way.",
+      "visible_effect": "The user sees the change_email.error flash (users_controller.rb:288-294). The confirmation email was already sent to the blocked address by users_controller.rb:265-286, because change_email does not check the blocklist.",
+      "failure_mode": "The change is accepted at request time and fails only on click. The block counter increment inside User.transaction (email_token.rb:45-55) is rolled back when save! raises.",
+      "evidence_checked": true
+    },
+    {
+      "action": "User model drops its own email validator and hands the check to EmailValidator",
+      "location": "app/models/user.rb:44-47",
+      "status": "closed",
+      "evidence": [
+        "app/models/user.rb:44-47",
+        "lib/validators/email_validator.rb:4-12",
+        "lib/validators/email_validator.rb:18-22"
+      ],
+      "equivalent_path": "lib/validators/email_validator.rb:4-12 (the whitelist/blacklist logic moved here)",
+      "before_after": "Before: validate :email_validator read self.email. After: EmailValidator reads the value it is given. The whitelist and blacklist results are the same. Presence and uniqueness are still validated unconditionally.",
+      "visible_effect": "None for whitelist and blacklist. Blocked addresses are now also rejected.",
+      "failure_mode": "None found. No caller of the removed User#email_in_restriction_setting? remains, since the only references are in lib/validators/email_validator.rb:5,9,18.",
+      "evidence_checked": true
+    },
+    {
+      "action": "UsersController#create failure response gains errors and values keys",
+      "location": "app/controllers/users_controller.rb:195-200",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/users_controller.rb:195-200",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:274-276"
+      ],
+      "before_after": "Before: success, message only. After: also errors (ActiveModel to_hash) and values (name, username, email as submitted).",
+      "visible_effect": "None on its own. The JS reads these keys in create_account_controller.js:274-276.",
+      "failure_mode": "None found. The values echo the caller's own input.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed all 10 files in this part. Two findings are \"fix\": (1) BlockedEmail.should_block? runs inside the validator on every valid?/save, so each signup attempt increments match_count twice, and the increment is rolled back when an enclosing transaction fails; (2) the blocklist lookup is case-sensitive while signup stores addresses as typed, so mixed-case addresses bypass a blocked entry. Other findings: an invite to a blocked address raises an unhandled RecordInvalid, the client-side rejectedEmails list stores 'already taken' errors and is never cleared, should_block? is a write hidden behind a predicate name, the increment is not atomic, and the spec stubs the method so the counting is never tested. No ADRs exist at base, and no repo rules files were present at base. The removed User email validator and the JSON additions in users_controller.rb check out.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 178,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 33,
+      "costUsd": 0.04356319000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3444147900000001,
+    "usage": {
+      "input": 30,
+      "output": 48559,
+      "cacheRead": 546907,
+      "cacheWrite": 109598
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 33,
+    "durationMs": 275981,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.30085160000000005,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "lib/validators/email_validator.rb",
+        "line": 13,
+        "title": "Each signup attempt increments match_count twice, and the count can be rolled back",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "BlockedEmail.should_block? and the call to it from the validator are both new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 11
+          }
+        ],
+        "reason": "UsersController#create calls user.valid? (line 168) and then user.save (line 172). Save validates again while email_changed? is still true, so should_block? runs twice. For do_nothing entries the save succeeds and the count goes up by 2. For :block entries the second increment happens inside save's own transaction, which Rails 3.2 rolls back when validation fails, so the net change is 1. That is the rollback problem the finding describes, and it also hits EmailToken.confirm and InviteRedeemer.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 168
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 172
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/validators/email_validator.rb",
+            "line": 13
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/email_token.rb",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite_redeemer.rb",
+            "line": 4
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "app/models/user.rb",
+        "line": 47,
+        "title": "Invite to a blocked address ends in an unhandled 500 when the invitee clicks the link",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The base already failed this way for blacklisted domains; the new blocklist check extends the same failure to each blocked address.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "lib/validators/email_validator.rb",
+            "line": 13
+          }
+        ],
+        "reason": "create_for_email calls save! (user.rb:103), which now raises RecordInvalid for a blocked address. Neither InviteRedeemer nor InvitesController#show rescues it, ApplicationController's rescue_from re-raises, and Invite creation only checks for an existing user, not the blocklist.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/user.rb",
+            "line": 103
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite_redeemer.rb",
+            "line": 47
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/invites_controller.rb",
+            "line": 12
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/application_controller.rb",
+            "line": 47
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/invite.rb",
+            "line": 26
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+        "line": 274,
+        "title": "Any server email error, including 'already taken', is remembered as a rejected address for the whole page session",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "In the base the response had no errors/values keys and the JS had no rejectedEmails list; both were added here.",
+        "originEvidence": [
+          {
+            "snapshot": "base",
+            "path": "app/controllers/users_controller.rb",
+            "line": 197
+          }
+        ],
+        "reason": "The controller returns errors.to_hash, which holds every email error including uniqueness, and line 274 pushes the email into rejectedEmails whenever errors.email is present. Nothing ever clears rejectedEmails, so the field stays marked failed with the generic 'invalid' text until the page reloads.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 274
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 198
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "app/models/blocked_email.rb",
+        "line": 11,
+        "title": "should_block? writes to the database; the name and the public set_defaults hide that",
+        "topic": "cleanup",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "should_block? increments match_count and saves the record (lines 13-17), so the predicate writes to the database. set_defaults is a public instance method even though it is only used as a before_validation callback.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 11
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 21
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "app/models/blocked_email.rb",
+        "line": 14,
+        "title": "match_count is a read-modify-write, so concurrent signups can lose increments",
+        "topic": "perf",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "match_count is read into Ruby, incremented and written back with save, whose return value is ignored. Two concurrent matches can therefore both write N+1. The impact is minor because the field is only a statistic.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/models/blocked_email.rb",
+            "line": 16
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c6",
+        "path": "app/models/blocked_email.rb",
+        "line": 14,
+        "title": "Spec stubs should_block?, so the counting side effect is never observed through validation",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "Both validator specs stub BlockedEmail.should_block?. No other spec references BlockedEmail except blocked_email_spec, which calls should_block? directly, so no test checks the counting through a User valid?/save.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "spec/components/validators/email_validator_spec.rb",
+            "line": 11
+          },
+          {
+            "snapshot": "head",
+            "path": "spec/components/validators/email_validator_spec.rb",
+            "line": 17
+          },
+          {
+            "snapshot": "head",
+            "path": "spec/models/blocked_email_spec.rb",
+            "line": 20
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c7",
+        "path": "config/locales/server.en.yml",
+        "line": 734,
+        "title": "Blocked signups get an explicit error, which tells any client that an address is on the blocklist",
+        "topic": "question",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "A blocked address does get a distinct 'is not allowed.' error in the create response, so a client can tell it is on the blocklist. The same response already reveals uniqueness ('has already been taken') and blacklisted domains, so the extra exposure is small and this is a design question.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "config/locales/server.en.yml",
+            "line": 734
+          },
+          {
+            "snapshot": "head",
+            "path": "lib/validators/email_validator.rb",
+            "line": 14
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 197
+          },
+          {
+            "snapshot": "head",
+            "path": "app/controllers/users_controller.rb",
+            "line": 158
+          }
+        ],
+        "outcome": "moved",
+        "severityAfter": "info"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

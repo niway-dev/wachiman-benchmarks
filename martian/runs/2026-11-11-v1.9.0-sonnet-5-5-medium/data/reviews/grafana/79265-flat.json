@@ -1,0 +1,163 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-79265-flat` of grafana-79265-flat against 7ddcd0c9611882858701f4f876fb8e449fe73980 (merge-base 7ddcd0c)",
+    "repository": {
+      "name": "grafana-79265-flat"
+    },
+    "base": {
+      "sha": "7ddcd0c9611882858701f4f876fb8e449fe73980",
+      "ref": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+    },
+    "head": {
+      "sha": "1ac848883795d232d69850166dd2016fc9162aef",
+      "ref": "pr-79265-flat"
+    },
+    "title": "pr-79265-flat",
+    "description": "Anonymous: Add configurable device limit",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/setting/setting.go"
+    ],
+    "reviewed": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/setting/setting.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 87,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Rejected device is cached, so the limit is bypassed on the next request",
+      "body": "tagDeviceUI puts the device in localCache (line 87) before calling CreateOrUpdateDevice (line 93). When the store returns ErrDeviceLimitReached, the cache entry stays. The cache TTL is 29 minutes (impl.go:42). The device's next request therefore hits the cache at line 83, returns nil, and Authenticate in client.go lets it in as anonymous. The device is rejected once and then admitted for about 29 minutes without being stored. Only set the cache after a successful store write, or delete the key on error. Failures from a transient DB error are cached the same way.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/client.go",
+      "line": 44,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Device tagging is now synchronous in the auth path",
+      "body": "The old code tagged in a goroutine with its own 2-minute timeout and panic recovery. Now TagDevice runs inline with the request ctx. A cache miss adds a COUNT query plus a write to every first anonymous request, and a cancelled request context aborts the tag. The goroutine could not be kept for the limit check, but the cost is worth confirming. Also, errors other than ErrDeviceLimitReached are only logged, so a DB failure still lets the user in while the limit is not enforced.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 95,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "rowsAffected==0 is treated as limit reached",
+      "body": "On MySQL, RowsAffected counts changed rows by default. An update with identical client_ip, user_agent and updated_at (same second) reports 0, so an existing device is wrongly rejected with ErrDeviceLimitReached. Devices not found and devices older than 30 days are also reported as 'limit reached'. Consider a separate existence check or the clientFoundRows flag. Separately, the count-then-insert at line 110 is not atomic, so concurrent new devices can exceed the limit.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "line": 51,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Limit test misses the update path and the cache bug",
+      "body": "The test only checks that a second new device is rejected. It does not check that an existing device can still update once the limit is reached, which is the stated behaviour. No test covers the service-level path (TagDevice or Authenticate returning the error, and a repeat request after rejection).",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/api/api.go",
+      "line": 18,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "anonymousDeviceExpiration is defined twice and thirtyDays remains",
+      "body": "The same 30-day constant is now in api/api.go and in anonstore/database.go. impl.go:70 still uses thirtyDays and pkg/api/admin.go:68 uses its own 30 days. Export one constant from anonstore and use it everywhere.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous Authenticate tags device synchronously and rejects when limit reached",
+      "location": "pkg/services/anonymous/anonimpl/client.go:44",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/impl.go:83-95",
+        "pkg/services/anonymous/anonimpl/client.go:44-50",
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:109-118"
+      ],
+      "equivalent_path": "previous goroutine tagging in the same function",
+      "before_after": "Before: async, errors only logged. After: inline, ErrDeviceLimitReached returned as an auth error; the local cache is set before the store write in impl.go:87.",
+      "visible_effect": "Over-limit new devices are denied anonymous access on first request, but are admitted again while the cache entry lives.",
+      "failure_mode": "Cached rejection lets the device through for 29 minutes; other store errors are logged and the user is let in.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The device limit can be bypassed. tagDeviceUI caches the device before the store write, so a device rejected with ErrDeviceLimitReached is let in again for 29 minutes. Smaller items: tagging is now synchronous, rowsAffected==0 is treated as limit reached, the new test is thin, and the 30-day constant is duplicated.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 11,
+      "lines": 142,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 6,
+      "costUsd": 0.1384202
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1384202,
+    "usage": {
+      "input": 8,
+      "output": 4906,
+      "cacheRead": 68322,
+      "cacheWrite": 20628
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 6,
+    "durationMs": 39782,
+    "stop": "complete",
+    "notices": []
+  }
+}

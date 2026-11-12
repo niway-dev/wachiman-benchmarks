@@ -1,0 +1,121 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-40940-flat` of keycloak-40940-flat against 7fd37690c44c7068cb19ecee3aa6ff99c46a821d (merge-base 7fd3769)",
+    "repository": {
+      "name": "keycloak-40940-flat"
+    },
+    "base": {
+      "sha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d",
+      "ref": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+    },
+    "head": {
+      "sha": "58db8ffad86bb46e3b996d5667d66897ba735757",
+      "ref": "pr-40940-flat"
+    },
+    "title": "pr-40940-flat",
+    "description": "Fix concurrent group access to prevent NullPointerException",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "reviewed": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "line": 275,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "getSubGroupsCount now returns null, but the SPI says it never does",
+      "body": "`GroupModel.getSubGroupsCount()` is documented as \"Never returns {@code null}\" (server-spi/src/main/java/org/keycloak/models/GroupModel.java:296). This change returns `null` when the group was deleted from the database while its cached copy was still in use. In this repository the only caller is `GroupUtils.populateSubGroupCount` (services/src/main/java/org/keycloak/utils/GroupUtils.java:90). It passes the value to `setSubGroupCount(Long)`, so nothing breaks today. Extensions that rely on the documented contract and unbox the value would throw a new NPE instead. The cached adapter's other lazy loaders return an empty fallback when the group is gone (`Collections::emptySet` and `MultivaluedHashMap::new` in CachedGroup.java:55-57). Returning `0L` would match that and keep the contract. Otherwise, update the javadoc.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+      "line": 155,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Reader thread is never joined, so the assertion can miss the failure it tests for",
+      "body": "Right after `deletedAll.set(true)`, the test checks `caughtExceptions` (line 157) without waiting for the reader thread. A request that is still running, which is exactly the one most likely to hit the concurrent delete, can add its exception after the check has passed. Nothing requires the reader to run at all either: if the 100 deletes finish before the thread's first request, the test passes without exercising the race. The thread also outlives the test. Keep a reference to the `Thread` and `join()` it before the assertion. Also consider waiting until at least one read has finished (a counter or latch) before you start deleting.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GroupAdapter.getSubGroupsCount returns null when the delegate group is missing from the DB instead of throwing an NPE",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:274-275",
+      "status": "closed",
+      "evidence": [
+        "server-spi/src/main/java/org/keycloak/models/GroupModel.java:293-300",
+        "services/src/main/java/org/keycloak/utils/GroupUtils.java:89-92",
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupsResource.java:112-128",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java:55-57",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:54"
+      ],
+      "equivalent_path": "The CachedGroup lazy loaders (attributes/roleMappings/subGroups) fall back to empty collections when the supplier yields no model",
+      "before_after": "Before: getGroupModel().getSubGroupsCount() threw an NPE when the group was deleted concurrently, so GET /groups returned 500. After: returns null; other paths return empty/zero-like fallbacks",
+      "visible_effect": "GET admin groups (GroupsResource.getGroups -> GroupUtils.populateGroupHierarchyFromSubGroups/populateSubGroupCount) returns the group being deleted with subGroupCount null instead of failing",
+      "failure_mode": "Violates the 'never returns null' javadoc on GroupModel.getSubGroupsCount; external callers that unbox would NPE",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The fix stops the NPE when a cached group is deleted while another request lists groups. It does this by returning null from the cached `GroupAdapter.getSubGroupsCount()`, which breaks the SPI's documented never-null contract; `0L` would match how the cached group's other lookups handle a missing group. Removing the unused `groupMatchesSearchOrIsPathElement` and adding `@Override` are fine. The new concurrency test checks the result without joining the reader thread, and nothing ensures any read overlaps the deletes, so it can miss the race.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 62,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.2705248
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2705248,
+    "usage": {
+      "input": 12,
+      "output": 3954,
+      "cacheRead": 103304,
+      "cacheWrite": 21342
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 63773,
+    "stop": "complete",
+    "notices": []
+  }
+}

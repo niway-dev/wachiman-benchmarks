@@ -1,0 +1,166 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-14943` of cal.com-14943 against 917c7b0764f4c6bfdca95db2c5f73dbfdbe11757 (merge-base 917c7b0)",
+    "repository": {
+      "name": "cal.com-14943"
+    },
+    "base": {
+      "sha": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757",
+      "ref": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757"
+    },
+    "head": {
+      "sha": "c790227e0cda780e6fea9bb03af27948d9e286b9",
+      "ref": "pr-14943"
+    },
+    "title": "pr-14943",
+    "description": "feat: atoms team booking (#14525)\nfix: add prisma client generated types to atoms package (#14916)\nfeat: cal-3452 parameter for impersonation  (#14605)\nAsync scalars & less queries due to grouping (#14904)\nfeat: redirect after booking: option to forward parameters (#14235)\nchore: Release/v4.0.7 (#14933)\nfix: pass query params to dynamic meetings (#14920)\nfeat: Added admin-api page (#14890)\nfeat: handleCreateBooking for platform booker (#14939)\nfix: redis cache key overlap (#14938)\nfeat: Redirect when event type does not match booking type (#14460)\nchore: Update PR template to include more mandatory tasks (#14941)\nadd retry count to workflow reminder\nadd logic to for retry count\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder",
+    "author": "Udit Takkar"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "packages/prisma/migrations/20240508134359_add_retry_count_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma"
+    ],
+    "reviewed": [
+      "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "packages/prisma/migrations/20240508134359_add_retry_count_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 178,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Reminders for SMS-locked users or teams are now permanently deleted after two cron runs",
+      "body": "`twilio.scheduleSMS` returns `undefined` (it does not throw) when the user or team is SMS-locked (`twilioProvider.ts:90-95`). An admin can turn that lock on and off (`setSMSLockState.handler.ts:24,58`). Before this change, a reminder for a locked account stayed `scheduled: false` and was picked up again once the lock was lifted. Now the new `else` branch counts the lock as a failure. The cron runs every 15 minutes (`.github/workflows/cron-scheduleSMSReminders.yml:8`), and the `retryCount > 1` clause in `deleteMany` (lines 38-42) deletes the row, so 30 minutes into a lock every pending reminder for that account is gone for good. Lifting the lock does not bring them back, and nothing is logged.\n\nThe monthly SMS rate limit has the same effect: `checkSMSRateLimit` throws (`twilioProvider.ts:97-102`), the `catch` increments `retryCount`, and the row is deleted. The same goes for a short Twilio outage or missing credentials (`createTwilioClient` throws, line 88).\n\nSuggested fix: don't increment `retryCount` when the account is locked. One way is to have `scheduleSMS` report the lock separately from a failure, or to check `isLockedForSMSSending` here first. Also log a line when a reminder is dropped for too many retries.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 190,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "An unguarded update inside `catch` can abort the whole cron batch",
+      "body": "Before this change, the `catch` only logged, so one bad reminder never stopped the loop. Now it awaits `prisma.workflowReminder.update` with no protection of its own. If that update throws, the error escapes the `for` loop and the handler rejects. Every reminder after it goes unprocessed in that run, and the run fails with a 500 instead of `{ message: \"SMS scheduled\" }` (line 201).\n\nOne realistic trigger: the row is deleted between the `findMany` (line 48) and the update, for example because the booking was cancelled. Prisma's `update` then throws a record-not-found error. That error can first come from the success-path update at line 169, which sends control into this `catch`, and the same update then fails again.\n\nThat same path also leaves an SMS scheduled at Twilio with no `referenceId` saved on the row. The retry clause then deletes the row, so cancelling the booking can no longer cancel the message.\n\nSuggested fix: wrap the retry update in its own try/catch, or use `updateMany({ where: { id }, data: { retryCount: { increment: 1 } } })`, which does not throw when the row is missing.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 39,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "The retry-count delete clause is not limited to SMS reminders",
+      "body": "The second `OR` branch deletes every `WorkflowReminder` with `retryCount > 1`, whatever its `method`. Today only this SMS cron increments `retryCount`, so no EMAIL or WHATSAPP rows are affected yet. But if the email or WhatsApp crons start using the new column, this SMS cron will quietly delete their rows. Consider adding `method: WorkflowMethods.SMS` to that branch. Consider also replacing the bare `1` with a named constant, such as a `MAX_RETRIES` set to the number of attempts actually intended. Right now it means two failed attempts, roughly 30 minutes.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 184,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No tests cover the new retry and delete behaviour",
+      "body": "Nothing tests that a failed schedule increments `retryCount`, that a row is deleted once it passes the threshold, or that a lock or a successful schedule does not count as a failure. Given the two data-loss paths above, a handler test that mocks `twilio.scheduleSMS` would catch regressions.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Increment retryCount when scheduleSMS returns a falsy value",
+      "location": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:178-186",
+      "status": "closed",
+      "evidence": [
+        "packages/features/ee/workflows/lib/reminders/providers/twilioProvider.ts:90-95",
+        "packages/trpc/server/routers/viewer/admin/setSMSLockState.handler.ts:24",
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:38-42",
+        ".github/workflows/cron-scheduleSMSReminders.yml:8"
+      ],
+      "equivalent_path": "The success branch at lines 168-177 sets scheduled and referenceId",
+      "before_after": "scheduleSMS returns undefined without throwing when the user or team is SMS-locked. Before, such a row stayed unscheduled and was retried on later runs. Now it counts toward deletion.",
+      "visible_effect": "The reminder SMS is never sent. The organiser or attendee sees nothing, and nothing is logged.",
+      "failure_mode": "A lock, which an admin can lift, leads to permanent deletion after two runs (about 30 minutes)",
+      "evidence_checked": true
+    },
+    {
+      "action": "Increment retryCount inside catch",
+      "location": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:190-197",
+      "status": "closed",
+      "evidence": [
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:67-74",
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:169-177",
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:189-201"
+      ],
+      "equivalent_path": "Before this change, the catch only called console.log",
+      "before_after": "The catch now awaits a DB update that has no error handling of its own",
+      "visible_effect": "If the update throws, the cron returns 500 and the remaining reminders are skipped for that run",
+      "failure_mode": "If the row was deleted concurrently, update throws record-not-found and the loop is aborted",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bound on the retry loop",
+      "location": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:38-42",
+      "status": "closed",
+      "evidence": [
+        ".github/workflows/cron-scheduleSMSReminders.yml:8",
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:68-70",
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:158"
+      ],
+      "before_after": "Each 15-minute cron run makes at most one attempt per reminder. The row is deleted at the start of the run after retryCount reaches 2, so there are two attempts in total. Rows with no message or no sendTo, and rows skipped by `continue`, never increment, so they are retried until scheduledDate passes. That behaviour is unchanged.",
+      "failure_mode": "The bound counts attempts across cron runs, not time. A single run is still bounded only by the Twilio and DB call latencies, with no per-call timeout.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This PR adds a `retryCount` column to `WorkflowReminder`, so the SMS reminder cron gives up on a reminder after two failed scheduling attempts. I found two problems to fix in this PR:\n\n- **Locked accounts lose their reminders for good.** Twilio scheduling skips SMS-locked users and teams without raising an error, and the new code counts that as a failure. About 30 minutes after an admin locks an account, all of its pending reminders are deleted, and lifting the lock does not bring them back. Hitting the monthly SMS rate limit has the same effect.\n- **One error can stop the whole cron run.** The new database update inside `catch` has no error handling of its own. If it throws, for example because the reminder was deleted after the cron loaded it, the run stops and returns a 500, and the remaining reminders are skipped.\n\nTwo smaller suggestions:\n\n- **The cleanup query isn't limited to SMS.** It deletes any reminder with `retryCount > 1`, whatever its method. Only the SMS cron sets that column today, so nothing else is affected yet.\n- **No tests.** Nothing covers the new retry and delete behaviour.\n\nThe migration and the schema change look correct.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 44,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.28515460000000004
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757"
+  },
+  "execution": {
+    "costUsdEstimate": 0.28515460000000004,
+    "usage": {
+      "input": 12,
+      "output": 6128,
+      "cacheRead": 87453,
+      "cacheWrite": 18132
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 66179,
+    "stop": "complete",
+    "notices": []
+  }
+}

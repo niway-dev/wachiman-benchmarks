@@ -1,0 +1,68 @@
+{
+  "pr": "cal.com-8330",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "A slot inside a date override bypasses busy-time checks and is incorrectly offered even when occupied.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:143-160 collects busy intervals and :215-224 builds wall-clock override rows; packages/trpc/server/routers/viewer/slots.ts:488-493 passes both to checkIfIsAvailable for fixed hosts. For a non-seated personal event, server in UTC, organizer Asia/Kolkata, future override D 14:00-18:00 and a calendar event D 08:30Z-09:30Z, packages/lib/slots.ts:211-245 generates the D 08:30Z slot without considering busy intervals (:85-125). The override matches and contains that slot at viewer/slots.ts:106-127, then :133-135 returns true before the conflicting interval can be rejected at :153-164. With no selected-slot reservations and a date within booking bounds, :483-499 and :592 retain the occupied slot.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "Disjoint date-override rows on one day exclude each other's slots and can remove the entire day.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:215-224 maps every date-specific availability row separately, and viewer/slots.ts:488-493 passes those rows directly to the fixed-host check. On a UTC server with an Asia/Kolkata host and two future overrides D 14:00-16:00 and D 18:00-20:00, packages/lib/slots.ts:211-245 generates both intervals. For the 14:00 IST slot, the first override callback returns undefined but the second returns true because its start is after the slot end (viewer/slots.ts:117-121); for the 18:00 IST slot, the first row returns true because the slot starts after its end (:123-124). The find result causes :130 to reject every slot in either disjoint interval, rather than accepting membership in either row.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The override-day filter uses the organizer's raw wall-clock Date instead of the actual instant when selecting an invitee day.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:218-222 creates override.start by placing organizer clock fields into a UTC Date, whereas packages/lib/slots.ts:206-208 filters that raw Date against the invitee's absolute day boundaries. For an Asia/Kolkata override D 23:00-23:59 and a UTC+2 invitee, raw D 23:00Z is outside invitee day D ending D 22:00Z, although the actual start D 17:30Z belongs to D; when selected on D+1, :211-223 computes 19:30 and :248-255 anchors it to that next invitee day. However, the supplied diff leaves :206-208 unchanged, and the pre-change implementation already selected the same wrong day using the same raw Date. This is a genuine existing day-selection bug, not a newly introduced filter regression; the PR corrects only the subsequent minute conversion.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Override date matching uses server-local formatting against a UTC slot date and fails on non-UTC servers.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/dayjs/index.ts:2-23 extends Dayjs with UTC/timezone plugins but does not make plain dayjs(Date) use UTC; viewer/slots.ts:100 explicitly converts the slot to UTC while :110 formats the shifted override in the server's local zone. On a server in America/New_York, use a fixed UTC host, weekly hours 09:00-17:00, and a future override D 02:00-04:00 with a UTC invitee: packages/lib/slots.ts:206-245 generates D 02:00Z from that override. At viewer/slots.ts:110-111 the override formats as D-1 but the slot formats as D, so dateOverrideExist remains false; :139-150 then rejects 02:00 as outside weekly hours instead of honoring the override. This newly added path removes valid availability; it does not require assumptions about a production timezone, only running the server in the named zone.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The override conversion unnecessarily round-trips Dates through strings and permits an omitted timezone to select an unintended zone.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/lib/slots.ts:212-213 passes Date.toString() back to dayjs before computing offsets, and packages/types/schedule.d.ts:1-5 makes timeZone optional, so the new conversion permits an unspecified timezone. The active server caller supplies availability.timeZone at viewer/slots.ts:410-415 before passing overrides at :449-457; both team getSlots callers omit overrides (packages/features/ee/teams/components/TeamAvailabilityTimes.tsx:35-41 and v2/TeamAvailabilityTimes.tsx:39-46). Also, getUserAvailability.ts:218-222 constructs minute-based override times and slots.ts:218-223 uses only hours/minutes, so loss of milliseconds is not a demonstrated scheduling failure. The current paths therefore refute a present missing-timezone regression while leaving a minor API/cleanup concern.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The WorkingHours documentation names an obsolete getWorkingHours signature.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/types/schedule.d.ts:13 documents getWorkingHours(timeZone: string, availability: Availability[]), but packages/lib/availability.ts:62-67 accepts a relativeTimeUnit object with optional timeZone and utcOffset fields. The supplied diff only adds timeZone to TimeRange, and git show HEAD^:packages/types/schedule.d.ts contains the same obsolete reference. This is a pre-existing documentation mismatch with no effect on runtime availability.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "The added timezone assertion omits coverage of busy override slots, multiple override rows, and split weekly hours.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/test/lib/getSchedule.test.ts:742-768 creates one host with the single override fixture at :107-129, then the new :788-804 assertion requests the same scenario in Asia/Dhaka. It supplies neither a busy event on the override day nor two date-specific rows nor two weekly ranges; the separate busy-booking test at :807 onward uses the ordinary IstWorkHours fixture (:838). The slots tests in apps/web/test/lib/slots.test.ts:10-136 exercise neither the new checkIfIsAvailable branches nor date overrides. The coverage gap is real, but the comment itself requests missing tests rather than establishing an additional runtime defect.",
+      "confidence": "high"
+    }
+  ]
+}

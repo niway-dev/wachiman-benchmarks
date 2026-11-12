@@ -8,13 +8,17 @@
 #   QUEUES         review queues in parallel (default 2: two Opus sessions at a time)
 #   JUDGE_BATCH    judge calls in flight (default 8)
 #   EXTRA_ENV      extra settings for the reviews, e.g. "AGENT_REVIEW_X=1" (an arm)
+#   WACHIMAN_ARGS  extra `wachiman local` flags, e.g. "--result-version 2" (v1.10.0 on: keeps the verifier's verdicts)
+#   ONLY           extended regex on the worklist row: run only the matching PRs (a re-run of a fixed row)
+#   WACHIMAN_DIR   a Wachiman checkout to run instead of the installed one (pins a version:
+#                  `git archive v1.9.0 | tar -x -C /tmp/wachiman-1.9.0`; the wrapper honours it)
 #   RAM_GB         RAM disk size for snapshots (default 6; two Discourse snapshots need about 4)
 # Needs: the installed `wachiman`, ~/.wachiman/claude-personal signed in, ANTHROPIC_API_KEY unset.
 set -u
 LABEL=$1; MODEL=${2:-claude-opus-5-5}; EFFORT=${3:-high}
 HERE=${0:A:h:h}                                   # martian/
 W=${MARTIAN_WORK:-$HOME/.cache/wachiman-martian}
-QUEUES=${QUEUES:-2}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}
+QUEUES=${QUEUES:-2}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}; WACHIMAN_ARGS=${WACHIMAN_ARGS:-}
 JM=anthropic/claude-opus-4-5-20251101; JD=anthropic_claude-opus-4-5-20251101
 PROFILE=$HOME/.wachiman/claude-personal
 RUN=$W/runs/$LABEL; DEST=$HERE/runs/$LABEL
@@ -23,7 +27,7 @@ log() { echo "$(date +%H:%M:%S) $*" | tee -a $RUN/run.log; }
 [ -n "${ANTHROPIC_API_KEY:-}" ] && { echo "unset ANTHROPIC_API_KEY first"; exit 2; }
 [ -d $W/repos ] && [ -d $W/martian-upstream ] && [ -x $W/venv/bin/python ] || { echo "cache missing: see README bootstrap"; exit 2; }
 mkdir -p $RUN/reviews $RUN/wt
-log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, queues $QUEUES ${EXTRA_ENV:+extra: $EXTRA_ENV}"
+log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, queues $QUEUES ${EXTRA_ENV:+extra: $EXTRA_ENV} ${WACHIMAN_ARGS:+args: $WACHIMAN_ARGS}"
 
 # 1. RAM disk for wachiman's snapshots (the laptop disk is too slow: see the 2026-11-07 report)
 RAM=/Volumes/martianram
@@ -46,18 +50,18 @@ review_queue() {
       env -u ANTHROPIC_API_KEY TMPDIR=$RAM/tmp AGENT_REVIEW_MODEL=$MODEL AGENT_REVIEW_EFFORT=$EFFORT \
         AGENT_REVIEW_BUDGET_USD=10 ${=EXTRA_ENV} \
         wachiman local --repo-dir $wt --base $base --format json --profile isolated:personal \
-        --max-depth 1000 --output $out/$n.json 2> $out/$n.stderr
+        --max-depth 1000 ${=WACHIMAN_ARGS} --output $out/$n.json 2> $out/$n.stderr
       log "review $repo $n attempt $attempt exit $? $(( $(date +%s) - s ))s"
     done
     git -C $W/repos/$repo worktree remove --force $RUN/wt/$repo-$n 2>/dev/null
   done < $1
 }
-tail -n +2 $HERE/worklist.tsv > $RUN/worklist.tsv
+tail -n +2 $HERE/worklist.tsv | grep -E "${ONLY:-.}" > $RUN/worklist.tsv
 for q in $(seq 1 $QUEUES); do awk -v q=$q -v Q=$QUEUES 'NR%Q==q%Q' $RUN/worklist.tsv > $RUN/queue-$q.tsv; done
 for q in $(seq 1 $QUEUES); do review_queue $RUN/queue-$q.tsv & done
 wait
 done_n=$(find $RUN/reviews -name '*.json' -size +0 | wc -l | tr -d ' ')
-log "reviews done: $done_n of 50"
+log "reviews done: $done_n of $(wc -l < $RUN/worklist.tsv | tr -d ' ')"
 
 # 3. A fresh copy of Martian's offline bench, with Wachiman's findings added
 rm -rf $RUN/bench; cp -R $W/martian-upstream/offline $RUN/bench

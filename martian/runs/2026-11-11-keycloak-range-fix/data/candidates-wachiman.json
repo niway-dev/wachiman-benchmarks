@@ -1,0 +1,70 @@
+{
+ "https://github.com/keycloak/keycloak/pull/37634": {
+  "wachiman": [
+   {
+    "text": "isAccessTokenId never checks the grant shortcut: wrong offset and inverted condition\n\nThe encoded prefix is `<session 2><tokenType 2><grant 2>` (DefaultTokenContextEncoderProvider.java:114-117), so the grant shortcut is `substring(4, 6)`, not `substring(3, 5)`. For `onrtac` the code reads `ta`, which never equals any grant shortcut. The condition is also inverted: it returns `false` when the shortcut *matches*. Together these mean the matcher accepts any `xxxxxx:<uuid>` whatever the grant, so `expectCodeToToken`, `expectDeviceCodeToToken`, `expectRefresh` and `expectAuthReqIdToToken` never check the grant type, which is the thing this PR adds. If you fix only the offset, every correct token fails instead. Suggested fix: `if (items[0].length() != 6 || !items[0].substring(4, 6).equals(expectedGrantShortcut)) return false;`.",
+    "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents.java",
+    "line": 483,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "rawTokenId null check tests grantType instead\n\nLine 73 calls `Objects.requireNonNull(grantType, \"Null rawTokenId not allowed\")`, which checks `grantType` a second time. A null `rawTokenId` gets through, and `encodeTokenId` (DefaultTokenContextEncoderProvider.java:117) then produces an id like `onrtac:null` without any error. It should be `requireNonNull(rawTokenId, ...)`.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/encode/AccessTokenContext.java",
+    "line": 73,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Client credentials (and UMA, legacy token exchange) tokens are encoded with grant 'na', so 'cc'/'pg' are never written\n\nThe grant type attribute is only set in `OAuth2GrantTypeBase.createTokenResponse` (auth code, device, CIBA), the ROPC grant, refresh, pre-authorized code and `StandardTokenExchangeProvider`. `ClientCredentialsGrantType` builds its token via `tokenManager.responseBuilder(...).generateAccessToken()` (ClientCredentialsGrantType.java:140) and never sets `Constants.GRANT_TYPE`. So `DefaultTokenContextEncoderProvider` falls back to `UNKNOWN` (DefaultTokenContextEncoderProvider.java:57-60), and every client-credentials access token gets the id `trrtna:...`/`onrtna:...` instead of `..cc:...`. The same gap exists for `AuthorizationTokenService.java:357` (UMA `pg`) and the V1 `AbstractTokenExchangeProvider.java:409`. Nothing errors, but the encoded context is wrong for these grants, which defeats the feature for its most common machine-to-machine case. Set `clientSessionCtx.setAttribute(Constants.GRANT_TYPE, context.getGrantType())` before generating the token in these paths, and add an AssertEvents expectation for client credentials.",
+    "path": "services/src/main/java/org/keycloak/protocol/oidc/grants/ClientCredentialsGrantTypeFactory.java",
+    "line": 40,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Javadoc says '3-letters' shortcut, but the decoder requires exactly 2 characters and nothing checks the length\n\n`getTokenContextFromTokenId` rejects any prefix that is not 6 characters long (DefaultTokenContextEncoderProvider.java:74-76) and reads the grant as `substring(4, 6)`. A custom grant that follows this javadoc and returns a 3-letter shortcut gets encoded without error by `encodeTokenId`, but its ids then fail to decode. Say \"exactly 2 characters\" in the javadoc and validate the length (and non-null) in `DefaultTokenContextEncoderProviderFactory.postInit`. A null shortcut currently throws an NPE from `ConcurrentHashMap.put` at startup with no useful message. A third-party `OAuth2GrantTypeFactory` compiled before this change has no `getShortcut()` at all, so it hits `AbstractMethodError` in `postInit`. A default method, or a clear error, would make that failure easier to understand.",
+    "path": "server-spi-private/src/main/java/org/keycloak/protocol/oidc/grants/OAuth2GrantTypeFactory.java",
+    "line": 30,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "testIncorrectGrantType passes on a NullPointerException, not the intended validation\n\nThe factory is built without `postInit`, so `sessionFactory` is null. For the unknown shortcut `ac`, `getGrantTypeByShortcut` falls into the refresh branch and calls `sessionFactory.getProviderFactoriesStream(...)` (DefaultTokenContextEncoderProviderFactory.java:125), which throws an NPE. Because the test catches the broad `RuntimeException`, it passes because of that NPE and never reaches the `IllegalArgumentException` at DefaultTokenContextEncoderProvider.java:93. Mock or stub the session factory and catch `IllegalArgumentException`.",
+    "path": "services/src/test/java/org/keycloak/protocol/oidc/encode/DefaultTokenContextEncoderProviderTest.java",
+    "line": 82,
+    "source": "wachiman-json"
+   }
+  ]
+ },
+ "https://github.com/keycloak/keycloak/pull/36880": {
+  "wachiman": [
+   {
+    "text": "canView() ignores the all-clients MANAGE permission, so global managers fail realm-level view checks\n\n`canManage()` (line 73) returns true for an all-clients MANAGE permission, but `canView()` only checks `canViewClientDefault()` and the VIEW scope. V1 (`ClientPermissions.java:287-289`) treats manage as implying view. Take an admin whose only grant is all-clients MANAGE: `requireView()` fails at `RealmAdminResource.java:1197` and `ClientInitialAccessResource.java:123`. `canViewClientScopes()`/`requireViewClientScopes()` is false (`RealmAdminResource.java:241`, `ClientScopesResource.java:93`), even though `canManageClientScopes()` is true. `RolePermissions.java:167` also relies on `canView()`. `canView(ClientScopeModel)` (line 121) already ORs VIEW with MANAGE. Do the same here: `|| hasPermission(MANAGE)`.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 87,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "getClientsWithPermission searches by a type the per-client resources never get\n\n`AdminPermissionsSchema.getOrCreateResource` creates the per-client resource without calling `setType` (`AdminPermissionsSchema.java:103-111`). Only the resource-type resource gets a type (`AdminPermissionsSchema.java:250`). So `findByType(server, \"Clients\")` can only match the `Clients` type resource. A per-client grant is never returned, and an all-clients grant returns the literal name `\"Clients\"` instead of client IDs. V1 avoids this by setting the type to `\"Client\"` when it creates each resource (`ClientPermissions.java:132`). Any caller that narrows results by this set silently gets the wrong answer. Either set the type on per-client resources, or look them up some other way.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 138,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "In V2, deleting a client leaves its permission resource behind\n\nWith V2 on, the new guard skips the listener entirely, and `ClientPermissionsV2.setPermissionsEnabled` throws anyway (line 193). Nothing removes the resource named after the deleted client's UUID, or the scope permissions that reference it, from the admin-permissions resource server. Those orphaned permissions stay listed and keep being evaluated. Consider a V2-specific cleanup on `ClientRemovedEvent`.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions.java",
+    "line": 77,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Dead code and unused imports\n\nNothing uses the private `getEvaluationContext` (line 262), the `logger` field (line 51), or the imports `Scope` and `TOKEN_EXCHANGE` / `ClientModelIdentity` (only the dead method uses the last one). Remove them.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java",
+    "line": 262,
+    "source": "wachiman-json"
+   },
+   {
+    "text": "Javadoc on void require* methods says \"Returns true\"\n\n`requireView()` (line 95-98) and `requireViewClientScopes()` (line 100-103) return void and throw ForbiddenException. Their Javadoc says \"Returns {@code true} if ...\". Reword it to match the other require* docs. The `canView()` Javadoc should also mention MANAGE once that check is added.",
+    "path": "services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java",
+    "line": 95,
+    "source": "wachiman-json"
+   }
+  ]
+ }
+}

@@ -1,0 +1,104 @@
+{
+  "pr": "cal.com-10967",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "updateLocation persists calendar references without the external calendar ID or credential ID because updateEvent omits both fields.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/CalendarManager.ts:313-322 returns updatedEvent but neither externalId nor credentialId; packages/core/EventManager.ts:201-209 consequently produces references missing both, and packages/trpc/server/routers/viewer/bookings/editLocation.handler.ts:113-121 appends them. However, EventManager.ts:204 also reads createdEvent rather than updatedEvent, so these calendar rows already have an empty uid, and the original usable references are retained. The metadata regression is real, but the claimed loss of the existing calendar event is not established by this path: the correctly identified original reference is still processed during cancellation (packages/features/bookings/lib/handleCancelBooking.ts:418-470).",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "A destination without credentialId loses its external calendar ID and Google creates the event in primary instead of the selected calendar.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/prisma/schema.prisma:150-160 permits a destination with externalId=\"secondary-calendar\" and credentialId=null. With a matching Google credential, packages/core/EventManager.ts:375-380 calls createEvent without externalId, while packages/core/CalendarManager.ts:236 passes the numeric credential ID to Google. No destination matches that ID at packages/app-store/googlecalendar/lib/CalendarService.ts:147-154, so insertion targets primary; CalendarManager.ts:267 and EventManager.ts:169 also leave the reference externalCalendarId unset. The supplied diff shows that the previous implementation selected and recorded the destination externalId directly.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Secondary collective destinations on Office365, Lark and CalDAV are created using the first destination instead of their own.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/bookings/lib/handleNewBooking.ts:990-993,1063-1078 builds an array containing the organizer and collective members' destinations. For destinations A and B with distinct credential IDs and calendar URLs, packages/core/EventManager.ts:339-370 calls createEvent with B's credential, but packages/core/CalendarManager.ts:235-236 forwards the entire event and credential ID without selecting B's destination. Office365 reads A at packages/app-store/office365calendar/lib/CalendarService.ts:73-79, Lark does likewise at packages/app-store/larkcalendar/lib/CalendarService.ts:128-134, and CalDAV filters B's calendars against A's URL at packages/lib/CalendarService.ts:156-175. With disjoint CalDAV calendars the filter is empty, no event is created, yet that service returns an event ID at lines 185-187 and CalendarManager.ts:267-268 records B's calendar/credential.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "Google cancellation with an absent externalCalendarId ignores the selected destination and deletes from primary.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a legacy Google booking reference with uid=\"event-1\", externalCalendarId=null and a secondary destination calendar, packages/features/bookings/lib/handleCancelBooking.ts:423-424,470 or 473-480 forwards the null ID alongside the destination carried in evt (lines 251-258). packages/app-store/googlecalendar/lib/CalendarService.ts:315-322 compares a required string destination externalId against null, finds nothing, and targets primary instead of the secondary calendar. A not-found response is treated as success at lines 327-335, leaving the secondary event untouched. The supplied diff confirms the previous fallback used the destination directly.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "Google rescheduling with an absent externalCalendarId supplies no calendarId to the update request.",
+      "verdict": "real-defect",
+      "duplicate_of": 5,
+      "would_fix": "yes",
+      "evidence": "For a legacy Google reference whose externalCalendarId is null and whose destination externalId is \"secondary-calendar\", packages/core/EventManager.ts:495-509,542-548 passes null into updateEvent. packages/core/CalendarManager.ts:287-290 forwards it to Google, where packages/app-store/googlecalendar/lib/CalendarService.ts:254-262 cannot match the destination against null and constructs events.update with calendarId=undefined. This cannot identify the existing secondary-calendar event; failures are caught and converted to an unsuccessful update at CalendarManager.ts:295-304. Finding 5 explicitly also reports this update lookup, so these share the broken empty-ID fallback.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "Google creation falls back to primary for insert but omits that fallback when patching the description with the Meet link.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "Use a Google destination with credentialId=null, a valid Google credential and a Google Meet location: packages/core/EventManager.ts:118-119 permits that Google destination and lines 375-380 invoke creation with the matching integration credential. packages/app-store/googlecalendar/lib/CalendarService.ts:147-154 cannot match the null destination credential ID to that numeric credential and inserts into primary. If the insertion returns id and hangoutLink, lines 165-175 then issue the description patch with calendarId=undefined rather than primary, so the newly created event is not updated with the link in its description. This is a separate insert/patch inconsistency from finding 3's wrong-destination and reference metadata loss.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "Collective members' destination calendars are discarded when neither the organizer nor event type has a destination.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a collective event with no organizer/event-type destination and a second host with a destination, packages/features/bookings/lib/handleNewBooking.ts:990-993 collects the second host's calendar. Lines 1063-1067 nevertheless initialize evt.destinationCalendar to null, and the optional push at lines 1077-1078 does nothing. This leaves no member destinations for EventManager.ts:338-384, but the supplied diff confirms the base also only used eventType.destinationCalendar or organizerUser.destinationCalendar; this is an incomplete extension of existing behavior rather than a regression.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "Changing destinationCalendar from an object to an array changes the public booking webhook payload and breaks singular-field consumers.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "An ordinary booking with a destination now places [destination] into evt at packages/features/bookings/lib/handleNewBooking.ts:1063-1066, spreads it into webhookData at lines 2296-2297 and sends it at line 2329 (the cited 1754-1755 path also does this for seats). packages/features/bookings/lib/handleWebhookTrigger.ts:15-16 forwards the data unchanged, and packages/features/webhooks/lib/sendPayload.ts:121-126 serializes the array directly. A supported payload template such as {\"calendar\":\"{{destinationCalendar.externalId}}\"} previously resolves the destination ID but now resolves no such property, because sendPayload.ts:79-84 passes the array directly to Handlebars. The altered e2e expectation at apps/web/playwright/webhook.e2e.ts:249 corroborates the changed wire shape; no external production consumer is needed to construct this compatibility failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 10,
+      "claim": "The new per-reference cancellation loop can repeat legacy and recurring deletion work.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/features/bookings/lib/handleCancelBooking.ts:423-424 destructures a different uid for each reference, so lines 473-480 do not inherently delete the same event repeatedly: distinct legacy references need distinct deletions, and each is tried against all credentials because its credential is unknown. The recurring branch does repeat work: for multiple credential-bearing references, lines 449-457 scan the same credentials and select the same first reference of each updated booking on every outer iteration. The supplied diff introduces the outer loop around that existing branch, so redundant calls are supported, but the comment's blanket legacy-branch diagnosis and proposed hoist would skip distinct legacy event IDs.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "loadUsers converts an empty dynamic user list into HTTP 500 and exposes raw known Prisma error messages as HTTP 400.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/prisma/zod-utils.ts:220 permits an empty user array, and packages/features/bookings/lib/handleNewBooking.ts:647-651 supports a dynamic request without eventTypeId. After that request reaches loadUsers, lines 726-728 throw a plain Error for user=[], which the catch at lines 757-761 converts to HTTP 500 instead of a validation response. Lines 758-759 also explicitly forward known Prisma error messages as HTTP 400, although no concrete sensitive database message or normal successful booking failure is demonstrated. This changes error reporting for invalid input and database failures, not the successful booking path.",
+      "confidence": "high"
+    },
+    {
+      "id": 12,
+      "claim": "The PR adds no unit tests for its multi-destination create, update and provider routing changes.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff changes packages/core/EventManager.ts createAllCalendarEvents and updateAllCalendarEvents, CalendarManager.ts, and the Google, Office365 and Lark services, while its only changed test file is apps/web/playwright/webhook.e2e.ts:249. packages/core/CalendarManager.test.ts:3-5,6-41 tests credential filtering rather than destination routing, and searches of checkout test/spec files found no coverage invoking the new EventManager paths. This is a test coverage concern; missing tests alone do not demonstrate a runtime defect.",
+      "confidence": "high"
+    }
+  ]
+}

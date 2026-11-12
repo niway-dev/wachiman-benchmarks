@@ -49,9 +49,24 @@ Opus 5.5, high).
 | # | Arm | Variable | Built from | Question it answers | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Haiku 5.5 high alone | the review model | the product as released: `run-weekly.sh <label> claude-haiku-5-5 high` | How much recall and cost does a cheaper model give on public PRs? | done 2026-11-07: [report](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md) |
-| 2 | Opus 5.5 + a findings falsifier on `fix` and `consider` | a verification pass | a prototype outside the product, over this bench's candidates | Does trying to disprove each finding cut false positives without losing real bugs? | to design |
-| 3 | Haiku 5.5 high + the same falsifier | the proposer model, falsifier fixed | arms 1 and 2 | Is cheap proposer plus verifier as good as Opus, for less? | after 1 and 2 |
+| 2 | Opus 5.5 + a findings falsifier on `fix` and `consider` | a verification pass | a prototype outside the product, over this bench's candidates | Does trying to disprove each finding cut false positives without losing real bugs? | superseded: v1.10.0 ships a verifier; measure it with Opus as reviewer before designing another |
+| 3 | Haiku 5.5 high + the same falsifier | the proposer model, falsifier fixed | arms 1 and 2 | Is cheap proposer plus verifier as good as Opus, for less? | **done 2026-11-10 as v1.10.0's default, a clear failure**: [report](runs/2026-11-10-v1.10.0-haiku-5-5-high-opus-verifier/README.md). The verifier dropped 14 of 415 findings; precision stayed at 26%, cost rose to $0.55/PR, above Opus alone |
 | 4 | Feature-guarantee falsifier | a review mode for critical features | a design to come | Does stating a documented guarantee and trying to break it find bugs others miss? | measured on kaipu-record, not here: these PRs carry no written guarantees |
+
+### Next arms, agreed 2026-11-11 after the v1.10.0 failure
+
+The reviewer stays Opus 5.5 high: every good number so far is at high, and recall is the
+strength to protect. Its 174 false positives are the verifier's job. One variable per arm:
+
+| # | Reviewer | Verifier | Needs first |
+| --- | --- | --- | --- |
+| 5 | Opus 5.5 high | Haiku 5.5 high | the verifier may drop a finding it finds no supporting evidence for, not only one it disproves |
+| 6 | Opus 5.5 high | Sonnet 5.5 medium | the same rule, and a configurable verifier effort (today it is always `high`) |
+| 7 | Opus 5.5 medium | the better of 5 and 6 | nothing: measures what medium saves and what recall it costs |
+
+Arms 5 and 6 can reuse the baseline's saved Opus findings instead of reviewing again, so they
+compare verifiers without a second generation. The deciding numbers: real bugs dropped by
+mistake, false positives removed, verifier cost and time.
 
 Decision rules for every arm, fixed before it runs:
 

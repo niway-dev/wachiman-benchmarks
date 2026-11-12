@@ -1,0 +1,194 @@
+{
+ "pr": "sentry-greptile-5-flat",
+ "checkout": "/tmp/audit-wt/sentry-greptile-5-flat",
+ "audit_ids": [
+  1,
+  2,
+  3,
+  5,
+  7,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py",
+   "line": 118,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "zip(error_ids, events.values()) pairs ids with the wrong events",
+   "body": "`nodestore.backend.get_multi` returns a dict containing only the nodes it found. Its order is uncached items first, then cached ones (`items.update(cache_items)`, src/sentry/nodestore/base.py:203-205). It also dedups the input ids. So `events.values()` is neither aligned with `error_ids` nor the same length. When any error event is missing or cached, `zip(error_ids, events.values())` gives the wrong `id` to each event. That is silent. Iterate the dict by key instead, for example `for node_id, data in events.items()`, and keep a node_id\u2192event_id map built from `error_ids`."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py",
+   "line": 100,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Error logs are re-emitted on every page of segments",
+   "body": "`on_results=functools.partial(analyze_recording_segments, error_events)` runs once per paginated page of segments, and each run calls a separate Seer request. `gen_request_data` yields all error events that fall before an event's timestamp, and the trailing loop at line 165 yields every error not yet emitted. For a replay spanning more than one page, each page's request therefore contains every error after that page's last event, so those errors are repeated across pages. The errors also appear on pages whose segments they do not belong to. Please confirm that the page size makes this impossible. If it does not, filter errors by the page's timestamp range."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py",
+   "line": 70,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "Snuba replay query runs even when error context is disabled",
+   "body": "`query_replay_instance` and `process_raw_response` run unconditionally, and `enable_error_context=false` is only checked afterwards (line 87-92). Callers that opt out still pay for a ClickHouse query. That query is also a new failure point, with no try/except, for an endpoint that previously only read segment storage. Move the query inside the `else` branch and wrap it so a Snuba failure degrades to no error context, as `fetch_error_details` does."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/issues/endpoints/browser_reporting_collector.py",
+   "line": 40,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "ChoiceField rejects the whole batch for any report type outside the 8 listed",
+   "body": "The old `BrowserReportType` Literal was never enforced at runtime, so any `type` string was accepted and counted in the metric. Now one report with another type (for example `network-error`, `integrity-violation` or a vendor-specific type) makes the whole POST return 422 (line 115-118). The other valid reports in the same batch are also dropped, including their `raw_report_received` metric. The collector's purpose is to gather these reports, so please either accept any string for `type` or skip invalid items instead of failing the batch."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/issues/endpoints/browser_reporting_collector.py",
+   "line": 50,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "age/timestamp mutual-exclusion validators are incomplete and truthiness-based",
+   "body": "Both fields are `required=False` and the validators only run when their own field is present. A report with neither `age` nor `timestamp` therefore passes, although the docstring of `validate_age` says \"age is present\". The checks `self.initial_data.get(\"age\")` and `.get(\"timestamp\")` are truthiness checks. `age: 0` is valid in the spec, and `age=0` together with `timestamp` passes. Use `\"age\" in self.initial_data`, and add a `validate()` that requires exactly one of the two."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/integrations/source_code_management/commit_context.py",
+   "line": 584,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "get_environment_info issues one or two Snuba queries per issue, serially",
+   "body": "`issue.get_recommended_event()` runs a Snuba query and, if that finds nothing, `get_latest_event` runs another (src/sentry/models/group.py:870-890). `get_environment()` can add a DB lookup. `get_environment_info` is called inside the list comprehension in both the GitHub and GitLab `build_comment` (github/integration.py:409, gitlab/integration.py:257). The cost is serial latency per issue in the PR-comment task. The broad `except Exception` swallows failures, and it is logged at info with the exception object in `extra`. Consider fetching environments in one query, or at least using `logger.warning` with `exc_info`."
+  },
+  {
+   "id": 6,
+   "path": "static/app/views/dashboards/widgetCard/chart.tsx",
+   "line": 164,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Flagged branch renders an always-empty table, and the flag is not registered",
+   "body": "When `use-table-widget-visualization` is on, `TableWidgetVisualization` is rendered with `columns={[]}` and empty `data`. It ignores `tableResults`, `loading`, the title and `getCustomFieldRenderer`, so enabling the flag shows a blank table. The flag string is not registered in any Python feature file (a repo-wide grep finds only this use), so the branch is currently dead. If the intent is a scaffold, add a comment or TODO. Otherwise pass `result.data` and `result.meta` mapped to columns."
+  },
+  {
+   "id": 7,
+   "path": "src/sentry/migrations/0917_convert_org_saved_searches_to_views.py",
+   "line": 14,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "\"never run\" comment may be untrue where the migration already ran",
+   "body": "The comment says \"This migration had an error and was never run\". These are post-deployment migrations, and nothing here shows that no environment (self-hosted, for example) applied 0917 or 0920 with the old body. The no-op is still harmless because 0921 uses a filter-and-create approach that does not depend on earlier rows. Consider rewording the comment to \"superseded by 0921\" so it stays accurate. The same applies to 0920 line 13."
+  },
+  {
+   "id": 8,
+   "path": "src/sentry/preprod/api/endpoints/organization_preprod_artifact_assemble.py",
+   "line": 81,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Analytics event is recorded before the feature-flag check",
+   "body": "`analytics.record` runs before the `organizations:preprod-artifact-assemble` check, so organizations without the feature that hit the endpoint are also counted. Is that intended? If you only want usage by enabled orgs, record after the check. `request.user.id` is None for anonymous or token-only auth, which is fine because `user_id` is `required=False`."
+  },
+  {
+   "id": 9,
+   "path": "static/app/views/performance/newTraceDetails/traceDrawer/details/span/eapSections/attributes.tsx",
+   "line": 61,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "HIDDEN_ATTRIBUTES only hides attributes while a search query is typed",
+   "body": "The early `return sorted` at line 61-63 runs when the search box is empty, which is the default state. The `!HIDDEN_ATTRIBUTES.includes(attribute.name)` check sits only in the filter below that return (lines 65-69). So `is_segment`, `project_id` and `received` show in the span attributes list on first render and disappear once the user types something. They also show again when the box is cleared. Apply the hidden-attribute filter before the search early-return, for example `sorted = sortAttributes(attributes).filter(a => !HIDDEN_ATTRIBUTES.includes(a.name))`."
+  },
+  {
+   "id": 10,
+   "path": "static/app/views/performance/newTraceDetails/traceTabsAndVitals.tsx",
+   "line": 93,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Flex replacement drops align-items and gap from the old FlexBox/Container",
+   "body": "The removed `FlexBox` set `display:flex; align-items:center; gap:space(1)`, and `Container` extended it with `justify-content: space-between`. The loaded state at line 93 is now `<Flex ref={setRef} justify=\"space-between\">`. That loses `align=\"center\"` and the gap, so the tab list and the vitals are no longer vertically centred against each other. In `Placeholder`, the second group `<Flex>` (line 27) also loses `align=\"center\"` and `gap={space(1)}`, so the three 100px placeholders sit flush. Pass `align=\"center\"` (and `gap={space(1)}` where it applied) to match the old layout."
+  },
+  {
+   "id": 11,
+   "path": "static/app/views/explore/hooks/useTraceItemAttributeKeys.tsx",
+   "line": 50,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Rewritten query drops retry/staleTime options, switches isLoading to isFetching, and the key has no org slug",
+   "body": "Three behaviour changes in the move from `useApiQuery` to `useQuery`:\n1. `retry: false`, `staleTime: 0` and `refetchOnWindowFocus: false` are gone. The client config at `static/app/utils/queryClient.tsx:19-26` only disables refetch on reconnect and on focus. React Query's default retry therefore applies, so a failed `/trace-items/attributes/` request keeps `isFetching` true through the retry backoff before `error` is set.\n2. `isLoading` is now `isFetching`. Any background refetch flips `numberAttributesLoading`/`stringAttributesLoading` in `TraceItemAttributeProvider` (`static/app/views/explore/contexts/traceItemAttributeContext.tsx:43-57`) to true. Before, only the initial load did.\n3. The key `['use-trace-item-attribute-keys', queryOptions]` has no organization slug. The slug is only read inside `queryFn` (`useGetTraceItemAttributeKeys.tsx:78`). Two orgs with identical project ids, datetime and item type share a cache entry, and the other org's attributes show while the refetch runs.\nAdd `retry: false` and `staleTime: 0` to keep the old behaviour, and include `organization.slug` in the key."
+  },
+  {
+   "id": 12,
+   "path": "static/app/views/dashboards/widgets/tableWidget/defaultTableCellRenderers.tsx",
+   "line": 71,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Truthiness check on custom cell contradicts the documented 'undefined falls back' contract",
+   "body": "The story (tableWidgetVisualization.stories.tsx:113) and the prop JSDoc say the default renderer runs when the custom renderer returns `undefined`. Lines 32 and 71 use `if (cell)`, so a custom renderer that returns `0`, `''` or `false` is also overridden by the default renderer. A count cell of `0` rendered by a custom function silently falls back. Use `cell !== undefined`. Related: the `!tableData?.meta` branch at line 76 is unreachable because `meta` is required on `TabularData`."
+  },
+  {
+   "id": 13,
+   "path": "static/app/views/settings/organizationIntegrations/detailedView/integrationLayout.tsx",
+   "line": 247,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Flex.Item grow={1} is not equivalent to the removed `flex: 1`",
+   "body": "The removed FlexContainer used `flex: 1`, which is `1 1 0%`. `Flex.Item grow={1}` renders `flex-grow: 1; flex-shrink: 1; flex-basis: auto` (static/app/components/core/layout/flex.tsx:35-46). With a basis of auto, a long description or feature list starts from its max-content width, and the sibling `Metadata` block (which defaults to flex-shrink 1, integrationLayout.tsx:362-370) is shrunk in proportion to it. With `flex: 1` the description only took the space left over after Metadata was sized. This can change the layout of the integration detail header. `Flex.Item` accepts a `flex` prop, so `<Flex.Item flex=\"1\">` keeps the old behavior."
+  },
+  {
+   "id": 14,
+   "path": "tests/sentry/integrations/github/tasks/test_pr_comment.py",
+   "line": 338,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "Environment assertions depend on Snuba data, but TestGetCommentBody is not a SnubaTestCase",
+   "body": "`get_comment_body` now calls `get_environment_info`, which calls `issue.get_recommended_event()`. That queries Snuba (src/sentry/models/group.py:274-290). Any failure is swallowed and returns an empty string (commit_context.py:584-597). `test_simple` now expects ` in `dev`` and ` in `prod`` in the output. `TestGetCommentBody` derives from `GithubCommentTestCase(IntegrationTestCase)` with no `SnubaTestCase`. Only `SnubaTestCase.store_event` patches `sentry.eventstream.insert` to write to Snuba (src/sentry/testutils/cases.py:1058-1067); the plain `Fixtures.store_event` just calls `Factories.store_event` (src/sentry/testutils/fixtures.py:303). If the events are not in Snuba, the environment suffix is empty and the assertion fails. In this file `TestTop5IssuesByCount` already mixes in `SnubaTestCase` for this reason. The GitLab `TestGetCommentBody` has the same problem (tests/sentry/integrations/gitlab/tasks/test_pr_comment.py:299). Fix: derive both classes from `SnubaTestCase` as well."
+  },
+  {
+   "id": 15,
+   "path": "tests/sentry/api/endpoints/test_browser_reporting_collector.py",
+   "line": 66,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "Tests no longer exercise the application/reports+json parser",
+   "body": "The old success tests posted with `content_type=\"application/reports+json\"`, which is what browsers actually send. The rewritten `test_basic` and `test_handles_multiple_reports_both_specs` use the default JSON format, so the `BrowserReportsJSONParser` added in the endpoint (browser_reporting_collector.py:63-69) is never covered. Removing it would not fail any test. The non-list body branch (422 with no body, endpoint line 99-104) is also untested. Keep one success test with `content_type=\"application/reports+json\"` and add a case that posts a dict."
+  },
+  {
+   "id": 16,
+   "path": "tests/sentry/replays/tasks/test_delete_replays_bulk.py",
+   "line": 97,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "Null max_segment_id change does not test the None handling",
+   "body": "The row with `max_segment_id: None` goes through a test where `delete_matched_rows` is mocked. `_make_recording_filenames`, which has the `None` early return (src/sentry/replays/usecases/delete.py:89-90), is never called. The change only updates the input type and verifies nothing. Add a test of `delete_matched_rows` or `_make_recording_filenames` with a `None` row."
+  },
+  {
+   "id": 17,
+   "path": "tests/sentry/replays/test_project_replay_summarize_breadcrumbs.py",
+   "line": 40,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "store_replays duplicates ReplaysSnubaTestCase.store_replays and skips its table reset",
+   "body": "The new `store_replays` helper is a copy of `ReplaysSnubaTestCase.store_replays` (src/sentry/testutils/cases.py:2268). That base class also drops the replays table in `setUp` (cases.py:2266), and this test class does not. Replay rows therefore persist across runs, which is harmless only because `replay_id` is a fresh uuid per test. `ReplaysSnubaTestCase` extends `TestCase`, not `TransactionTestCase`, so it may not be a drop-in mixin here. If that is why the helper was copied, a short comment saying so would help. Otherwise, add the table drop to `setUp`."
+  },
+  {
+   "id": 18,
+   "path": "tests/sentry/replays/test_project_replay_summarize_breadcrumbs.py",
+   "line": 209,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "Error-context assertions only check the title, not the message part of the log line",
+   "body": "`fetch_error_details` builds the log line as `'{title}: {message}'`, taking `message` from `data.get(\"message\", \"\")` in nodestore. The event stored here is an exception event. Its nodestore title is probably `ZeroDivisionError: division by zero`, so both `any(... in log)` checks at lines 209-210 can pass even if `message` is empty. Meanwhile the unit test at line 308 uses a title that does not contain the message, so the two tests model different data. Asserting the full formatted line, or at least its prefix `User experienced an error: '`, would pin the behaviour."
+  }
+ ]
+}

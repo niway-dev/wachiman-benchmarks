@@ -1,0 +1,56 @@
+{
+ "pr": "cal.com-8087",
+ "checkout": "/tmp/audit-wt/cal.com-8087",
+ "audit_ids": [
+  2,
+  3,
+  4
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/app-store/index.ts",
+   "line": 3,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Object-literal import() calls start loading every app at module evaluation, so nothing is lazy",
+   "body": "Each property is `import(\"./x\")` evaluated when the object literal is built. The first import of `@calcom/app-store` (getCalendar, videoClient, handlePayment, deletePayment, handleCancelBooking, bookings.tsx) therefore starts loading all ~30 app modules at once. That is the same set the old static imports loaded. If the aim of 'async import of the appStore' is to load only the app a credential needs, this does not do it. Wrap each entry in a thunk (`() => import(\"./x\")`) and have callers call it, or use a small `getApp(name)` helper.\n\nThe eager promises also have a failure mode. If one app module throws while it loads (a missing env var read at top level, for example), its promise rejects. Nothing awaits it unless a credential of that type is used, so Node reports an unhandled rejection. On Node 15+ that terminates the process by default. Before this change the same error surfaced as a normal import error at module load. A thunk avoids this, because the import only runs inside the caller's try/await."
+  },
+  {
+   "id": 1,
+   "path": "packages/app-store/vital/lib/reschedule.ts",
+   "line": 125,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "async forEach callback escapes the surrounding try/catch",
+   "body": "The `forEach` callback is now `async` and is not awaited. Any rejection from `getCalendar` or `deleteEvent`, or from `deleteMeeting` for video references, becomes an unhandled promise rejection. The `try/catch` with `logger.error` around it no longer catches anything. Previously `getCalendar` ran synchronously inside the `try`, so its errors were logged.\n\nThe calendar delete also now starts a few microtasks later, and the handler goes on to send emails and return without waiting for it. Collect the promises and await them with `Promise.allSettled` (or use `for...of`) inside the try. The same pattern is in `packages/app-store/wipemycalother/lib/reschedule.ts:125` and `packages/trpc/server/routers/viewer/bookings.tsx:553`. The latter has no try/catch, so a rejection is simply unhandled."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/wipemycalother/lib/reschedule.ts",
+   "line": 125,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "async forEach callback escapes try/catch (same as vital)",
+   "body": "Same issue as `packages/app-store/vital/lib/reschedule.ts:125`. The async, unawaited callback means errors from `getCalendar`, `deleteEvent` or `deleteMeeting` bypass the `catch` at line 135 and become unhandled rejections. Await the deletions with `Promise.allSettled` inside the try."
+  },
+  {
+   "id": 3,
+   "path": "packages/trpc/server/routers/viewer/bookings.tsx",
+   "line": 553,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Unawaited async forEach in requestReschedule: calendar/video deletion failures are silent",
+   "body": "The callback is now `async` and its promises are dropped. A failure to load the calendar app or to delete the event or meeting is an unhandled rejection, and the mutation still returns success. Before this change `getCalendar` failures at least threw inside the mutation. Await the deletions, for example with `await Promise.allSettled(bookingRefsFiltered.map(...))`, before sending the emails."
+  },
+  {
+   "id": 4,
+   "path": "packages/core/CalendarManager.ts",
+   "line": 28,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "getCalendarCredentials now silently returns a Promise in `calendar`",
+   "body": "`getCalendar` is async, so the `calendar` field in the returned items is now a `Promise<Calendar | null>` that is not awaited here. The only consumer that reads it is `getConnectedCalendars` (line 48), which awaits it inside its try. The other callers of `getCalendarCredentials` (`packages/trpc/server/routers/viewer.tsx:340,415` and `apps/web/pages/api/availability/calendar.ts:83`) only pass the result on to `getConnectedCalendars`. Any new reader of `.calendar` would get a Promise and call `.listCalendars` on it. If `getCalendarCredentials` is called and the result is never passed to `getConnectedCalendars`, a rejected `getCalendar` promise is never handled. Consider making `getCalendarCredentials` async and awaiting `getCalendar`, or dropping the `calendar` field and calling `getCalendar` inside `getConnectedCalendars`."
+  }
+ ]
+}

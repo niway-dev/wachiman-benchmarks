@@ -1,0 +1,145 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80168-flat` of sentry-80168-flat against bdd229e3f22e307fe40b30ef99e92ff3f6723da4 (merge-base bdd229e)",
+    "repository": {
+      "name": "sentry-80168-flat"
+    },
+    "base": {
+      "sha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4",
+      "ref": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+    },
+    "head": {
+      "sha": "781605afac1aa48e829bb514faf813eed48a37e4",
+      "ref": "pr-80168-flat"
+    },
+    "title": "pr-80168-flat",
+    "description": "feat(workflow_engine): Add in hook for producing occurrences from the stateful detector",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "reviewed": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/incidents/grouptype.py",
+      "line": 11,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "MetricAlertDetectorHandler is now abstract and cannot be instantiated",
+      "body": "`StatefulDetectorHandler` (src/sentry/workflow_engine/processors/detector.py:135-170) declares four abstract members: `counter_names`, `get_dedupe_value`, `get_group_key_values` and the new `build_occurrence_and_event_data`. The class body here is just `pass`, so none are implemented. `MetricAlertFire.detector_handler` (line 27) points at this class, and `Detector.detector_handler` (src/sentry/workflow_engine/models/detector.py:86) calls `group_type.detector_handler(self)`. For a detector of type `metric_alert_fire` that call now raises `TypeError: Can't instantiate abstract class`, so `process_detectors` raises as well. Before this change the handler's `evaluate` returned `[]`. Either implement the four members (stubs that return empty values would do) or keep the previous no-op `DetectorHandler` until the stateful version is built. The `# TODO: This will be a stateful detector...` comment on line 10 is also stale now.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 489,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Expected occurrence is built with a different value than the one evaluated",
+      "body": "In `test_results_on_change` the packet value is 100 but the expected occurrence is built with value 6. In `test_dedupe` the packet value is 8 and the expectation uses 6. `test_state_results_multi_group` evaluates group_2 with 10 and builds its expectation with 6. The tests pass only because `MockDetectorStateHandler.build_occurrence_and_event_data` ignores `value`. If the mock ever uses `value`, these tests fail for no real reason. They also do not check that `value` is forwarded to `build_occurrence_and_event_data`. Use the real value in the expectations, or have the mock put `value` into `evidence_data` so the tests check it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 206,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "Duplicate group-key handling is no longer tested and has no replacement",
+      "body": "`process_detectors` used to log an error for duplicate group keys, and the test for that was deleted. Results are now a dict, so duplicates cannot reach it. A handler that returns two results for one key would simply overwrite one, but `StatefulDetectorHandler.evaluate` builds the dict from `group_values.items()`, which has unique keys, so this is safe there. Custom `DetectorHandler.evaluate` implementations are now bound by the dict return type. Nothing here needs fixing, but the removed error log is a silent behaviour change.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Detector.detector_handler instantiates MetricAlertDetectorHandler, which is now a StatefulDetectorHandler subclass",
+      "location": "src/sentry/incidents/grouptype.py:11",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/incidents/grouptype.py:11-12",
+        "src/sentry/incidents/grouptype.py:27",
+        "src/sentry/workflow_engine/processors/detector.py:142-170",
+        "src/sentry/workflow_engine/models/detector.py:86"
+      ],
+      "equivalent_path": "Previous version of the same class: a plain DetectorHandler whose evaluate returned []. The test-only MockDetectorStateHandler implements all abstract members.",
+      "before_after": "Before: instantiation succeeded and evaluate returned []. After: the class has no implementations of the abstract members (counter_names, get_dedupe_value, get_group_key_values, build_occurrence_and_event_data), so instantiation raises TypeError.",
+      "visible_effect": "process_detectors raises for any detector of type metric_alert_fire instead of returning no results.",
+      "failure_mode": "TypeError at instantiation, raised through process_detectors. It propagates to whatever calls it and is not caught.",
+      "evidence_checked": true
+    },
+    {
+      "action": "process_detectors consumes handler.evaluate as a dict and produces occurrences or status changes through create_issue_occurrence_from_result",
+      "location": "src/sentry/workflow_engine/processors/detector.py:58-65",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/processors/detector.py:58-65",
+        "src/sentry/workflow_engine/processors/detector.py:237-244",
+        "src/sentry/workflow_engine/processors/detector.py:298-301"
+      ],
+      "equivalent_path": "Previous list-based loop with duplicate-key detection",
+      "before_after": "Before: iterated a list and skipped results whose group_key had already been seen. After: iterates dict values. StatefulDetectorHandler.evaluate keys results by group_key, so duplicates cannot occur. The only callers of evaluate in src are this one, and no other src code consumes the old list shape.",
+      "visible_effect": "Non-OK transitions now emit an IssueOccurrence to Kafka via build_occurrence_and_event_data. Previously only resolve messages were emitted.",
+      "failure_mode": "Not applicable",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The main problem is in `src/sentry/incidents/grouptype.py`. `MetricAlertDetectorHandler` now subclasses `StatefulDetectorHandler` but implements none of its four abstract members. Instantiating it raises `TypeError`, where before it returned `[]`. The rest of the change (dict-keyed results, `build_occurrence_and_event_data`, `Detector.group_type`) looks consistent. The test mock ignores `value`, so several tests build their expected occurrence with a different value than the one they evaluate. I read the files and did not run anything.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 400,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.1893855
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1893855,
+    "usage": {
+      "input": 8,
+      "output": 4097,
+      "cacheRead": 97035,
+      "cacheWrite": 34674
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 37779,
+    "stop": "complete",
+    "notices": []
+  }
+}

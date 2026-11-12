@@ -6,7 +6,8 @@ them High or Critical. One run is one row in [history.md](history.md); every run
 
 | Page | What it holds |
 | --- | --- |
-| [history.md](history.md) | One row per run: quality, product cost, cost per bug. Start here |
+| [models.md](models.md) | Which model and effort to use: Opus, Sonnet and Haiku side by side, what the judge's false positives are, how to tell serious from minor. Start here |
+| [history.md](history.md) | One row per run: quality, product cost, cost per bug |
 | [reference/](reference/README.md) | The yardstick: the judge route, its calibration, and competitors re-judged through it |
 | [runs/](runs/) | One directory per run: report, metrics, every review, every judgment |
 | [PLAN.md](PLAN.md) | The plan and its rules (blind first run, held-out tuning) |

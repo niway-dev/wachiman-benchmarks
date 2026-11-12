@@ -1,0 +1,661 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-40940-flat` of keycloak-40940-flat against 7fd37690c44c7068cb19ecee3aa6ff99c46a821d (merge-base 7fd3769)",
+    "repository": {
+      "name": "keycloak-40940-flat"
+    },
+    "base": {
+      "sha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d",
+      "ref": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+    },
+    "head": {
+      "sha": "58db8ffad86bb46e3b996d5667d66897ba735757",
+      "ref": "pr-40940-flat"
+    },
+    "title": "pr-40940-flat",
+    "description": "Fix concurrent group access to prevent NullPointerException",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "reviewed": [
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/entities/CachedGroup.java",
+      "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "line": 268,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Same deleted-group NPE remains in the getSubGroupsStream overloads",
+      "body": "The PR guards only getSubGroupsCount() (GroupAdapter.java:272-276). The three getSubGroupsStream overloads in the same class still dereference the unguarded supplier: `modelSupplier.get().getSubGroupsStream(...)` at lines 256, 262 and 268. When the row is gone, LazyModel.get() returns null (getGroupModel() at line 299 reads the DB), so these throw NullPointerException, the same failure the PR title names. The path is reachable: GroupResource.getSubGroups calls `group.getSubGroupsStream(search, exact, -1, -1)` (services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java:180) on a group that GroupsResource.getGroupById resolves through the cache (GroupsResource.java:139-140 -> RealmAdapter.java:1529-1530 -> RealmCacheSession.java:964-985). A concurrent delete between lookup and the subgroup query therefore still gives a server error on GET /groups/{id}/subGroups. Suggested fix for this failure: apply the same null check to the three overloads and return an empty stream when the delegate is gone.",
+      "origin": "pre-existing",
+      "originReason": "The base already has the same unguarded modelSupplier.get().getSubGroupsStream calls; the diff does not touch them.",
+      "originEvidence": [
+        {
+          "snapshot": "base",
+          "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+          "line": 256
+        },
+        {
+          "snapshot": "base",
+          "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+          "line": 262
+        },
+        {
+          "snapshot": "base",
+          "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+          "line": 268
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "The three getSubGroupsStream overloads still call modelSupplier.get().getSubGroupsStream(...). LazyModel.get() returns whatever getGroupModel() returns, which is null once the row is deleted. GroupResource.getSubGroups (the /children endpoint, not /subGroups) reaches line 268, so a concurrent delete still causes an NPE. The base has the same unguarded calls; this PR only leaves them unfixed.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 256
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 262
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 268
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 299
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/LazyModel.java",
+            "line": 15
+          },
+          {
+            "snapshot": "head",
+            "path": "services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java",
+            "line": 180
+          }
+        ]
+      },
+      "tier": "Pre-existing",
+      "anchor": "outside"
+    },
+    {
+      "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+      "line": 275,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "getSubGroupsCount returns null, contrary to the GroupModel contract, and the same deleted group gets different outcomes",
+      "body": "GroupModel.getSubGroupsCount is documented as `@return The number of groups beneath this group. Never returns {@code null}.` (server-spi/src/main/java/org/keycloak/models/GroupModel.java:294-296). The new `return model == null ? null : ...` breaks that. GroupUtils.populateSubGroupCount (services/src/main/java/org/keycloak/utils/GroupUtils.java:89-92) stores the null, and the Long field is then omitted from JSON because JsonSerialization uses NON_NULL (core/src/main/java/org/keycloak/util/JsonSerialization.java:48), so the client sees no subGroupCount and no error. The same deleted group also behaves differently depending on invalidation: if invalidated, isUpdated() throws IllegalStateException('Not found in database') (GroupAdapter.java:70-76) before the new guard runs. The author should pick one behaviour (for example an explicit not-found error, or a documented nullable contract with updated javadoc) and apply it to all the deleted-group paths in this class.",
+      "origin": "introduced",
+      "originReason": "The null return comes from the line this diff adds; the base dereferenced the model and threw instead.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+          "line": 275
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "The GroupModel javadoc says getSubGroupsCount never returns null, but the new line 275 returns null when the delegate is gone. populateSubGroupCount stores that null in the Long field, and JsonSerialization's NON_NULL setting drops it from the JSON. A group that was invalidated instead throws IllegalStateException from isUpdated(), so the same deleted group gets different outcomes.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 275
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 74
+          },
+          {
+            "snapshot": "head",
+            "path": "server-spi/src/main/java/org/keycloak/models/GroupModel.java",
+            "line": 296
+          },
+          {
+            "snapshot": "head",
+            "path": "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+            "line": 90
+          },
+          {
+            "snapshot": "head",
+            "path": "core/src/main/java/org/keycloak/util/JsonSerialization.java",
+            "line": 48
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+      "line": 157,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Reader thread is never joined, so the assertion can pass while reads are still failing",
+      "body": "The reader thread (lines 139-149) keeps issuing list requests until `deletedAll` is set at line 155. Nothing waits for it. The assertion at line 157 can run while the thread is still inside an HTTP call that will fail; that exception is added to `caughtExceptions` after the check and is never seen, so the test passes despite a failure. Also, if the delete at lines 152-154 throws, line 155 is skipped and the non-daemon reader thread loops forever, sending requests to the server. Fix: wrap the delete loop in try/finally that sets `deletedAll`, join the reader thread before asserting, and then check `caughtExceptions`.",
+      "origin": "introduced",
+      "originReason": "The whole test method is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+          "line": 139
+        }
+      ],
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "The reader thread is started and never joined. Line 157 asserts right after deletedAll is set, so an exception the thread hits during its last in-flight request is added after the check. If a remove() throws, line 155 is skipped and the non-daemon thread keeps looping.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 139
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 149
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 155
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 157
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+      "line": 118,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The test depends on a timing race and cannot show that the fix works",
+      "body": "The NPE path needs a cache GroupAdapter whose DB row is deleted after the listing obtained it. The listing reaches it through JpaRealmProvider.java:774-777 (realm::getGroupById, which then goes through the cache), and the window exists between the cache hit and the DB delete. The test runs 100 deletes against one reader loop and asserts only that no exception occurred, so it may pass on the unpatched code if the window is not hit. This could not be checked here because the repository was only read. A deterministic reproduction would be better, for example a runOnServer step that resolves the cache adapter, deletes the row in a second session, and then calls getSubGroupsCount.",
+      "origin": "introduced",
+      "originReason": "The test is added by this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+          "line": 119
+        }
+      ],
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "The test can only catch the bug if a list request happens to fall between the cache lookup and a concurrent DB delete. It does nothing to force that window and only asserts that no exception occurred, so it can pass on unpatched code.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 143
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 152
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 157
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+      "line": 121,
+      "severity": "info",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Typo in variable name, trailing whitespace, and a non-descriptive test name",
+      "body": "`groupUuuids` (lines 121, 129, 152) should be `groupUuids`. Line 117 has trailing whitespace. The name `createMultiDeleteMultiReadMulti` does not say what is asserted (reads succeed while groups are being deleted); a name such as `readsDuringConcurrentDeleteDoNotFail` would show the intent.",
+      "origin": "introduced",
+      "originReason": "These lines are added by the diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+          "line": 121
+        }
+      ],
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The variable is spelled `groupUuuids` at lines 121, 129 and 152, and line 117 is a whitespace-only blank line added by the diff. This is purely cosmetic.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 117
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 121
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 152
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+      "line": 100,
+      "severity": "info",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Unrelated dead-code removal in a concurrency fix",
+      "body": "The private `groupMatchesSearchOrIsPathElement` helper is removed. The file has no other reference to it, so the removal is safe. It is unrelated to the PR title, so it could go in a separate cleanup commit.",
+      "origin": "unknown",
+      "verification": {
+        "status": "unverified",
+        "reason": "",
+        "checked": []
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GroupAdapter.getSubGroupsCount() delegate lookup now guarded: returns null instead of NPE when the DB row is gone",
+      "location": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:272-276",
+      "status": "open",
+      "evidence": [
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:272-276",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:298-300",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:70-76",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/LazyModel.java:15-20",
+        "server-spi/src/main/java/org/keycloak/models/GroupModel.java:294-298",
+        "services/src/main/java/org/keycloak/utils/GroupUtils.java:89-92",
+        "core/src/main/java/org/keycloak/util/JsonSerialization.java:48"
+      ],
+      "equivalent_path": "model/jpa/src/main/java/org/keycloak/models/jpa/GroupAdapter.java:190-205 (count query, never null)",
+      "before_after": "Before: modelSupplier.get() returns null, so `.getSubGroupsCount()` throws NPE. After: returns null when modelSupplier.get() is null, otherwise the delegate's count.",
+      "visible_effect": "subGroupCount is null for that group in GroupUtils.populateSubGroupCount (GroupUtils.java:89-92). With the NON_NULL mapper (JsonSerialization.java:48) the key is omitted from the JSON.",
+      "failure_mode": "Null violates the GroupModel contract (GroupModel.java:294-296). The three getSubGroupsStream overloads (GroupAdapter.java:254-269) still NPE on the same state. When invalidated, isUpdated() throws IllegalStateException (GroupAdapter.java:70-76).",
+      "open_question": "Confirm the admin REST response provider serializes GroupRepresentation with JsonSerialization's mapper, so that a null subGroupCount is omitted rather than sent as null.",
+      "candidates": [
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java",
+        "core/src/main/java/org/keycloak/util/JsonSerialization.java"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "GET /groups/{id}/subGroups calls the 4-arg getSubGroupsStream on the cache GroupAdapter",
+      "location": "services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java:180",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java:180",
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupsResource.java:139-140",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmAdapter.java:1529-1530",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmCacheSession.java:964-985",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:266-268",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:298-300"
+      ],
+      "equivalent_path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java:266-268 (same unguarded modelSupplier.get() dereference, not changed by the PR)",
+      "before_after": "Before and after: the group is resolved from the cache, then modelSupplier.get().getSubGroupsStream(...) dereferences the delegate with no null check. The PR's null check exists only in getSubGroupsCount.",
+      "visible_effect": "If the group is deleted between lookup and query, the request fails with a server error instead of an empty list.",
+      "failure_mode": "NullPointerException, unhandled. The PR title says this class of NPE is fixed, but this path is not.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Groups listing (GET /groups with default briefRepresentation/subGroupsCount) reaches the cache GroupAdapter's getSubGroupsCount for each top-level group",
+      "location": "services/src/main/java/org/keycloak/services/resources/admin/GroupsResource.java:109-113",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/services/resources/admin/GroupsResource.java:109-113",
+        "services/src/main/java/org/keycloak/utils/GroupUtils.java:40-41",
+        "model/jpa/src/main/java/org/keycloak/models/jpa/JpaRealmProvider.java:774-777",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmAdapter.java:1529-1530",
+        "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/RealmCacheSession.java:964-985"
+      ],
+      "equivalent_path": "Top-level IDs come from JpaRealmProvider.java:774-777 and are mapped with realm::getGroupById, which goes through the cache (RealmAdapter.java:1529-1530). A group removed between the query and the lookup is filtered out there (line 777), but a cache hit can still return an adapter whose row is then deleted.",
+      "before_after": "Before: the count call NPEs for that adapter. After: it returns null and the group is listed without subGroupCount.",
+      "visible_effect": "The group is listed and its subGroupCount is missing (GroupUtils.java:40-41, 89-92).",
+      "failure_mode": "Silent missing count for a group deleted mid-request, not an error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Test reader thread that calls groups(null, 0, MAX, true) in a loop while groups are deleted",
+      "location": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:136-157",
+      "status": "closed",
+      "evidence": [
+        "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:136-157"
+      ],
+      "equivalent_path": "none (test-only code)",
+      "before_after": "Not applicable: the thread is started and never joined, and the deleter sets the stop flag with no try/finally.",
+      "visible_effect": "None on product behaviour. The test's pass/fail result is unreliable.",
+      "failure_mode": "Exceptions from the last in-flight request are recorded after the assertion has run and are never checked. If the delete loop throws, the flag is never set and the thread runs forever.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR guards the cache GroupAdapter's getSubGroupsCount against a group deleted concurrently, and removes an unused private helper in GroupUtils. The guard is correct for the count path, but the same race still throws NPE in the three getSubGroupsStream overloads, which the subgroups endpoint reaches. The new count returns null, which breaks the GroupModel \"never null\" contract. The added test has a reader thread that is never joined, so the assertion can pass while reads are still failing, and it is a timing-dependent test that cannot show that the fix works. Nothing was built or run; all findings come from reading the code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 62,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 32,
+      "costUsd": 0.045852729999999994
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7fd37690c44c7068cb19ecee3aa6ff99c46a821d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.28358133,
+    "usage": {
+      "input": 34,
+      "output": 44551,
+      "cacheRead": 820376,
+      "cacheWrite": 108436
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 32,
+    "durationMs": 245381,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.2377286,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+        "line": 268,
+        "title": "Same deleted-group NPE remains in the getSubGroupsStream overloads",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "pre-existing",
+        "originReason": "The base already has the same unguarded modelSupplier.get().getSubGroupsStream calls; the diff does not touch them.",
+        "originEvidence": [
+          {
+            "snapshot": "base",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 256
+          },
+          {
+            "snapshot": "base",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 262
+          },
+          {
+            "snapshot": "base",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 268
+          }
+        ],
+        "reason": "The three getSubGroupsStream overloads still call modelSupplier.get().getSubGroupsStream(...). LazyModel.get() returns whatever getGroupModel() returns, which is null once the row is deleted. GroupResource.getSubGroups (the /children endpoint, not /subGroups) reaches line 268, so a concurrent delete still causes an NPE. The base has the same unguarded calls; this PR only leaves them unfixed.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 256
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 262
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 268
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 299
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/LazyModel.java",
+            "line": 15
+          },
+          {
+            "snapshot": "head",
+            "path": "services/src/main/java/org/keycloak/services/resources/admin/GroupResource.java",
+            "line": 180
+          }
+        ],
+        "outcome": "moved",
+        "severityAfter": "consider"
+      },
+      {
+        "id": "c2",
+        "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+        "line": 275,
+        "title": "getSubGroupsCount returns null, contrary to the GroupModel contract, and the same deleted group gets different outcomes",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The null return comes from the line this diff adds; the base dereferenced the model and threw instead.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 275
+          }
+        ],
+        "reason": "The GroupModel javadoc says getSubGroupsCount never returns null, but the new line 275 returns null when the delegate is gone. populateSubGroupCount stores that null in the Long field, and JsonSerialization's NON_NULL setting drops it from the JSON. A group that was invalidated instead throws IllegalStateException from isUpdated(), so the same deleted group gets different outcomes.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 275
+          },
+          {
+            "snapshot": "head",
+            "path": "model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/GroupAdapter.java",
+            "line": 74
+          },
+          {
+            "snapshot": "head",
+            "path": "server-spi/src/main/java/org/keycloak/models/GroupModel.java",
+            "line": 296
+          },
+          {
+            "snapshot": "head",
+            "path": "services/src/main/java/org/keycloak/utils/GroupUtils.java",
+            "line": 90
+          },
+          {
+            "snapshot": "head",
+            "path": "core/src/main/java/org/keycloak/util/JsonSerialization.java",
+            "line": 48
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+        "line": 157,
+        "title": "Reader thread is never joined, so the assertion can pass while reads are still failing",
+        "topic": "tests",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The whole test method is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 139
+          }
+        ],
+        "reason": "The reader thread is started and never joined. Line 157 asserts right after deletedAll is set, so an exception the thread hits during its last in-flight request is added after the check. If a remove() throws, line 155 is skipped and the non-daemon thread keeps looping.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 139
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 149
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 155
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 157
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+        "line": 118,
+        "title": "The test depends on a timing race and cannot show that the fix works",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The test is added by this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 119
+          }
+        ],
+        "reason": "The test can only catch the bug if a list request happens to fall between the cache lookup and a concurrent DB delete. It does nothing to force that window and only asserts that no exception occurred, so it can pass on unpatched code.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 143
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 152
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 157
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+        "line": 121,
+        "title": "Typo in variable name, trailing whitespace, and a non-descriptive test name",
+        "topic": "cleanup",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "These lines are added by the diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 121
+          }
+        ],
+        "reason": "The variable is spelled `groupUuuids` at lines 121, 129 and 152, and line 117 is a whitespace-only blank line added by the diff. This is purely cosmetic.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 117
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 121
+          },
+          {
+            "snapshot": "head",
+            "path": "tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java",
+            "line": 152
+          }
+        ],
+        "outcome": "moved",
+        "severityAfter": "info"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

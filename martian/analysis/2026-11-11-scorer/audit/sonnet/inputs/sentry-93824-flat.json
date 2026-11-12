@@ -1,0 +1,75 @@
+{
+ "pr": "sentry-93824-flat",
+ "checkout": "/tmp/audit-wt/sentry-93824-flat",
+ "audit_ids": [
+  2,
+  3,
+  4,
+  6
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 254,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Hung flusher process is no longer killed: isinstance(process, multiprocessing.Process) is False for spawn processes",
+   "body": "`self.mp_context` is `multiprocessing.get_context(\"spawn\")` (line 53), so `make_process` at line 105 is `SpawnProcess`. In CPython `SpawnProcess` subclasses `process.BaseProcess`, not `multiprocessing.context.Process`, which is what `multiprocessing.Process` names. I could not read the stdlib source from the repo checkout, so this comes from my knowledge of CPython. If that is right, `isinstance(process, multiprocessing.Process)` is always False for the real (non-test) flusher. The old `_ensure_process_alive` called `self.process.kill()` unconditionally and caught `ValueError`. Now, on the `hang` cause, the code skips the kill, starts a replacement for the same shards at line 259, and leaves the hung process running. The old and new processes can then both flush the same shard queues and produce duplicate segments. The same check at line 346 in `join()` means `terminate()` is never called either. In `join()` the `break` at line 341 also skips terminate for every remaining process. The fix is to test against the real base class, e.g. `isinstance(process, multiprocessing.process.BaseProcess)` or `not isinstance(process, threading.Thread)`. Since the PR adds a CLAUDE.md rule about `isinstance`, the check should be correct. The tests only use threads, so nothing exercises the spawn path."
+  },
+  {
+   "id": 1,
+   "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+   "line": 62,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "time.sleep(0.1) in test_basic is a no-op because the test patches time.sleep",
+   "body": "Line 15 does `monkeypatch.setattr(\"time.sleep\", lambda _: None)`. That replaces the attribute on the `time` module, so the `time.sleep(0.1)` added here, called as `time.sleep` after `import time`, does nothing. The comment 'Give flusher threads time to process' is false. The extra `step.poll()` does not wait for the flusher threads either. `step.join()` sets `stopped` right away. If the flusher thread has not completed a flush cycle by then, `(msg,) = messages` fails, so the test is still racy. Use the real sleep (e.g. `from time import sleep` before the patch, as test_flusher.py does), or better, poll until `messages` is non-empty with a bounded deadline."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 93,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Per-process SpansBuffer changes what spans.buffer.max-flush-segments bounds",
+   "body": "`flush_segments` computes `max_segments_per_shard = ceil(max_flush_segments / len(self.assigned_shards))` (buffer.py:382-384). Each flusher process now gets a `SpansBuffer(shards)` containing only its own shards. With one shard per process, each process may flush the full `max-flush-segments` (default 500) per cycle. The consumer-wide total grows to roughly `num_processes \u00d7 max-flush-segments`, and `any_shard_at_limit` triggers later. Is this intended? If not, scale the option by the number of processes."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 301,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "get_memory_info is cluster-wide, so it is now repeated once per flusher buffer on every submit",
+   "body": "`SpansBuffer.get_memory_info` returns `iter_cluster_memory_usage(self.client)` (buffer.py:375-376). It does not depend on `assigned_shards`. Looping over `self.buffers.values()` therefore queries the whole Redis cluster N times per `submit` and sums N identical copies. The used/available ratio is unchanged, but the cost is multiplied by the number of flusher processes. Call it once, on any one buffer. `submit` runs on the consumer's hot path whenever `max-memory-percentage < 1.0`."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 32,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "Docstring says one process per shard, but the count is capped by max_processes",
+   "body": "The class docstring says 'Creates one process per shard'. The code creates `min(max_processes, len(assigned_shards))` processes. The new CLI option defaults to 1 (consumers/__init__.py:434), so production runs a single process for all shards unless `--flusher-processes` is set. The factory default `None` means one process per shard, which differs from the CLI default. Reword the docstring and make the two defaults consistent or document the difference."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/spans/consumers/process/flusher.py",
+   "line": 199,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Inconsistent metric tag name and dead code in flusher",
+   "body": "`wait_produce` is tagged `\"shards\"`, while the other new metrics use `\"shard\"` (lines 185, 195, 244). Dashboards grouped on one name will miss the other. `_create_process_for_shard` (line 127) is unused. `if not process: continue` at line 222 is unreachable because values are always set to a started process. The comment at line 178 ('for all shards') and the one at line 235 ('any shard') describe per-shard behaviour the code does not have, because health is tracked per process."
+  },
+  {
+   "id": 6,
+   "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+   "line": 123,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "test_flusher_processes_limit only checks counts and does not cover the new restart or process paths",
+   "body": "The test checks `len(flusher.processes)` and the sum of shard counts. It does not check the actual distribution (4 shards over 2 processes should give 2 shards each). It does not flush anything, does not exercise `_ensure_processes_alive` restarts, and does not cover the CLI option wiring. The restart path with per-process `process_restarts` and the spawn `Process` branch are untested, which is how the isinstance issue at flusher.py:254 went unnoticed."
+  }
+ ]
+}

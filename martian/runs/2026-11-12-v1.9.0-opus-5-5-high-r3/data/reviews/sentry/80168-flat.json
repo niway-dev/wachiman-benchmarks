@@ -1,0 +1,160 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80168-flat` of sentry-80168-flat against bdd229e3f22e307fe40b30ef99e92ff3f6723da4 (merge-base bdd229e)",
+    "repository": {
+      "name": "sentry-80168-flat"
+    },
+    "base": {
+      "sha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4",
+      "ref": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+    },
+    "head": {
+      "sha": "781605afac1aa48e829bb514faf813eed48a37e4",
+      "ref": "pr-80168-flat"
+    },
+    "title": "pr-80168-flat",
+    "description": "feat(workflow_engine): Add in hook for producing occurrences from the stateful detector",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "reviewed": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/incidents/grouptype.py",
+      "line": 11,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "MetricAlertDetectorHandler is now abstract and can't be instantiated",
+      "body": "`MetricAlertDetectorHandler` now subclasses `StatefulDetectorHandler` and its body is just `pass`. That leaves four abstract members unimplemented: `counter_names`, `get_dedupe_value`, `get_group_key_values` (processors/detector.py:142-164) and the new `build_occurrence_and_event_data` (processors/detector.py:166-170). `MetricAlertFire.detector_handler` points at this class (grouptype.py:27), and `Detector.detector_handler` instantiates it with `group_type.detector_handler(self)` (models/detector.py:86). So for any Detector with `type=\"metric_alert_fire\"`, reading `detector.detector_handler` now raises `TypeError: Can't instantiate abstract class`. Before this change the handler returned `[]` from `evaluate`. Nothing in `src/` calls `process_detectors` today, so this doesn't break anything yet. It will break `process_detectors` as soon as a metric-alert detector reaches it. Either keep stub implementations for now (`counter_names = []`, and the getters returning 0 and `{}`, plus a `build_occurrence_and_event_data` that raises `NotImplementedError`), or don't register the handler on `MetricAlertFire` until it exists. The TODO on line 10 (\"will be a stateful detector when we build that abstraction\") is also out of date now.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 252,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Occurrence assertions only compare a hard-coded id, so fingerprint, priority and type go unchecked",
+      "body": "`IssueOccurrence.__eq__` compares only `id` (src/sentry/issues/issue_occurrence.py:181-184). `build_mock_occurrence_and_event` always uses `id=\"eb4b0acffadb4d098d48cb14165ab578\"`, so every occurrence assertion in this file passes no matter which fingerprint, `initial_issue_priority` or type the handler produced. Concrete cases that pass by accident:\n- `TestEvaluateGroupKeyValue.test_dedupe` (lines 536-545) builds the expected occurrence for group key `\"val1\"` while the code under test evaluates `\"group_key\"`. The fingerprints differ (`<id>:val1` vs `<id>:group_key`) and the test still passes.\n- `test_state_results_multi_group` (lines 179-222): `occurrence` and `occurrence_2` compare equal to each other. `assert_has_calls(..., any_order=True)` would therefore pass even if both produced calls were for `group_1`.\n\nThe main new behaviour, passing `PriorityLevel(new_status)` through to the occurrence, is never verified. Fix: compare `occurrence.to_dict()` (or the individual fields) in the assertions, or derive the mock id from the group key so occurrences for different keys don't compare equal. Then correct the `\"val1\"` argument in the `test_dedupe` case.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/workflow_engine/processors/detector.py",
+      "line": 230,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "evaluate docstring still says it returns a list",
+      "body": "`evaluate` now returns `dict[DetectorGroupKey, DetectorEvaluationResult]`, but the docstring still says it \"returns a list of `DetectorEvaluationResult`\". Update it to describe the dict keyed by group key.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "MetricAlertDetectorHandler switched from DetectorHandler (with an evaluate that returned []) to an empty subclass of StatefulDetectorHandler",
+      "location": "src/sentry/incidents/grouptype.py:11",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/incidents/grouptype.py:11-12",
+        "src/sentry/incidents/grouptype.py:27",
+        "src/sentry/workflow_engine/models/detector.py:86",
+        "src/sentry/workflow_engine/processors/detector.py:142-170",
+        "src/sentry/workflow_engine/processors/detector.py:53",
+        "tests/sentry/workflow_engine/processors/test_detector.py:27-39"
+      ],
+      "equivalent_path": "Detector.detector_handler instantiates group_type.detector_handler(self); the test MockDetectorStateHandler is a StatefulDetectorHandler that implements every abstract member",
+      "before_after": "Before: instantiating worked and evaluate returned []. After: the class has abstract members left, so instantiating it raises TypeError.",
+      "visible_effect": "No production caller of process_detectors or detector_handler exists in src/ today, so no effect yet. A future caller will get a TypeError for metric_alert_fire detectors.",
+      "failure_mode": "TypeError raised from the Detector.detector_handler property, uncaught in process_detectors",
+      "evidence_checked": true
+    },
+    {
+      "action": "evaluate_group_key_value calls the new abstract hook build_occurrence_and_event_data for non-OK status changes, and the result is produced to Kafka",
+      "location": "src/sentry/workflow_engine/processors/detector.py:298-301",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/processors/detector.py:58-68",
+        "src/sentry/workflow_engine/processors/detector.py:73-87",
+        "src/sentry/workflow_engine/types.py:8-12"
+      ],
+      "equivalent_path": "The OK branch builds a StatusChangeMessage with the fingerprint and project_id; create_issue_occurrence_from_result sends IssueOccurrence results as PayloadType.OCCURRENCE together with event_data",
+      "before_after": "Before: non-OK changes returned result=None and nothing was produced. After: the hook's occurrence and event_data are produced via produce_occurrence_to_kafka.",
+      "visible_effect": "Issues get created on the issue platform for detectors that fire",
+      "failure_mode": "An exception in the hook propagates out of process_detectors before commit_state_updates runs, so state is not committed and the packet will be reprocessed",
+      "evidence_checked": true
+    },
+    {
+      "action": "New Detector.group_type property, which wraps registry.get_by_slug",
+      "location": "src/sentry/workflow_engine/models/detector.py:58-60",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/models/detector.py:62-86"
+      ],
+      "equivalent_path": "detector_handler previously called grouptype.registry.get_by_slug inline",
+      "before_after": "Same lookup, now behind a property; detector_handler uses it",
+      "visible_effect": "None",
+      "failure_mode": "Returns None for an unknown slug; detector_handler logs an error and returns None as before",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a `build_occurrence_and_event_data` hook so the stateful detector can produce occurrences, and changes `evaluate` to return a dict keyed by group key. There are three findings: two at \"fix\" and one at \"consider\". First, `MetricAlertDetectorHandler` is now an empty subclass of an abstract class, so building a handler for a `metric_alert_fire` detector raises TypeError; nothing in `src/` calls it yet. Second, the new tests compare occurrences only by a hard-coded id, so fingerprint, priority and type are never checked, and at least one test passes with a mismatched group key. Third, the `evaluate` docstring still says it returns a list.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 400,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.5011522
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5011522,
+    "usage": {
+      "input": 12,
+      "output": 6341,
+      "cacheRead": 187381,
+      "cacheWrite": 42101
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 70447,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,934 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-79265-flat` of grafana-79265-flat against 7ddcd0c9611882858701f4f876fb8e449fe73980 (merge-base 7ddcd0c)",
+    "repository": {
+      "name": "grafana-79265-flat"
+    },
+    "base": {
+      "sha": "7ddcd0c9611882858701f4f876fb8e449fe73980",
+      "ref": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+    },
+    "head": {
+      "sha": "1ac848883795d232d69850166dd2016fc9162aef",
+      "ref": "pr-79265-flat"
+    },
+    "title": "pr-79265-flat",
+    "description": "Anonymous: Add configurable device limit",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/setting/setting.go"
+    ],
+    "reviewed": [
+      "packages/grafana-data/src/types/config.ts",
+      "packages/grafana-runtime/src/config.ts",
+      "pkg/api/dtos/frontend_settings.go",
+      "pkg/api/frontendsettings.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "pkg/services/anonymous/anonimpl/api/api.go",
+      "pkg/services/anonymous/anonimpl/client.go",
+      "pkg/services/anonymous/anonimpl/impl_test.go",
+      "pkg/services/anonymous/anonimpl/impl.go",
+      "pkg/setting/setting.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 87,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Device rejected for the limit is cached as tagged and admitted on its next request",
+      "body": "tagDeviceUI marks the device in localCache before the write (impl.go:83-87). The write can now return ErrDeviceLimitReached, and TagDevice now returns that error (impl.go:144-148). client.go:44-46 turns it into an authentication failure, so the first request from a device over the limit is rejected. The device is not stored, but its cache key stays for the 29-minute expiry set at impl.go:42. The next request from the same device hits the cache at impl.go:83-85, returns nil, TagDevice returns nil, and Authenticate succeeds. The limit is therefore enforced on alternating requests, with no error or log. Fix: when CreateOrUpdateDevice fails in tagDeviceUI, delete the key before returning (localcache.CacheService embeds *gocache.Cache, pkg/infra/localcache/cache.go:10-12, so a.localCache.Delete(key) is available).",
+      "origin": "introduced",
+      "originReason": "Before this change a tagging error never affected authentication. Rejecting on the limit error, and passing that error back from TagDevice, are both new in this diff, and together they let a device be rejected once and then admitted from the cache.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/impl.go",
+          "line": 147
+        },
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/client.go",
+          "line": 46
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "tagDeviceUI puts the cache key in place (impl.go:87) before CreateOrUpdateDevice, and nothing removes it when that call fails. TagDevice now passes the error back (impl.go:147) and Authenticate rejects on ErrDeviceLimitReached (client.go:45-46). On the next request the cache hit at impl.go:83-85 returns nil, so the same device gets in for the next 29 minutes.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 83
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 87
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 93
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 147
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 42
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/client.go",
+      "line": 44,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Anonymous device tagging now runs synchronously on the request path",
+      "body": "Before this change the tagging ran in a detached goroutine with its own 2-minute timeout and panic recovery. Now every uncached anonymous request waits for TagDevice. With device_limit set, that means a CountDevices query plus an upsert (database.go:109-117). The context is now the request context, so if the client disconnects mid-write the write can be cancelled. That failure is logged as a warning (client.go:49), and the key is already in localCache (impl.go:87), so the device is not retried for 29 minutes. Consider keeping the write off the request path, or using a context detached from the request with its own timeout.",
+      "origin": "introduced",
+      "originReason": "The diff replaces the detached goroutine, which had its own timeout, with a synchronous call that uses the request context.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/client.go",
+          "line": 44
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "The diff removes the goroutine that had a context.Background()-based 2-minute timeout and panic recovery. TagDevice now runs inline with the request ctx (client.go:44). When the limit is on, that is a CountDevices query followed by an insert or update (database.go:110-116). Failures are only logged, while the key is already cached (impl.go:87).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 44
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 49
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 110
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 87
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+      "line": 110,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Device limit check is not atomic, and a failed count fails open",
+      "body": "CreateOrUpdateDevice counts devices (line 110) and then inserts (lines 120-153) with no transaction or lock. Concurrent requests from new devices can all see count < deviceLimit and all insert, so the cap can be exceeded by up to the request concurrency. Also, if CountDevices returns an error (lines 111-113), TagDevice returns it (impl.go:147), and Authenticate only logs a warning (client.go:45-49) and admits the request. The limit is silently not enforced whenever the count query fails. Whether fail-open is intended should be stated in a comment or code.",
+      "origin": "introduced",
+      "originReason": "The device limit check is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+          "line": 109
+        }
+      ],
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "CountDevices (database.go:110) and the upsert in a separate WithDbSession (database.go:149-153) are not in a transaction and take no lock, so requests running at the same time can all pass the count check. If the count fails, it returns a generic error, and Authenticate only logs it and admits the request (client.go:45-49).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 110
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 115
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 149
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 161
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 49
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+      "line": 51,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Device-limit test covers only rejection of a new device",
+      "body": "TestIntegrationBeyondDeviceLimit (lines 51-70) checks that a new device is rejected at the limit. Nothing covers the other half of the intended behaviour in database.go:115-117: an existing device that was seen inside the 30-day window is still updated when the limit is reached. The authentication path is also untested: that ErrDeviceLimitReached makes Anonymous.Authenticate fail (client.go:45-47), and that a rejected device is not admitted on its next request (see the impl.go:87 finding).",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "The only new test, TestIntegrationBeyondDeviceLimit, checks just that a second new device is rejected. No test updates an existing device once the limit is reached, and no test calls Authenticate with ErrDeviceLimitReached (a search finds the error only in database.go, client.go and this one test).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+            "line": 51
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 45
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/setting/setting.go",
+      "line": 1654,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "New device_limit setting is not documented in defaults.ini",
+      "body": "cfg.AnonymousDeviceLimit is read from [auth.anonymous] device_limit, but conf/defaults.ini:580-592 documents only enabled, org_name, org_role and hide_version. The new option has no comment explaining its meaning, its unit, that 0 means unlimited, or that it counts devices seen in the last 30 days. Add a commented entry to conf/defaults.ini (and conf/sample.ini if it lists the section's options).",
+      "origin": "introduced",
+      "originReason": "The device_limit setting is added in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/setting/setting.go",
+          "line": 1654
+        }
+      ],
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The [auth.anonymous] sections of conf/defaults.ini (581-592) and conf/sample.ini (570-581) list only enabled, org_name, org_role and hide_version. Neither has device_limit, but setting.go:1654 now reads it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "conf/defaults.ini",
+            "line": 581
+          },
+          {
+            "snapshot": "head",
+            "path": "conf/defaults.ini",
+            "line": 592
+          },
+          {
+            "snapshot": "head",
+            "path": "conf/sample.ini",
+            "line": 581
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/setting/setting.go",
+            "line": 1654
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/impl.go",
+      "line": 25,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "The 30-day device window is defined three times, and the store can no longer be injected",
+      "body": "thirtyDays is defined here (impl.go:25). The same window is defined again as anonymousDeviceExpiration in anonstore/database.go:16 and in api/api.go:18. The service now builds its own store (impl.go:43) instead of taking an AnonStore, so tests can no longer pass a fake store. impl_test.go:116-117 and 151-152 now pass a real DB. Use one constant, and consider keeping the store injectable.",
+      "origin": "introduced",
+      "originReason": "This diff adds the third constant and removes the AnonStore parameter from the service constructor.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+          "line": 16
+        },
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/impl.go",
+          "line": 43
+        }
+      ],
+      "verification": {
+        "candidateId": "c7",
+        "status": "supported",
+        "reason": "The 30-day window is now defined three times: impl.go:25, api/api.go:18 and, new here, anonstore/database.go:16. The service builds its own AnonDBStore at impl.go:43, so a store can no longer be injected. The tests already used a real DB before this change (base impl_test.go:115-116), so only the loss of injection is new.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/api/api.go",
+            "line": 18
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 16
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 43
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/services/anonymous/anonimpl/impl_test.go",
+            "line": 116
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/anonymous/anonimpl/client.go",
+      "line": 45,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Over-limit visitors get an unexplained unauthenticated response",
+      "body": "When the limit is hit, Authenticate returns ErrDeviceLimitReached (client.go:45-46). The context handler stores it as LookupTokenErr and continues unauthenticated (pkg/services/contexthandler/contexthandler.go:117-124). The auth middleware then returns a 401 with that error for API requests, or redirects browser requests to the login page (pkg/middleware/auth.go:37-48). No frontend code in this PR reads the new anonymousDeviceLimit setting, so a visitor who is refused sees the login page with no explanation. Decide whether this should be surfaced to the user.",
+      "origin": "introduced",
+      "originReason": "Rejecting anonymous auth when the limit is reached is new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "pkg/services/anonymous/anonimpl/client.go",
+          "line": 46
+        }
+      ],
+      "verification": {
+        "candidateId": "c8",
+        "status": "supported",
+        "reason": "The error is stored as LookupTokenErr (contexthandler.go:124). notAuthorized then returns a 401 for API requests or redirects to /login (auth.go:37-50). The frontend only declares anonymousDeviceLimit in config types (grafana-data config.ts:200, grafana-runtime config.ts:97), and nothing uses it to explain the refusal.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/contexthandler/contexthandler.go",
+            "line": 124
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/middleware/auth.go",
+            "line": 50
+          },
+          {
+            "snapshot": "head",
+            "path": "packages/grafana-runtime/src/config.ts",
+            "line": 97
+          },
+          {
+            "snapshot": "head",
+            "path": "packages/grafana-data/src/types/config.ts",
+            "line": 200
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 46
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/grafana-data/src/types/config.ts",
+      "line": 200,
+      "severity": "info",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "anonymousDeviceLimit is sent to the frontend but nothing in this PR reads it",
+      "body": "The field is added to GrafanaConfig here, to GrafanaBootConfig (packages/grafana-runtime/src/config.ts:97), and to the settings DTO (pkg/api/frontendsettings.go:198). A repository-wide search finds no other reader. It is plumbing with no consumer in this change; it is fine to keep it if a UI follows, otherwise it can be dropped.",
+      "origin": "unknown",
+      "verification": {
+        "status": "unverified",
+        "reason": "",
+        "checked": []
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous client tags the device synchronously and turns a device-limit error into an authentication failure",
+      "location": "pkg/services/anonymous/anonimpl/client.go:44",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/client.go:44-50",
+        "pkg/services/anonymous/anonimpl/impl.go:83-87",
+        "pkg/services/anonymous/anonimpl/impl.go:42",
+        "pkg/services/anonymous/anonimpl/impl.go:144-148",
+        "pkg/services/authn/authnimpl/service.go:197-221",
+        "pkg/services/contexthandler/contexthandler.go:116-124",
+        "pkg/middleware/auth.go:37-48"
+      ],
+      "equivalent_path": "pkg/services/anonymous/anonimpl/impl.go:118",
+      "before_after": "Before, the tagging ran in a detached goroutine with a background context and a 2-minute timeout, and its errors were only logged, so Authenticate always returned the anonymous identity. Now TagDevice runs inline with the request context. A device-limit error returns nil and the error (client.go:45-46). Other errors are logged and authentication continues (client.go:49).",
+      "visible_effect": "An anonymous visitor over the limit gets a 401 with the error on API calls, or a redirect to login on pages (pkg/middleware/auth.go:37-48).",
+      "failure_mode": "The device is cached before the write (impl.go:83-87), so after one rejection the same device is admitted on its next request for 29 minutes (impl.go:42). A request cancelled mid-write leaves the device untagged but cached.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Device-limit branch in CreateOrUpdateDevice: count, then update-only when at the cap",
+      "location": "pkg/services/anonymous/anonimpl/anonstore/database.go:108-118",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:72-118",
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:120-153",
+        "pkg/services/anonymous/anonimpl/client.go:44-50",
+        "pkg/services/anonymous/anonimpl/impl.go:144-148"
+      ],
+      "equivalent_path": "pkg/services/anonymous/anonimpl/anonstore/database.go:120-153",
+      "before_after": "The insert path (upsert, which also sets created_at) is the only write path before this change. At the cap, the new branch runs an UPDATE restricted to rows updated in the last 30 days (updateDevice, database.go:72-103). Rows affected of 0 is mapped to ErrDeviceLimitReached (database.go:95-97).",
+      "visible_effect": "At the cap, devices seen in the last 30 days keep working and new devices are refused.",
+      "failure_mode": "The count and insert are not atomic, so the cap can be overshot under concurrency. A count error is returned and admits the request (fail-open) via client.go:49.",
+      "evidence_checked": true
+    },
+    {
+      "action": "TagDevice now returns the tagDeviceUI error instead of nil",
+      "location": "pkg/services/anonymous/anonimpl/impl.go:144-148",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/impl.go:144-150",
+        "pkg/services/anonymous/anonimpl/client.go:44-50",
+        "pkg/services/anonymous/anonimpl/impl_test.go:120",
+        "pkg/services/anonymous/anonimpl/impl_test.go:172"
+      ],
+      "equivalent_path": "pkg/services/anonymous/anonimpl/impl.go:150",
+      "before_after": "Before, a tagging error was only logged and TagDevice returned nil. Now the error is returned. Callers are client.go:44 and the tests at impl_test.go:120 and 172.",
+      "visible_effect": "Only the anonymous client reacts to the error, and only for the limit case; other errors are logged there and do not block the login.",
+      "failure_mode": "Any caller that assumed nil would now see errors, but none does in this repository.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New device_limit setting is read into the server config",
+      "location": "pkg/setting/setting.go:1654",
+      "status": "closed",
+      "evidence": [
+        "pkg/setting/setting.go:1648-1654",
+        "pkg/services/anonymous/anonimpl/anonstore/database.go:109",
+        "pkg/setting/setting.go:686-701",
+        "conf/defaults.ini:580-592"
+      ],
+      "equivalent_path": "pkg/setting/setting.go:1650",
+      "before_after": "Before this change there was no device limit. The new key sits next to enabled and hide_version, and is read with MustInt64(0). Any value of 0 or below disables the limit, because the store checks deviceLimit > 0 (database.go:109).",
+      "visible_effect": "A negative or zero value silently means unlimited.",
+      "failure_mode": "A typo in the key name is silently ignored and the limit is off.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Device limit is exposed in the frontend settings DTO and the frontend config types",
+      "location": "pkg/api/frontendsettings.go:198",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/frontendsettings.go:197-198",
+        "pkg/api/dtos/frontend_settings.go:194-195",
+        "packages/grafana-data/src/types/config.ts:200",
+        "packages/grafana-runtime/src/config.ts:97"
+      ],
+      "equivalent_path": "pkg/api/frontendsettings.go:197",
+      "before_after": "The field is copied from the config next to anonymousEnabled. No frontend code reads it.",
+      "visible_effect": "None in this PR.",
+      "failure_mode": "None.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ProvideAnonymousDeviceService builds the store internally instead of receiving an AnonStore",
+      "location": "pkg/services/anonymous/anonimpl/impl.go:36-43",
+      "status": "open",
+      "evidence": [
+        "pkg/services/anonymous/anonimpl/impl.go:36-43",
+        "pkg/server/wire.go:374-375",
+        "pkg/server/wireexts_oss.go:55"
+      ],
+      "equivalent_path": "pkg/server/wireexts_oss.go:55",
+      "before_after": "Before, the constructor took an injected anonstore.AnonStore. Now it takes db.DB and builds anonstore.ProvideAnonDBStore(sqlStore, cfg.AnonymousDeviceLimit) itself (impl.go:43). The wire registration is unchanged.",
+      "visible_effect": "None, if the wire graph is regenerated.",
+      "failure_mode": "If pkg/server/wire_gen.go still passes an AnonStore, the package will not compile.",
+      "open_question": "Was pkg/server/wire_gen.go regenerated for the new signature? It is not in the reviewed set.",
+      "candidates": [
+        "pkg/server/wire_gen.go"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Part 1 of pr-79265-flat (device limit for anonymous auth) has one real bug, plus smaller issues. The main one: a device refused at the limit is cached as tagged in impl.go:87, so it is admitted on its next request for 29 minutes, silently halving enforcement. Also raised: the limit check is non-atomic and fails open on a count error (database.go:110); tagging moved onto the request path (client.go:44); the new device_limit key is undocumented in defaults.ini (setting.go:1654); the test covers only rejection (database_test.go:51); and wire_gen.go is not in the reviewed set, so regeneration for the new ProvideAnonymousDeviceService signature (impl.go:36) is unconfirmed. All 11 files were read in full, plus the authn, context-handler and middleware paths they call into.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 11,
+      "lines": 142,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 41,
+      "costUsd": 0.14789675000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "7ddcd0c9611882858701f4f876fb8e449fe73980"
+  },
+  "execution": {
+    "costUsdEstimate": 0.56662095,
+    "usage": {
+      "input": 48,
+      "output": 44369,
+      "cacheRead": 1277402,
+      "cacheWrite": 169238
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 41,
+    "durationMs": 272309,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.4187242,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "pkg/services/anonymous/anonimpl/impl.go",
+        "line": 87,
+        "title": "Device rejected for the limit is cached as tagged and admitted on its next request",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "Before this change a tagging error never affected authentication. Rejecting on the limit error, and passing that error back from TagDevice, are both new in this diff, and together they let a device be rejected once and then admitted from the cache.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 147
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 46
+          }
+        ],
+        "reason": "tagDeviceUI puts the cache key in place (impl.go:87) before CreateOrUpdateDevice, and nothing removes it when that call fails. TagDevice now passes the error back (impl.go:147) and Authenticate rejects on ErrDeviceLimitReached (client.go:45-46). On the next request the cache hit at impl.go:83-85 returns nil, so the same device gets in for the next 29 minutes.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 83
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 87
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 93
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 147
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 45
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 42
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "pkg/services/anonymous/anonimpl/client.go",
+        "line": 44,
+        "title": "Anonymous device tagging now runs synchronously on the request path",
+        "topic": "perf",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The diff replaces the detached goroutine, which had its own timeout, with a synchronous call that uses the request context.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 44
+          }
+        ],
+        "reason": "The diff removes the goroutine that had a context.Background()-based 2-minute timeout and panic recovery. TagDevice now runs inline with the request ctx (client.go:44). When the limit is on, that is a CountDevices query followed by an insert or update (database.go:110-116). Failures are only logged, while the key is already cached (impl.go:87).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 44
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 49
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 110
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 87
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+        "line": 110,
+        "title": "Device limit check is not atomic, and a failed count fails open",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The device limit check is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 109
+          }
+        ],
+        "reason": "CountDevices (database.go:110) and the upsert in a separate WithDbSession (database.go:149-153) are not in a transaction and take no lock, so requests running at the same time can all pass the count check. If the count fails, it returns a generic error, and Authenticate only logs it and admits the request (client.go:45-49).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 110
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 115
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 149
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 161
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 49
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+        "line": 51,
+        "title": "Device-limit test covers only rejection of a new device",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The only new test, TestIntegrationBeyondDeviceLimit, checks just that a second new device is rejected. No test updates an existing device once the limit is reached, and no test calls Authenticate with ErrDeviceLimitReached (a search finds the error only in database.go, client.go and this one test).",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+            "line": 51
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database_test.go",
+            "line": 69
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 45
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "pkg/setting/setting.go",
+        "line": 1654,
+        "title": "New device_limit setting is not documented in defaults.ini",
+        "topic": "docs",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The device_limit setting is added in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/setting/setting.go",
+            "line": 1654
+          }
+        ],
+        "reason": "The [auth.anonymous] sections of conf/defaults.ini (581-592) and conf/sample.ini (570-581) list only enabled, org_name, org_role and hide_version. Neither has device_limit, but setting.go:1654 now reads it.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "conf/defaults.ini",
+            "line": 581
+          },
+          {
+            "snapshot": "head",
+            "path": "conf/defaults.ini",
+            "line": 592
+          },
+          {
+            "snapshot": "head",
+            "path": "conf/sample.ini",
+            "line": 581
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/setting/setting.go",
+            "line": 1654
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c6",
+        "path": "pkg/services/anonymous/anonimpl/impl.go",
+        "line": 36,
+        "title": "Confirm wire regeneration after the ProvideAnonymousDeviceService signature change",
+        "topic": "question",
+        "severity": "fix",
+        "status": "refuted",
+        "origin": "unknown",
+        "reason": "wire_gen.go is not committed: .gitignore lists **/wire_gen.go, and it is generated at build time from wire.go. So no stale generated file can pass an AnonStore into the new signature. The ProvideAnonDBStore/AnonStore binding left in wire.go:374-375 is now unused, but that is cleanup, not a compile break.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": ".gitignore",
+            "line": 192
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/server/wire.go",
+            "line": 374
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/server/wireexts_oss.go",
+            "line": 55
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 43
+          }
+        ],
+        "disproof": {
+          "snapshot": "head",
+          "path": ".gitignore",
+          "line": 192
+        },
+        "outcome": "dropped"
+      },
+      {
+        "id": "c7",
+        "path": "pkg/services/anonymous/anonimpl/impl.go",
+        "line": 25,
+        "title": "The 30-day device window is defined three times, and the store can no longer be injected",
+        "topic": "cleanup",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "This diff adds the third constant and removes the AnonStore parameter from the service constructor.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 16
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 43
+          }
+        ],
+        "reason": "The 30-day window is now defined three times: impl.go:25, api/api.go:18 and, new here, anonstore/database.go:16. The service builds its own AnonDBStore at impl.go:43, so a store can no longer be injected. The tests already used a real DB before this change (base impl_test.go:115-116), so only the loss of injection is new.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 25
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/api/api.go",
+            "line": 18
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/anonstore/database.go",
+            "line": 16
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/impl.go",
+            "line": 43
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/services/anonymous/anonimpl/impl_test.go",
+            "line": 116
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c8",
+        "path": "pkg/services/anonymous/anonimpl/client.go",
+        "line": 45,
+        "title": "Over-limit visitors get an unexplained unauthenticated response",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "Rejecting anonymous auth when the limit is reached is new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 46
+          }
+        ],
+        "reason": "The error is stored as LookupTokenErr (contexthandler.go:124). notAuthorized then returns a 401 for API requests or redirects to /login (auth.go:37-50). The frontend only declares anonymousDeviceLimit in config types (grafana-data config.ts:200, grafana-runtime config.ts:97), and nothing uses it to explain the refusal.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/services/contexthandler/contexthandler.go",
+            "line": 124
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/middleware/auth.go",
+            "line": 50
+          },
+          {
+            "snapshot": "head",
+            "path": "packages/grafana-runtime/src/config.ts",
+            "line": 97
+          },
+          {
+            "snapshot": "head",
+            "path": "packages/grafana-data/src/types/config.ts",
+            "line": 200
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/services/anonymous/anonimpl/client.go",
+            "line": 46
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 1,
+    "inconclusive": 0
+  }
+}

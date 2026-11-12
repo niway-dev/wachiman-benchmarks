@@ -1,0 +1,140 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-14943` of cal.com-14943 against 917c7b0764f4c6bfdca95db2c5f73dbfdbe11757 (merge-base 917c7b0)",
+    "repository": {
+      "name": "cal.com-14943"
+    },
+    "base": {
+      "sha": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757",
+      "ref": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757"
+    },
+    "head": {
+      "sha": "c790227e0cda780e6fea9bb03af27948d9e286b9",
+      "ref": "pr-14943"
+    },
+    "title": "pr-14943",
+    "description": "feat: atoms team booking (#14525)\nfix: add prisma client generated types to atoms package (#14916)\nfeat: cal-3452 parameter for impersonation  (#14605)\nAsync scalars & less queries due to grouping (#14904)\nfeat: redirect after booking: option to forward parameters (#14235)\nchore: Release/v4.0.7 (#14933)\nfix: pass query params to dynamic meetings (#14920)\nfeat: Added admin-api page (#14890)\nfeat: handleCreateBooking for platform booker (#14939)\nfix: redis cache key overlap (#14938)\nfeat: Redirect when event type does not match booking type (#14460)\nchore: Update PR template to include more mandatory tasks (#14941)\nadd retry count to workflow reminder\nadd logic to for retry count\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder\nMerge branch 'main' into fix/add-retry-count-workflow-reminder",
+    "author": "Udit Takkar"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "packages/prisma/migrations/20240508134359_add_retry_count_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma"
+    ],
+    "reviewed": [
+      "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "packages/prisma/migrations/20240508134359_add_retry_count_to_workflow_reminder/migration.sql",
+      "packages/prisma/schema.prisma"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 190,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "An await in the catch block can throw and abort the whole cron batch",
+      "body": "Before this change the catch only logged, so one failing reminder never stopped the loop. Now it calls `await prisma.workflowReminder.update(...)` with no protection. If that update rejects, the error leaves the `for` loop and the handler, and every reminder after this one goes unscheduled for that run. It can reject because the row was deleted at the same time (booking cancelled or rescheduled → Prisma P2025), or because of a DB hiccup, which is often what made the attempt fail in the first place. The update in the `else` at line 179 sits inside the `try`, so it falls into this same catch and is a second chance to throw. Either wrap the increment in its own try/catch, or use `updateMany({ where: { id }, data: { retryCount: { increment: 1 } } })`: it does not throw when the row is gone, and the atomic increment also avoids writing back a stale `reminder.retryCount + 1`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 38,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "SMS reminders are silently deleted after two failed attempts, about 30 minutes apart",
+      "body": "The cron runs every 15 minutes (`.github/workflows/cron-scheduleSMSReminders.yml:8`). The count goes up on every thrown error (line 195) and every falsy `scheduleSMS` result (line 184). Once `retryCount > 1`, the next run's `deleteMany` removes the row. So two failures in a row delete the reminder for good, even when its send date is days away, with only a `console.log` left behind. Failures that clear on their own lead here too: a Twilio outage, the `checkSMSRateLimit` throw (twilioProvider.ts:97-102), or a team or user that is only briefly locked (`scheduleSMS` returns undefined at twilioProvider.ts:92-95). Before this change those reminders were retried on every run until `scheduledDate` passed. Now the attendee or organizer just never gets the reminder, and nothing shows it. Raise the threshold, or delete only when the reminder can no longer be scheduled (for example, `retryCount` over the limit and `scheduledDate` close). And log or record the drop where someone can see it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/ee/workflows/api/scheduleSMSReminders.ts",
+      "line": 39,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "The retryCount delete branch has no method filter",
+      "body": "The second `OR` branch deletes every `WorkflowReminder` with `retryCount > 1`, whatever its method (EMAIL, WHATSAPP, SMS). Right now only this SMS cron writes `retryCount`, so nothing else is affected yet. But the column is on the shared model, so the moment the email or WhatsApp crons start counting retries, this SMS job will delete their rows. Put `method: WorkflowMethods.SMS` on this branch as well.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Increment retryCount when scheduleSMS returns falsy or throws",
+      "location": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:178-197",
+      "status": "closed",
+      "evidence": [
+        "packages/features/ee/workflows/api/scheduleSMSReminders.ts:67-200",
+        "packages/features/ee/workflows/lib/reminders/providers/twilioProvider.ts:79-114"
+      ],
+      "equivalent_path": "The success path at lines 168-177 updates scheduled/referenceId inside the try. Before this change the catch only logged.",
+      "before_after": "Before: errors were logged and the loop went on. After: the catch runs an await update with no protection, which can throw out of the loop.",
+      "visible_effect": "No UI. A failed reminder is later deleted by the deleteMany at lines 29-45, so the SMS is never sent.",
+      "failure_mode": "If the update in the catch rejects (row deleted, DB error), the handler aborts and the remaining reminders are skipped for that run.",
+      "evidence_checked": true
+    },
+    {
+      "action": "deleteMany now also deletes reminders with retryCount > 1",
+      "location": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:29-45",
+      "status": "closed",
+      "evidence": [
+        ".github/workflows/cron-scheduleSMSReminders.yml:8",
+        "packages/features/ee/workflows/lib/reminders/providers/twilioProvider.ts:90-102"
+      ],
+      "equivalent_path": "The existing deletion of past-due SMS reminders (same deleteMany)",
+      "before_after": "Before: only SMS reminders whose scheduledDate had passed were deleted. After: any reminder of any method with retryCount > 1 is deleted too, which happens after two failures (about 30 minutes at a 15-minute cron).",
+      "visible_effect": "The reminder SMS silently never arrives.",
+      "failure_mode": "Transient Twilio failures, rate limits and locks now drop reminders permanently.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR adds a `retryCount` column to `WorkflowReminder`. The SMS cron increments it on each failure and deletes reminders once it passes 1. The migration and schema are fine. The handler has two problems. First, the new update inside the catch block can throw and abort the rest of the batch. Second, with a 15-minute cron, two failures in a row (including transient Twilio errors, rate limits or a temporary lock) silently and permanently delete a reminder that may not be due for days. The delete branch also has no method filter, which will bite once other reminder types use `retryCount`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 44,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.20966740000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757"
+  },
+  "execution": {
+    "costUsdEstimate": 0.20966740000000003,
+    "usage": {
+      "input": 10,
+      "output": 4034,
+      "cacheRead": 64817,
+      "cacheWrite": 14498
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 48578,
+    "stop": "complete",
+    "notices": []
+  }
+}

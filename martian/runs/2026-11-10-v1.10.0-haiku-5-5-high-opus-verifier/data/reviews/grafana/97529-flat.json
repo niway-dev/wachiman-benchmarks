@@ -1,0 +1,627 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-97529-flat` of grafana-97529-flat against 871af07203177ce59a24e742107119409274f48a (merge-base 871af07)",
+    "repository": {
+      "name": "grafana-97529-flat"
+    },
+    "base": {
+      "sha": "871af07203177ce59a24e742107119409274f48a",
+      "ref": "871af07203177ce59a24e742107119409274f48a"
+    },
+    "head": {
+      "sha": "3f9895e6194eb19d497f19d4e1c6f218f069b8ac",
+      "ref": "pr-97529-flat"
+    },
+    "title": "pr-97529-flat",
+    "description": "Unified Storage Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "reviewed": [
+      "pkg/server/module_server_test.go",
+      "pkg/storage/unified/resource/search.go",
+      "pkg/storage/unified/resource/server.go",
+      "pkg/storage/unified/search/bleve.go",
+      "pkg/storage/unified/sql/backend.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/storage/unified/resource/server.go",
+      "line": 320,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "RPCs are no longer rejected after Stop()",
+      "body": "Stop() stores \"service is stopping\" / \"service is stopped\" in s.initErr (server.go:321, 339). Before this change every RPC began with s.Init(ctx), which returned that error, so calls after Stop failed. LifecycleHooks.Stop documents that storage calls may error after Stop (hooks.go:19). The diff removes that gate from Create (server.go:451), Read, List, Watch, Search, History, Origin, IsHealthy (server.go:934-935), PutBlob and GetBlob, and nothing replaces it.\n\nThe effect: backend Stop cancels the poller (backend.go:119-121, poller exits on b.done at backend.go:575-578). Search consumes WatchWriteEvents (search.go:203-213), so a write accepted after Stop returns success to the client but never reaches the search index or the watchers. IsHealthy now reports the diagnostics result, so a stopping instance can keep reporting healthy.\n\nFix: keep a stopped check (for example s.initErr or a stopped flag) at the top of the RPCs that must refuse work after Stop, and at least in IsHealthy.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "Stop still sets s.initErr to 'service is stopping'/'service is stopped' (server.go:321,339), but the diff removed the s.Init(ctx) gate from every RPC, and that gate was the only thing returning initErr to callers. RPCs now go through after Stop, even though hooks.go:19 says calls may error after Stop.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 293
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 320
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 339
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/hooks.go",
+            "line": 19
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/storage/unified/search/bleve.go",
+      "line": 144,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "TotalDocs reads b.cache without the lock that now guards its writes",
+      "body": "TotalDocs ranges over b.cache (bleve.go:145-146) with no lock. The diff makes BuildIndex take cacheMu around the map write (bleve.go:137-139), so writers are locked and this reader is not. GetIndex (bleve.go:61-62) takes RLock, so the pattern exists in the same type.\n\nThere are two concurrent callers. BleveIndexMetrics.Collect calls TotalDocs on every Prometheus scrape (pkg/storage/unified/resource/bleve_index_metrics.go:96) while builds run from Search and the watch goroutine. The new call in init at pkg/storage/unified/resource/search.go:216 runs after the watch goroutine has been started (search.go:207-213), so a build can write the map during the read. A concurrent map read and write is a fatal Go runtime error, so this can crash the process.\n\nFix: take b.cacheMu.RLock() in TotalDocs, as GetIndex does.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "TotalDocs ranges over b.cache with no lock (bleve.go:146), while BuildIndex writes it under cacheMu (bleve.go:137-139). Collect (bleve_index_metrics.go:96) and the new init log call (search.go:216, which runs after the watch goroutine starts) can both read the map during a build triggered by a watch event.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 144
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 207
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 216
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 145
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/bleve_index_metrics.go",
+            "line": 96
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/storage/unified/search/bleve.go",
+      "line": 137,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Same-key index builds can now run concurrently",
+      "body": "Before the diff, BuildIndex held cacheMu for the whole build, so builds could not overlap. Now only the cache write is locked (bleve.go:137-139). getOrCreateIndex checks GetIndex and then builds without any lock (search.go:292-305), so a Search request and a watch event for the same new key can both reach BuildIndex.\n\nFor file-based indexes both calls run bleve.New on the same directory (bleve.go:97-98). For memory indexes, the later build replaces cache[key] while the earlier index may still receive watch-event writes, and those writes would then be missing from the cached index.\n\nThe check-then-build race predates the diff; the lock only serialized it. Is overlapping same-key builds intended, and what does bleve.New do when the directory already exists? I did not confirm the bleve behaviour.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "BuildIndex now takes cacheMu only around the map write, so two getOrCreateIndex callers that both see nil (search.go:292-298) build the same key at the same time instead of one after the other. The duplicate-build and overwrite outcomes were already possible before the change, because the check-then-build race existed then too; the change only removes the serialization.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 88
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 292
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 88
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/storage/unified/resource/server.go",
+      "line": 258,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "high",
+      "title": "Constructing a resource server now runs the full init synchronously",
+      "body": "NewResourceServer now calls s.Init (server.go:258). Init runs the lifecycle Init (DB init and ping), builds a search index for every namespace (search.go:186-193) and starts the watchers. Before, all of this ran on the first RPC. A search init error now fails construction (server.go:259-262) instead of failing each RPC.\n\nCallers of NewResourceServer include pkg/storage/unified/sql/server.go:77, pkg/storage/unified/client.go:67, pkg/storage/unified/apistore/restoptions.go:52 and 87, and pkg/registry/apis/dashboard/legacy_storage.go:28. Startup of each of these now waits for index builds. The PR body does not say this is intended. Is eager init the intended behaviour for every caller?",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "NewResourceServer now calls s.Init synchronously (server.go:258). That runs lifecycle init, builds every index and starts the watcher, and an error now fails construction for all listed callers, e.g. sql/service.go:113 inside the dskit start function.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 258
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 293
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/sql/service.go",
+            "line": 113
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/server/module_server_test.go",
+      "line": 35,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Postgres run of the storage-server integration test is now skipped",
+      "body": "The new skip (module_server_test.go:36-38) turns off the only postgres run of TestIntegrationWillRunInstrumentationServerWhenTargetHasNoHttpServer. The reason \"Works locally\" has no linked issue, and the TODO has no owner.\n\nThis diff changes storage-server construction (pkg/storage/unified/resource/server.go:258), which this test exercises. Is the postgres failure the same eager-init behaviour? If so, the skip hides a regression rather than a flaky test.",
+      "origin": "unknown",
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The diff adds an unconditional skip for postgres (module_server_test.go:36-38). The only reason given is 'Works locally', with no linked issue, and the change to storage-server construction is in the same diff, so coverage is lost.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/server/module_server_test.go",
+            "line": 36
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/storage/unified/resource/search.go",
+      "line": 189,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "init goroutines write a shared counter and the outer err",
+      "body": "Inside group.Go, totalBatchesIndexed++ (search.go:189) and the assignment _, _, err = s.build(...) (search.go:190) write variables shared by all goroutines with no synchronization. group.SetLimit(s.initWorkers) lets them run in parallel. The race predates the diff, but the narrowed BuildIndex lock (bleve.go:137-139) now lets the builds overlap. The race detector flags this, and the namespaced_indexed count reported at search.go:199 can be wrong.\n\nFix: declare err inside the closure and use an atomic counter, or drop the counter.",
+      "origin": "pre-existing",
+      "originReason": "The base has the same unsynchronized increment and err assignment in the goroutine, outside the BuildIndex lock.",
+      "originEvidence": [
+        {
+          "snapshot": "base",
+          "path": "pkg/storage/unified/resource/search.go",
+          "line": 190
+        },
+        {
+          "snapshot": "base",
+          "path": "pkg/storage/unified/resource/search.go",
+          "line": 191
+        }
+      ],
+      "verification": {
+        "candidateId": "c6",
+        "status": "supported",
+        "reason": "totalBatchesIndexed++ and the outer err are written from several errgroup goroutines with no synchronization (search.go:189-190). Both writes happen outside BuildIndex, so the old lock never protected them; the same code is in the base.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 189
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 190
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 190
+          }
+        ]
+      },
+      "tier": "Pre-existing",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "NewResourceServer now calls Init eagerly",
+      "location": "pkg/storage/unified/resource/server.go:258",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/server.go:258-262",
+        "pkg/storage/unified/resource/server.go:293-317",
+        "pkg/storage/unified/sql/server.go:77-80"
+      ],
+      "equivalent_path": "pkg/storage/unified/resource/server.go:451",
+      "before_after": "Before: Init ran once, lazily, on the first RPC, and each RPC returned its error (the gate was removed from Create at 451). After: Init runs inside the constructor; a failure returns nil, err (server.go:259-262).",
+      "visible_effect": "Startup blocks on DB init and the full search index build. A failed init stops construction instead of failing requests.",
+      "failure_mode": "The error is returned to the caller of NewResourceServer; pkg/storage/unified/sql/server.go:77-80 propagates it. Init logs the error at server.go:314 and the constructor logs it again at server.go:260.",
+      "evidence_checked": true
+    },
+    {
+      "action": "RPCs no longer call Init, so they are no longer gated after Stop",
+      "location": "pkg/storage/unified/resource/server.go:451",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/server.go:320-321",
+        "pkg/storage/unified/resource/server.go:339",
+        "pkg/storage/unified/resource/server.go:934-935",
+        "pkg/storage/unified/resource/hooks.go:19",
+        "pkg/storage/unified/sql/backend.go:119-121",
+        "pkg/storage/unified/sql/backend.go:570-578",
+        "pkg/storage/unified/resource/search.go:203-213"
+      ],
+      "equivalent_path": "pkg/storage/unified/resource/server.go:320-342",
+      "before_after": "Before: after Stop set initErr, every RPC returned that error from Init. After: the RPCs run against the backend, and IsHealthy returns the diagnostics result (server.go:934-935).",
+      "visible_effect": "Writes after Stop succeed, and health checks keep reporting healthy during shutdown.",
+      "failure_mode": "A write is acknowledged but never indexed: backend Stop cancels the poller (backend.go:119-121, 575-578) and search only consumes WatchWriteEvents (search.go:203-213). Watchers are also cut off, because s.cancel() stops the broadcaster context.",
+      "evidence_checked": true
+    },
+    {
+      "action": "search init logs TotalDocs()",
+      "location": "pkg/storage/unified/resource/search.go:216",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/search.go:207-216",
+        "pkg/storage/unified/search/bleve.go:137-139",
+        "pkg/storage/unified/search/bleve.go:144-154",
+        "pkg/storage/unified/resource/bleve_index_metrics.go:96"
+      ],
+      "equivalent_path": "pkg/storage/unified/resource/bleve_index_metrics.go:96",
+      "before_after": "Before: TotalDocs was only called from the metrics scrape. After: it is also called in init, after the watch goroutine has started (search.go:207-213).",
+      "visible_effect": "One extra log attribute, total_docs.",
+      "failure_mode": "TotalDocs reads b.cache without cacheMu while BuildIndex can write it from the watch goroutine (bleve.go:137-139, 144-154), a possible concurrent map read and write.",
+      "evidence_checked": true
+    },
+    {
+      "action": "BuildIndex holds cacheMu only around the cache write",
+      "location": "pkg/storage/unified/search/bleve.go:137",
+      "status": "open",
+      "evidence": [
+        "pkg/storage/unified/search/bleve.go:85-141",
+        "pkg/storage/unified/resource/search.go:287-307"
+      ],
+      "equivalent_path": "pkg/storage/unified/resource/search.go:287-307",
+      "before_after": "Before: the whole BuildIndex ran under cacheMu, so builds were serialized. After: only the map write is locked, so builds can overlap. getOrCreateIndex checks GetIndex and then builds with no lock (search.go:292-305).",
+      "visible_effect": "Init and request-time builds can run in parallel.",
+      "failure_mode": "Two builds for the same key can run at once. For file-based indexes both call bleve.New on the same directory (bleve.go:97-98). For memory indexes the later build replaces the cached index while the earlier one may still receive watch writes.",
+      "open_question": "Can two BuildIndex calls for the same key overlap in practice, and what does bleve.New do when the index directory already exists?",
+      "candidates": [
+        "pkg/storage/unified/resource/search.go:287-307",
+        "pkg/storage/unified/search/bleve.go:97-98"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "initWatcher now runs after search init",
+      "location": "pkg/storage/unified/resource/server.go:303-311",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/resource/server.go:303-311"
+      ],
+      "before_after": "Before: initWatcher ran before search init. After: it runs after, only if search init succeeded.",
+      "visible_effect": "None on success.",
+      "failure_mode": "If search init fails, the broadcaster is never created, but construction fails too (server.go:258-262), so no server is handed out.",
+      "evidence_checked": true
+    },
+    {
+      "action": "GetResourceStats uses the span context for its database work",
+      "location": "pkg/storage/unified/sql/backend.go:126",
+      "status": "closed",
+      "evidence": [
+        "pkg/storage/unified/sql/backend.go:126-136",
+        "pkg/storage/unified/sql/backend.go:174-175"
+      ],
+      "equivalent_path": "pkg/storage/unified/sql/backend.go:174-175",
+      "before_after": "Before: WithTx received the caller's ctx. After: it receives the span context, which has the same cancellation and deadline. The create path already uses this pattern.",
+      "visible_effect": "None.",
+      "failure_mode": "None.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed the five files in this part. Main problems: (1) the Init gate removed from the RPCs means calls after Stop() are no longer rejected, so writes can be acknowledged without being indexed and health keeps reporting healthy during shutdown; (2) TotalDocs reads the bleve cache without the lock that the diff now uses for writes, which can crash the process under concurrent metrics scrapes or the new startup log; (3) narrowing the BuildIndex lock lets same-key builds overlap (question, low confidence); (4) constructing a server now blocks on the full index build, which the PR body does not mention; (5) the postgres run of the storage-server integration test is skipped without a linked issue; (6) the init goroutines write shared variables without synchronization (predates the diff). The sql/backend.go context change is safe. Note: docs/adr does not exist in this snapshot, so the ADR check could not be run against it.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 82,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.0333214
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "871af07203177ce59a24e742107119409274f48a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3299646,
+    "usage": {
+      "input": 22,
+      "output": 35820,
+      "cacheRead": 347476,
+      "cacheWrite": 99625
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 226378,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.2966432,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "pkg/storage/unified/resource/server.go",
+        "line": 320,
+        "title": "RPCs are no longer rejected after Stop()",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "Stop still sets s.initErr to 'service is stopping'/'service is stopped' (server.go:321,339), but the diff removed the s.Init(ctx) gate from every RPC, and that gate was the only thing returning initErr to callers. RPCs now go through after Stop, even though hooks.go:19 says calls may error after Stop.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 293
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 320
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 339
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/hooks.go",
+            "line": 19
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "pkg/storage/unified/search/bleve.go",
+        "line": 144,
+        "title": "TotalDocs reads b.cache without the lock that now guards its writes",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "TotalDocs ranges over b.cache with no lock (bleve.go:146), while BuildIndex writes it under cacheMu (bleve.go:137-139). Collect (bleve_index_metrics.go:96) and the new init log call (search.go:216, which runs after the watch goroutine starts) can both read the map during a build triggered by a watch event.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 144
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 207
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 216
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 145
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/bleve_index_metrics.go",
+            "line": 96
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "pkg/storage/unified/search/bleve.go",
+        "line": 137,
+        "title": "Same-key index builds can now run concurrently",
+        "topic": "question",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "BuildIndex now takes cacheMu only around the map write, so two getOrCreateIndex callers that both see nil (search.go:292-298) build the same key at the same time instead of one after the other. The duplicate-build and overwrite outcomes were already possible before the change, because the check-then-build race existed then too; the change only removes the serialization.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 88
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 292
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/search/bleve.go",
+            "line": 88
+          }
+        ],
+        "outcome": "moved",
+        "severityAfter": "consider"
+      },
+      {
+        "id": "c4",
+        "path": "pkg/storage/unified/resource/server.go",
+        "line": 258,
+        "title": "Constructing a resource server now runs the full init synchronously",
+        "topic": "question",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "NewResourceServer now calls s.Init synchronously (server.go:258). That runs lifecycle init, builds every index and starts the watcher, and an error now fails construction for all listed callers, e.g. sql/service.go:113 inside the dskit start function.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 258
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/server.go",
+            "line": 293
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/sql/service.go",
+            "line": 113
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "pkg/server/module_server_test.go",
+        "line": 35,
+        "title": "Postgres run of the storage-server integration test is now skipped",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "unknown",
+        "reason": "The diff adds an unconditional skip for postgres (module_server_test.go:36-38). The only reason given is 'Works locally', with no linked issue, and the change to storage-server construction is in the same diff, so coverage is lost.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/server/module_server_test.go",
+            "line": 36
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c6",
+        "path": "pkg/storage/unified/resource/search.go",
+        "line": 189,
+        "title": "init goroutines write a shared counter and the outer err",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "pre-existing",
+        "originReason": "The base has the same unsynchronized increment and err assignment in the goroutine, outside the BuildIndex lock.",
+        "originEvidence": [
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 190
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 191
+          }
+        ],
+        "reason": "totalBatchesIndexed++ and the outer err are written from several errgroup goroutines with no synchronization (search.go:189-190). Both writes happen outside BuildIndex, so the old lock never protected them; the same code is in the base.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 189
+          },
+          {
+            "snapshot": "head",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 190
+          },
+          {
+            "snapshot": "base",
+            "path": "pkg/storage/unified/resource/search.go",
+            "line": 190
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

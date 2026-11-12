@@ -1,0 +1,239 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-93824-flat` of sentry-93824-flat against de11fb0166a7244115bb066edd65ec0d6b7e365c (merge-base de11fb0)",
+    "repository": {
+      "name": "sentry-93824-flat"
+    },
+    "base": {
+      "sha": "de11fb0166a7244115bb066edd65ec0d6b7e365c",
+      "ref": "de11fb0166a7244115bb066edd65ec0d6b7e365c"
+    },
+    "head": {
+      "sha": "887e493ec6fdf48cfbed712ba4a427bf757ed737",
+      "ref": "pr-93824-flat"
+    },
+    "title": "pr-93824-flat",
+    "description": "Span Buffer Multiprocess Enhancement with Health Monitoring",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "CLAUDE.md",
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/spans/consumers/process/factory.py",
+      "src/sentry/spans/consumers/process/flusher.py",
+      "tests/sentry/spans/consumers/process/test_consumer.py",
+      "tests/sentry/spans/consumers/process/test_flusher.py"
+    ],
+    "reviewed": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/spans/consumers/process/factory.py",
+      "src/sentry/spans/consumers/process/flusher.py",
+      "tests/sentry/spans/consumers/process/test_consumer.py",
+      "tests/sentry/spans/consumers/process/test_flusher.py",
+      "CLAUDE.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 254,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Unhealthy flusher processes are no longer killed before a replacement starts",
+      "body": "The old code called `self.process.kill()` unconditionally. The new code only kills when `isinstance(process, multiprocessing.Process)`. Processes come from `self.mp_context.Process` with the spawn context (line 105), so they are `multiprocessing.context.SpawnProcess`. That class subclasses `process.BaseProcess`, not `multiprocessing.Process` (`context.Process`), so the check is always False and `kill()` is never called. When a process is detected as `hang`, line 259 starts a second process for the same shards while the hung one keeps running. If the hung one recovers (for example a stalled Redis or Kafka call returns), both flush the same queues at once, which can produce duplicate or fragmented segments. Each hang leaks another process, up to MAX_PROCESS_RESTARTS. Fix: go back to calling `process.kill()` with the `ValueError` guard, and skip it only for `threading.Thread`, e.g. `if not isinstance(process, threading.Thread)` or `isinstance(process, multiprocessing.process.BaseProcess)`. The same wrong check in `join` (line 346) means `terminate()` never runs there either. That one predates this PR.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 341,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "join() skips terminate for the remaining processes once the deadline passes",
+      "body": "Once the deadline has passed, `break` exits the loop before `process.terminate()` runs for the current process and every process after it. The old code always reached the terminate step after the wait. With several processes and a timeout, the first process's wait can use up the whole deadline, so the others are left running after `join` returns. They are daemons, so they only die when the parent exits. On a rebalance, though, a new flusher is created while these keep flushing their shards. Fix: replace `break` with skipping only the wait, and always try to terminate each remaining process (and fix the isinstance check noted at line 254 so terminate actually runs).",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 93,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "`spans.buffer.max-flush-segments` now caps each process, not the consumer",
+      "body": "Each process gets its own `SpansBuffer(shards)`. `flush_segments` computes `max_segments_per_shard = ceil(max_flush_segments / len(self.assigned_shards))` from that buffer's own shards (src/sentry/spans/buffer.py:382-384). The total flushed per cycle is therefore up to `num_processes × max-flush-segments`, where it used to be `max-flush-segments`. Kafka/Redis load grows when operators raise `--flusher-processes`. If this is intended, document the new meaning; if not, divide the option by `num_processes`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 301,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Redis memory info is fetched once per process buffer, but each call covers the whole cluster",
+      "body": "`get_memory_info` returns `iter_cluster_memory_usage(self.client)` for the whole cluster, whatever the shards (src/sentry/spans/buffer.py:375-376). Looping over `self.buffers` runs the same cluster-wide INFO query N times per `submit` and counts every node N times. The ratio stays correct because `used` and `available` are both multiplied by N, but the work is wasted. Calling it once, on any one buffer, is enough.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/spans/consumers/process/test_consumer.py",
+      "line": 62,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "`time.sleep(0.1)` is a no-op here because the test monkeypatches `time.sleep`",
+      "body": "Line 15 does `monkeypatch.setattr(\"time.sleep\", lambda _: None)`, so `time.sleep(0.1)` returns immediately. The comment says it gives the flusher threads time to process. It doesn't, so `step.join()` still sets `stopped` right after the drift change. A thread that hasn't yet looped with the new drift exits without flushing, and `(msg,) = messages` fails intermittently. Either keep a reference to the real sleep before monkeypatching, or poll until `messages` is non-empty, with a timeout, before calling `join`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 127,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "`_create_process_for_shard` is never called",
+      "body": "Nothing calls `_create_process_for_shard`. Restarts go through `_create_process_for_shards` directly (line 259). Remove it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 199,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Inconsistent metric tag key: `shards` here, `shard` elsewhere",
+      "body": "`spans.buffer.flusher.wait_produce` is tagged `shards`, while `flusher.produce` and `segment_size_bytes` (lines 185, 195) use `shard` for the same comma-joined value. Using one key makes dashboards consistent.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/spans/consumers/process/flusher.py",
+      "line": 32,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Docstring says one process per shard; the CLI default is one process total",
+      "body": "The `--flusher-processes` CLI default is 1 (src/sentry/consumers/__init__.py:434). Shards are spread round-robin over `min(max_processes, len(shards))` processes (lines 60-66). Only a `None`/0 value from code paths that skip the CLI gives one process per shard. Reword it, e.g. 'Distributes shards across up to `max_processes` processes.'",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Restart an unhealthy flusher process (dead or hung)",
+      "location": "src/sentry/spans/consumers/process/flusher.py:247-259",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/consumers/process/flusher.py:53",
+        "src/sentry/spans/consumers/process/flusher.py:105",
+        "src/sentry/spans/consumers/process/flusher.py:254-259"
+      ],
+      "equivalent_path": "Previous _ensure_process_alive: unconditional self.process.kill() then _create_process()",
+      "before_after": "Before: kill always attempted (ValueError ignored). After: kill gated on isinstance(process, multiprocessing.Process), which is False for SpawnProcess, so a hung process survives and a duplicate is started for the same shards.",
+      "visible_effect": "Possible duplicate/concurrent flushing of the same Redis shard queues into buffered-segments; leaked processes.",
+      "failure_mode": "Hung process never killed; after MAX_PROCESS_RESTARTS the consumer raises RuntimeError.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Wait for all flusher processes on join(timeout)",
+      "location": "src/sentry/spans/consumers/process/flusher.py:328-347",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/consumers/process/flusher.py:332",
+        "src/sentry/spans/consumers/process/flusher.py:337-347"
+      ],
+      "equivalent_path": "Previous single-process join loop followed by terminate",
+      "before_after": "Overall wait is bounded by the deadline across all processes (shared deadline). But after the deadline, the loop breaks without terminating the remaining processes.",
+      "visible_effect": "Remaining flusher processes keep running after join returns (until parent exit, since they are daemons).",
+      "failure_mode": "With timeout=None, waits until each process observes stopped; a hung process blocks join forever (same as before).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Per-process SpansBuffer flushes its shard subset",
+      "location": "src/sentry/spans/consumers/process/flusher.py:93",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/buffer.py:378-393",
+        "src/sentry/spans/consumers/process/flusher.py:60-66"
+      ],
+      "equivalent_path": "SpansBuffer.flush_segments with the full assigned_shards list",
+      "before_after": "max-flush-segments was split across all shards; now it is split per buffer, so the total per cycle scales with the number of processes.",
+      "visible_effect": "Higher flush throughput/load per cycle than the option suggests.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Aggregate Redis memory info across process buffers",
+      "location": "src/sentry/spans/consumers/process/flusher.py:299-304",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/buffer.py:375-376"
+      ],
+      "equivalent_path": "self.buffer.get_memory_info() once",
+      "before_after": "Same cluster-wide query repeated N times; the ratio is unchanged.",
+      "visible_effect": "None functionally; extra Redis INFO calls per submit.",
+      "failure_mode": "A Redis error raises out of submit, as before.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New --flusher-processes CLI option passed to the factory and flusher",
+      "location": "src/sentry/consumers/__init__.py:430-438",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/spans/consumers/process/factory.py:41",
+        "src/sentry/spans/consumers/process/factory.py:74",
+        "src/sentry/spans/consumers/process/flusher.py:51"
+      ],
+      "equivalent_path": "multiprocessing_options kwargs passed to ProcessSpansStrategyFactory",
+      "before_after": "Default 1 means all shards are handled by one process (same as before); larger values spread shards round-robin.",
+      "visible_effect": "Operators control the flusher process count.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR splits the span flusher into several processes, each handling a subset of shards. One bug blocks the merge. A flusher process detected as hung or dead is no longer killed before its replacement starts. The new `isinstance(process, multiprocessing.Process)` check is always False for spawn-context processes, so a hung process keeps running next to the new one for the same shards. Separately, `join()` stops waiting at the deadline without terminating the remaining processes. In the tests, the added `time.sleep(0.1)` in test_basic does nothing because the test monkeypatches `time.sleep`, so the race it was meant to fix is still there. Smaller points: `max-flush-segments` now applies per process instead of per consumer, the cluster-wide memory query runs once per process, one method is never called, a metric tag key is inconsistent, and the class docstring is out of date.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 249,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 6,
+      "costUsd": 0.41285559999999993
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [
+      "CLAUDE.md"
+    ],
+    "baseSha": "de11fb0166a7244115bb066edd65ec0d6b7e365c"
+  },
+  "execution": {
+    "costUsdEstimate": 0.41285559999999993,
+    "usage": {
+      "input": 6,
+      "output": 7312,
+      "cacheRead": 63518,
+      "cacheWrite": 31736
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 6,
+    "durationMs": 73391,
+    "stop": "complete",
+    "notices": []
+  }
+}

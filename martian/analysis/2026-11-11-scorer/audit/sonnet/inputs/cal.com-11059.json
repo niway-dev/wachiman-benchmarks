@@ -1,0 +1,111 @@
+{
+ "pr": "cal.com-11059",
+ "checkout": "/tmp/audit-wt/cal.com-11059",
+ "audit_ids": [
+  4,
+  7,
+  8,
+  10
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 97,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Google refresh stores the safeParse result object as the credential key",
+   "body": "`parseRefreshTokenResponse` returns the zod `SafeParseReturnType` (`{ success, data }`), not the parsed value (see `_utils/oauth/parseRefreshTokenResponse.ts:29`). Line 97 assigns that to `key`, and line 100 writes it to `prisma.credential.update({ data: { key } })`. The old code stored `googleCredentialSchema.parse(...)`, which was the credentials object itself. After the first token refresh, every Google Calendar credential holds `{ success: true, data: {...} }`. The next `googleAuth` call runs `googleCredentialSchema.parse(credential.key)` on line 75, which throws, so Google Calendar breaks for every user whose token expires. This happens with credential sharing off, which is the default. Use `.data` after checking `.success`."
+  },
+  {
+   "id": 1,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 8,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`minimumTokenResponseSchema` computed keys collapse to \"[object Object]\" and the schema strips the expiry",
+   "body": "`[z.string().toString()]` and `[z.string().optional().toString()]` are evaluated as property names. A Zod type has no custom `toString`, so both are `\"[object Object]\"`. The second key overwrites the first, and the schema becomes `{ access_token: string, \"[object Object]\": unknown? }`. The comment says that any numeric property is treated as the expiry, but nothing enforces that. `z.object` strips unknown keys by default, so `expires_in`, `expiry_date` and `token_type` are dropped from `data` in sync mode. Callers then compute with `undefined`. In `zoomvideo/lib/VideoApiAdapter.ts:122`, `Math.round(Date.now() + undefined * 1000)` is `NaN`, which is saved as `expiry_date`. The next `zoomTokenSchema.safeParse(oldCredential.key)` on line 113 then fails with \"Invalid credentials were saved in the DB\". Use `z.object({ access_token: z.string() }).passthrough()` plus an explicit check that an expiry field exists, or use `.catchall(z.unknown())`."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 25,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Placeholder refresh_token \"refresh_token\" overwrites the real stored token, also with credential sharing off",
+   "body": "When the response has no `refresh_token`, the code sets `data.refresh_token = \"refresh_token\"` on every call, not only in sync mode. In `office365calendar/lib/CalendarService.ts:264` the code does `{ ...o365AuthCredentials, ...tokenResponse.data }`. `refreshTokenResponseSchema` (line 56) declares `refresh_token` optional, because Microsoft may omit it. Previously the stored refresh token survived that merge. Now it is replaced by the literal string `\"refresh_token\"`, and the next refresh fails with `invalid_grant`. This breaks Office 365 Calendar for self-hosters who don't use credential sharing. Apply the placeholder only in sync mode, or don't mutate the data at all and let callers keep the stored token."
+  },
+  {
+   "id": 3,
+   "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+   "line": 15,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "In sync mode the raw fetch Response is returned to callers that expect other shapes",
+   "body": "The non-sync branch returns whatever `refreshFunction` returns: an axios response with `.data` (zohocrm, zoho-bigin), a hubspot token object, or a gaxios `res` with `.data` (google). The sync branch returns a fetch `Response`. These callers read `zohoCrmTokenInfo.data.error` (`zohocrm/lib/CalendarService.ts:217`), `tokenInfo.data.error` (`zoho-bigin/lib/CalendarService.ts:96`), `res?.data` (`googlecalendar/lib/CalendarService.ts:94`) and `hubspotRefreshToken.expiresIn` (`hubspot/lib/CalendarService.ts:192`). On a `Response`, `.data` is undefined, so this throws a TypeError or yields NaN expiries. Hubspot and Zoho swallow the error with `log.error`, so the user gets no token and no visible error. Only the fetch-based callers (zoom, webex, office365, lark) happen to fit. Make `refreshOAuthTokens` return the shape the non-sync path returns, for example by parsing the JSON and wrapping it as `{ data }` or by letting each caller adapt. Also, the POST to `CALCOM_CREDENTIAL_SYNC_ENDPOINT` carries no auth header or secret, so any caller that can reach the endpoint can request tokens for any `calcomUserId`. Consider sending `CALCOM_WEBHOOK_SECRET` or a similar header."
+  },
+  {
+   "id": 4,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 96,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "`prisma` is used but never imported in the Salesforce service",
+   "body": "The file imports nothing from `@calcom/prisma` (the only `prisma` match in the file is line 96). `getClient` therefore throws a `ReferenceError` on every construction, which breaks all Salesforce calendar and CRM operations. It also fails type-checking."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 75,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Salesforce now does a token refresh on every service construction, ignores the new token, and bypasses refreshOAuthTokens",
+   "body": "`getClient` previously only built a `jsforce.Connection` with the stored `refreshToken`, so jsforce refreshed lazily. It now POSTs to login.salesforce.com every time the service is constructed. That adds a network round trip to each booking, and it risks Salesforce rate limits. It also calls `fetch` directly rather than `refreshOAuthTokens`, so credential sharing is not honored for this app. Line 106 then builds the connection with the old `credentialKey.access_token` instead of `accessTokenParsed.data.access_token`, which makes the refresh pointless for this connection. Separately, `response.statusText !== \"OK\"` is a brittle success check. `parseRefreshTokenResponse` throws on a failed parse, so the `!accessTokenParsed.success` branch on line 92 is dead. Route this through `refreshOAuthTokens` only when the token is expired. Use the new access token for the connection."
+  },
+  {
+   "id": 6,
+   "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
+   "line": 93,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Bigin passes the credential id where `refreshOAuthTokens` expects the user id",
+   "body": "The third parameter of `refreshOAuthTokens` is `userId: number | null`. Here `credentialId` is passed. In sync mode the endpoint is asked for tokens for `calcomUserId = <credential id>`, which is a different, arbitrary user. That fetches or writes another user's credentials, and the credential is saved from that response. `biginAuth` has the credential in scope, so pass `credential.userId`. `refreshAccessToken` needs it as a parameter, because it currently receives only `credentialId`."
+  },
+  {
+   "id": 7,
+   "path": "packages/app-store/zoho-bigin/api/add.ts",
+   "line": 17,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unrelated change replaces `appConfig.slug` with a hardcoded string",
+   "body": "The redirect URI used `appConfig.slug` (still imported and used on lines 12 and 22) and is now hardcoded to `zoho-bigin`. It has nothing to do with this feature, and it creates a second source of truth for the slug. Revert it."
+  },
+  {
+   "id": 8,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 25,
+   "severity": "consider",
+   "topic": "security",
+   "title": "Webhook secret is compared with `!==`, and the endpoint has no method check",
+   "body": "The secret check is a plain string comparison, so it is not constant-time. Use `crypto.timingSafeEqual` on equal-length buffers. The handler also accepts any HTTP method. The endpoint overwrites stored OAuth credentials, so restrict it to POST."
+  },
+  {
+   "id": 9,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 31,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Invalid body, bad ciphertext or bad JSON produce an unhandled 500 instead of a 4xx",
+   "body": "`appCredentialWebhookRequestBodySchema.parse` (line 31), `symmetricDecrypt` and `JSON.parse` (lines 57-59) all throw on bad input. Nothing catches the error, so the caller gets a generic 500, and a zod error may leak details. Use `safeParse` and a try/catch that returns 400. The decrypted `keys` is also written straight into `credential.key` without any validation against the app's key shape."
+  },
+  {
+   "id": 10,
+   "path": "packages/app-store/office365calendar/lib/CalendarService.ts",
+   "line": 264,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Dead `tokenResponse.success` check and the removed error log",
+   "body": "`parseRefreshTokenResponse` throws when the parse fails. After it returns, `tokenResponse.success` is always true, so `tokenResponse.success && tokenResponse.data` is dead. The `console.error` that logged the ZodError and the Microsoft response was removed, and the thrown error `Invalid refreshed tokens were returned` carries neither. That loses the diagnostic detail, and an invalid response now aborts instead of being tolerated."
+  }
+ ]
+}

@@ -1,0 +1,155 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-77754` of sentry-77754 against bb5a6837cb5b3d8d3b174e17d42ec14486ef8738 (merge-base bb5a683)",
+    "repository": {
+      "name": "sentry-77754"
+    },
+    "base": {
+      "sha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738",
+      "ref": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+    },
+    "head": {
+      "sha": "9501091c52ae94e8d916f79b35d21975b3f9cadb",
+      "ref": "pr-77754"
+    },
+    "title": "pr-77754",
+    "description": "fix(ecosystem): Breaks issue sync cycles\nPasses JSON instead of classes when queueing task\nremoves SourceType enum\nConverts from JSON to dictionaries instead\nRemoves minor change made to sync utils, adds test for assignment loop\nFix typing for optional assignment_source\nMore typing fixes\nFixes tests, adds new test for sync loop checks",
+    "author": "Gabe Villalobos"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/services/assignment_source.py",
+      "line": 18,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`queued` default is evaluated once at import time",
+      "body": "`queued: datetime = timezone.now()` runs a single time, when the class is defined. After that, every `AssignmentSource` built without an explicit `queued` (which includes every one made by `from_integration`) gets the worker process's import time, not the time it was queued. The value is wrong, and nothing signals it. Nothing reads `queued` yet, but anything that later uses it to order or expire sources will be wrong without any error. Use `queued: datetime = field(default_factory=timezone.now)`. `test_to_dict` only checks that `queued` is not None, so it can't catch this.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/integrations/mixins/issues.py",
+      "line": 416,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "`assignment_source` added to abstract `sync_status_outbound` but never passed",
+      "body": "The abstract `sync_status_outbound` now takes `assignment_source`, but its only caller (`src/sentry/integrations/tasks/sync_status_outbound.py:44-46`) never passes it. `should_sync(\"outbound_status\")` there also gets no source. So status sync cycles are not broken by this PR, and the parameter is dead. Either wire it through the status path or drop it from the signature. Leaving it in suggests status loops are handled when they aren't.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/models/test_groupassignee.py",
+      "line": 180,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Cycle-break coverage only for assign; deassign and non-matching source untested",
+      "body": "The new test covers only `assign` with a source that matches the target integration. Two cases have no test: `deassign(..., assignment_source=...)` with a matching source (the inbound unassign path in `sync.py:96-99`), and a source from a *different* integration, where the outbound sync should still be called and `assignment_source` forwarded. The PR comment at `mixins/issues.py:387-389` claims that second behavior, but nothing tests it.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Inbound assignee sync passes AssignmentSource into GroupAssignee.assign/deassign, which forwards it through sync_group_assignee_outbound to the celery task",
+      "location": "src/sentry/integrations/utils/sync.py:96",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/models/groupassignee.py:189-194",
+        "src/sentry/models/groupassignee.py:235-240",
+        "src/sentry/integrations/utils/sync.py:134-145",
+        "src/sentry/integrations/tasks/sync_assignee_outbound.py:53-61",
+        "src/sentry/integrations/mixins/issues.py:382-394",
+        "src/sentry/integrations/services/assignment_source.py:31-35",
+        "src/sentry/conf/server.py:739",
+        "src/sentry/api/helpers/group_index/update.py:904"
+      ],
+      "equivalent_path": "GroupAssignee.objects.deassign(group, acting_user) in src/sentry/api/helpers/group_index/update.py:904 (no source; outbound sync to all linked integrations)",
+      "before_after": "Before: inbound assignment from integration X re-queued outbound sync to X too, which could loop. After: the source is serialized with to_dict() into the task kwargs. The task rebuilds it with from_dict, and should_sync returns False when source.integration_id == org_integration.integration_id. Other integrations still sync.",
+      "visible_effect": "The external issue in the source integration is no longer re-assigned by Sentry after an inbound change. Sentry-side Activity and assignee records are unchanged.",
+      "failure_mode": "If from_dict gets a malformed dict it returns None, which falls back to the old behavior (sync to every integration), with no log. The task serializer is pickle, so the datetime in the dict survives.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Task calls installation.sync_assignee_outbound with new assignment_source kwarg",
+      "location": "src/sentry/integrations/tasks/sync_assignee_outbound.py:59",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/jira/integration.py:936-942",
+        "src/sentry/integrations/jira_server/integration.py:1038-1044",
+        "src/sentry/integrations/vsts/issues.py:217-223",
+        "src/sentry/integrations/example/integration.py:152-158",
+        "src/sentry/integrations/mixins/issues.py:397-403"
+      ],
+      "equivalent_path": "Implementations in jira, jira_server, vsts, example",
+      "before_after": "Every implementation accepts **kwargs, so the extra kwarg is safe.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The cycle-breaking for assignee sync is wired correctly, from inbound sync through the outbound task to `should_sync`. Every `sync_assignee_outbound` implementation accepts the new kwarg, and the pickle task serializer handles the datetime. One fix: the `queued` default in `AssignmentSource` is computed once at import time, not per instance. Also worth considering: the new `assignment_source` parameter on `sync_status_outbound` is never passed, so status sync loops aren't covered. The tests also don't cover deassign or a source from a different integration.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 227,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.29592820000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+  },
+  "execution": {
+    "costUsdEstimate": 0.29592820000000003,
+    "usage": {
+      "input": 12,
+      "output": 4039,
+      "cacheRead": 123181,
+      "cacheWrite": 23808
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 49087,
+    "stop": "complete",
+    "notices": []
+  }
+}

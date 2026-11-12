@@ -1,0 +1,50 @@
+{
+  "pr": "sentry-93824-flat",
+  "audits": [
+    {
+      "id": 1,
+      "claim": "Splitting the buffer among flusher processes multiplies the configured flush budget and raises the threshold used to trigger backpressure.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/spans/consumers/process/flusher.py:60-66 divides the assigned shards among processes and :93 creates an independent SpansBuffer for each group; src/sentry/spans/buffer.py:382-390 divides the full configured budget only by that buffer's shard count. With four shards, two processes and max-flush-segments=500, each shard can fetch 250 eligible segments instead of 125, giving 1000 across the four shards rather than 500. For returned segments containing 200 spans, buffer.py:411-412 therefore sets the old threshold's backpressure flag but not the new threshold's flag, so flusher.py:172-176 clears backpressure and :277-284 no longer rejects subsequent submissions after the configured duration. The prior cap was approximate because of rounding, but that does not refute this exact divisible example; src/sentry/options/defaults.py:2716 explicitly describes a maximum per cycle.",
+      "confidence": "high"
+    },
+    {
+      "id": 2,
+      "claim": "Each submission redundantly queries the same Redis cluster's memory once for every flusher buffer.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/spans/consumers/process/flusher.py:297-303 iterates all buffers when max-memory-percentage is below 1.0. src/sentry/spans/buffer.py:117-118 and :162-163 select the same configured Redis cluster without using assigned_shards, and :375-376 delegates to src/sentry/processing/backpressure/memory.py:82-95, which issues INFO calls. Thus two buffers cause two cluster-wide samples, although the computed ratio stays the same only if memory is stable between samples. This is avoidable work rather than a demonstrated functional failure: the default disables the check (src/sentry/options/defaults.py:2723-2728), submit is explicitly not hot (flusher.py:262-265), and record_stored_segments legitimately queries distinct shards (buffer.py:357-364).",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "The tests do not exercise restart and health handling across several flusher processes or verify flushing across split shard groups.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/spans/consumers/process/test_consumer.py:94-123 creates two workers but only checks worker counts and total shard assignments, then joins without submitting spans. Its produce_to_pipe callback selects threading.Thread at src/sentry/spans/consumers/process/flusher.py:106-108, so it cannot check real spawn-process termination. The other consumer test uses one partition (test_consumer.py:34), and test_flusher.py:28-33 covers backpressure for one shard, with no restart assertions or calls to the health-check method anywhere in these tests. The coverage gap is real, but is a missing test rather than an additional runtime defect; catching the kill guard would require explicitly simulating a hang and asserting the old process exits.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The docstring incorrectly promises one flusher process per shard even when the configured maximum groups shards together.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/spans/consumers/process/flusher.py:32 says one process per shard, but :60-66 caps the process count and distributes multiple shards into each group. The CLI supplies a default maximum of one at src/sentry/consumers/__init__.py:432-436, passed through factory.py:71-75, so a consumer assigned four shards normally creates one shared flusher process. This is inaccurate documentation without a separate runtime failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The shard-specific restart helper has no callers and the false-process guard is redundant for the objects stored in the process map.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "A checkout-wide source/test search finds only the definition of _create_process_for_shard at src/sentry/spans/consumers/process/flusher.py:127; creation and restart instead call _create_process_for_shards at :84 and :259. The only assignment of process-map entries is :123-124 after starting a SpawnProcess or Thread selected at :95-108, and neither supported object becomes false when it exits. Consequently :222-223 cannot skip any entry populated by this code, but removing that guard and the unused helper is cleanup rather than a behavioral repair.",
+      "confidence": "high"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "pr": "cal.com-14943",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "A rejected reminder update inside the catch block aborts processing of later reminders.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:48-67 reads a batch and processes its snapshot sequentially. After that read, cancellation or rescheduling can remove one row through reminders/reminderScheduler.ts:184-190 and reminders/smsReminderManager.ts:245-255; if scheduling returns successfully, the update at scheduleSMSReminders.ts:169-176 then fails because the row is gone. The catch retries an update of that same missing id at :189-197 without a nested guard, so its rejection escapes the loop before later reminders are processed. packages/lib/server/defaultHandler.ts:17-22 catches the escaped error and returns 500, whereas the supplied diff shows the previous catch only logged.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "The handler deletes reminders after two failed scheduling attempts even when their scheduled time is still in the future.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/features/ee/workflows/api/scheduleSMSReminders.ts:178-197 raises retryCount on an undefined scheduling result or a caught error, and :29-44 deletes rows with retryCount>1 without logging or checking their scheduled date. Thus a pending reminder due in three days that encounters two scheduling exceptions is deleted on the third cron invocation; .github/workflows/cron-scheduleSMSReminders.yml:8 schedules those invocations every 15 minutes. This confirms the behavior, but the finding asks whether the expressly implemented retry cap is desired and the repository provides no requirement for a different threshold, making the general cap/logging concern a policy issue rather than a demonstrated implementation error. Its rate-limit example is inaccurate: packages/lib/checkRateLimitAndThrowError.ts:29-45 changes the SMS lock state on exhaustion instead of deliberately throwing a rate-limit exception.",
+      "confidence": "medium"
+    },
+    {
+      "id": 2,
+      "claim": "Temporarily SMS-locked reminders consume the retry budget and are deleted before they can be delivered after unlocking.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a valid unscheduled reminder due in three days with configured Twilio credentials, packages/features/ee/workflows/lib/reminders/providers/twilioProvider.ts:88-95 returns undefined while its user/team is LOCKED; scheduleSMSReminders.ts:178-187 consequently increments retryCount despite no delivery attempt. Two such cron runs set it to 2 and the third deletes it at :29-44, so unlocking before the due date cannot restore delivery; packages/trpc/server/routers/viewer/admin/setSMSLockState.handler.ts:19-25 explicitly supports unlocking. This newly treats a reversible account restriction as a terminal reminder failure. The test-mode portion is refuted: only sendSMS at twilioProvider.ts:45-58 has that early return, while scheduleSMS at :79-114 has no test-mode check.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The new retry counter and cleanup behavior have no automated test coverage added by the PR.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied diff changes packages/features/ee/workflows/api/scheduleSMSReminders.ts:29-60,178-197 and adds the schema field/migration without adding or modifying tests. A repository-wide search for scheduleSMSReminders finds only the handler cron export at apps/web/pages/api/cron/workflows/scheduleSMSReminders.ts:1 and its GitHub workflow, and retryCount references contain no handler tests. The suggested cases would exercise the new behavior, but the absence of those tests is a coverage concern rather than an independent runtime defect; the unguarded catch write itself is covered by finding 0.",
+      "confidence": "high"
+    }
+  ]
+}

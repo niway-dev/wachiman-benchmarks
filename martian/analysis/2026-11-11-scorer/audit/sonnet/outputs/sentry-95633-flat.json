@@ -1,0 +1,122 @@
+{
+  "pr": "sentry-95633-flat",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "Closing a strategy destroys the factory-owned pool, so a replacement strategy can acknowledge messages without processing them.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/result_consumer.py:131 creates the pool once, and :200-210 and :244-258 reuse it on each create_with_partitions call without resetting it. src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-338 closes that pool; :231-243 sets every worker shutdown flag and shuts down every queue. Construct a factory, create a strategy, let its existing work finish, close it, then create another strategy and submit a valid message: :211-212 attempts put on a shut-down queue, and :317-325 catches the error and marks its offset completed without invoking the processor. The new commit thread at :273-289 passes that offset through result_consumer.py:249-252 as offset + 1, permitting permanent loss. Old outstanding work can instead stall commits, so the finding overstates that every rebalance necessarily commits every dropped message, but the data-loss path is concrete.",
+      "confidence": "high"
+    },
+    {
+      "id": 1,
+      "claim": "The unbounded work queues allow unlimited ingestion without backpressure when processing falls behind.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:184-195 creates Queue() without maxsize and one worker per queue; :204-212 unconditionally records and enqueues each item. For valid messages sharing a subscription whose processor blocks in a database call at :140, the worker cannot consume subsequent items, while submit at :293-325 continues accepting messages and retaining their payloads through WorkItem.message at :308-312. poll at :327-333 only reports metrics, so neither the queue nor the strategy rejects ingestion; a sustained input stream grows both the queue and tracker until memory exhaustion. This contradicts the backpressure guarantee at :253 and is introduced with this processing mode.",
+      "confidence": "high"
+    },
+    {
+      "id": 2,
+      "claim": "Shutdown accumulates a five-second wait per worker and join ignores its caller-supplied timeout while repeating those waits.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:242-243 joins each worker independently for five seconds, and :344-345 discards timeout and calls close, which repeats the pool shutdown at :335-338. With 20 workers already blocked indefinitely in result_processor at :140, close waits about 100 seconds for workers, and a subsequent join(timeout=0) waits about another 100 seconds instead of returning within its budget. The default 20 workers is selected by src/sentry/remote_subscriptions/consumers/result_consumer.py:136, and src/sentry/utils/arroyo.py:227-247 explicitly uses join timeouts to control rebalance work. The timeout violation is demonstrable from these calls; actual broker eviction and configured poll/session limits are not established by the checkout.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "The strategy and hashing docstrings promise stronger guarantees than their implementations provide.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:250-254 promises successful processing before commit, but :144-149 completes offsets even after processor exceptions, and :317-325 does the same after submission errors. Queued work can remain unprocessed because :233-234 sets the loop-exit flag checked at :129 before queues are drained; uncompleted offsets remain outstanding rather than being acknowledged by that shutdown alone. The consistent-hashing description at :198-202 is also inaccurate for hash(key) modulo the queue count, although a fixed process and fixed queue count preserve ordering. As requested, this is an actionable documentation correction rather than independent evidence that normal error skipping is unintended.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Calling the Arroyo commit callback from the strategy background thread may violate its thread-safety or partition-revocation contract.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:270-287 demonstrably invokes commit_function on a daemon thread, and src/sentry/remote_subscriptions/consumers/result_consumer.py:249-258 forwards it to the supplied Arroyo commit callback. close at queue_consumer.py:335-337 signals and joins the commit thread before shutting down workers, which is a relevant lifecycle guard, though the wait at :276 can still be followed by a final callback. requirements-frozen.txt:124 pins sentry-arroyo 2.28.0, but its StreamProcessor and callback implementation are not present in the permitted source tree. Without that implementation or contract, neither unsafe concurrent mutation nor an accepted stale-partition commit can be demonstrated, and background execution alone does not prove a defect.",
+      "confidence": "medium"
+    },
+    {
+      "id": 5,
+      "claim": "wait_until_empty and WorkItem.message are unused, and empty queues do not imply completed processing.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:222-229 has no callers in src and only inspects queue sizes through :214-219. A worker removes its last item at :131 before processing it at :140, so that helper can return True while the processor is still running. WorkItem.message is declared at :31 and assigned at :312 but is never read by the worker, which uses result, partition, and offset at :140 and :149. These are cleanup and naming concerns because no production caller relies on the helper as a completion barrier.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "test_preserves_order_within_group verifies only completion, not the processing sequence.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:302-312 submits five sub1 messages and asserts only that five results arrived. Its decoder at :237-240 returns the same subscription_id and data for every one, while :219-224 records only decoded results, so the differing message offsets cannot expose reordering. The lower-level pool test at :108-135 and uptime test tests/sentry/uptime/consumers/test_results_consumer.py:1739-1785 do provide sequence coverage, limiting the impact to this strategy test coverage gap.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The purported concurrency tests verify completeness without proving simultaneous processing.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:137-173 checks six processed results and three group labels, and :314-325 checks only four processed results; a serial worker can satisfy both. The shared processor at :73-78 performs its short recording operation under one lock, and neither test has a barrier proving overlapping processing. However, the additional assertion that the across-groups test requires three distinct queue indices is false: :164-173 counts group labels extracted from payload strings, so hash collisions do not invalidate that assertion. The concurrency coverage concern remains valid and minor despite that mistaken flakiness rationale.",
+      "confidence": "high"
+    },
+    {
+      "id": 8,
+      "claim": "Queue-distribution and immediate queue-depth assertions can fail despite correct worker behavior.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:98-106 demands that 20 string hashes cover all three queues, whereas src/sentry/remote_subscriptions/consumers/queue_consumer.py:202 only maps each key by hash modulo three and guarantees no such coverage. A hash seed placing those keys in just two buckets fails that test without violating the implementation contract. Independently, after the final submit at test_queue_consumer.py:197, schedule the live workers to consume all ten items before :199; get_stats sums only queued items at queue_consumer.py:214-219, so the assertion total_items > 0 at test_queue_consumer.py:200 fails. This is a concrete newly introduced CI failure path, not evidence of a production distribution failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 9,
+      "claim": "The factory integration test omits replacement-strategy coverage and leaves its commit thread running.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py:412-421 creates one strategy, checks its type and pool size, then calls only factory.shutdown; it never closes a strategy and creates a replacement. src/sentry/remote_subscriptions/consumers/result_consumer.py:180-185 shuts down and clears the factory pool but never signals the strategy shutdown_event. The daemon thread started at queue_consumer.py:270-271 therefore continues its :273-289 loop after the integration test returns, retaining the strategy and pool. The lifecycle coverage gap relates to finding 0, but this comment specifically identifies missing regression coverage and test cleanup rather than another production failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "The offset-gap test observes only the first commit and misses the tracker skipping the gap on a subsequent tick.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:1945-1958 submits offsets 100, 102, and 103, then :1962-1967 exits 0.2 seconds after observing any commit before asserting a maximum of 101 at :1975-1983. With all three completed, queue_consumer.py:86-96 first returns 100; :100-105 removes 100 after commitment, and the next lookup starts at min_offset 102 and returns 103. The factory wrapper at result_consumer.py:249-252 consequently emits 101 and then 104, so the test does not establish its documented persistent gap-blocking invariant. This is a test coverage/premise issue: the scenario contains no submitted-but-unfinished 101, and the finding does not establish loss of an actual Kafka record.",
+      "confidence": "high"
+    },
+    {
+      "id": 12,
+      "claim": "The new direct-strategy uptime tests omit strategy close, leaking commit threads and failing to exercise graceful strategy shutdown.",
+      "verdict": "real-minor",
+      "duplicate_of": 9,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:1991-2005 creates a strategy, sends work, calls factory.shutdown, and asserts only that the factory pool reference became None. The same factory-only cleanup occurs at :1872, :1924, and :1985; result_consumer.py:180-185 does not signal any strategy event, so the daemon loop at queue_consumer.py:270-289 remains alive until close or terminate sets its event at :335-342. This repeats finding 9's missing-close root cause in additional tests, and the graceful-shutdown test checks neither worker draining nor final commits. The claim should be limited to the direct-strategy tests: the Kafka integration test does call processor._shutdown at test_results_consumer.py:2106.",
+      "confidence": "high"
+    },
+    {
+      "id": 13,
+      "claim": "The Kafka integration test uses an unconditional five-second processing window and omits failure-safe consumer and processor cleanup.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/uptime/consumers/test_results_consumer.py:2101-2104 drives the processor for a fixed five seconds without a readiness or committed-offset stopping condition; actual broker timing is not established by these files. More concretely, a failure of commit_count >= 1 at :2120 or committed offset == 5 at :2137 bypasses verify_consumer.close at :2140, and a processor-loop exception bypasses processor._shutdown and factory.shutdown at :2106-2107. The finally at :2142-2146 only deletes the topic, confirming the test cleanup weakness. The topic override is unnecessary for this local path: :2091 supplies the test topic explicitly while result_consumer.py:187-192 decodes using UptimeResultsStrategyFactory.topic_for_codec at src/sentry/uptime/consumers/results_consumer.py:602.",
+      "confidence": "high"
+    }
+  ]
+}

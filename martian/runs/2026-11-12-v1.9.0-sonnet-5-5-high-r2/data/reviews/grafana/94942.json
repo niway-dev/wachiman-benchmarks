@@ -1,0 +1,143 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions always returns false and ignores the feature flag",
+      "body": "Both branches return false (`if enabled { return false }; return false`), and `enabled` holds the negated flag, so the name and variable contradict the result. The `sqlExpressions` toggle (registry.go:1083, \"Enables using SQL and DuckDB functions as Expressions.\") is now a no-op: turning it on still gives a hard error. If the goal is to disable the feature unconditionally, replace the helper with a plain early return and a comment. If it is meant to be re-enabled later, write `return h.features.IsEnabledGlobally(featuremgmt.FlagSqlExpressions)` and let the stub in `pkg/expr/sql/db.go` fail. The error text \"sqlExpressions is not implemented\" is also misleading when the flag is on. The toggle's description is now stale too.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql_command.go",
+      "line": 30,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Legacy node path is disabled only by the stub, with a misleading error",
+      "body": "The reader.go guard covers only the `ExpressionQueryReader` path, which `nodes.go:123` uses only when the `FlagExpressionParser` toggle is on. With the parser toggle off, `nodes.go:159-160` calls `UnmarshalSQLCommand`, then `NewSQLCommand`, then `sql.TablesList`. That reaches the stub `RunCommands`, which returns \"not implemented\". `NewSQLCommand` turns it into a BadRequest with the public message \"error reading SQL command\" (lines 30-36). The result is the same for the user (SQL expressions don't work), but the message blames their SQL instead of saying the feature is disabled. A single check at `NewSQLCommand` would cover both paths and give one clear message.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "SQL-type expression query is read via ExpressionQueryReader",
+      "location": "pkg/expr/reader.go:128",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-132",
+        "pkg/expr/reader.go:160",
+        "pkg/expr/reader.go:194-200",
+        "pkg/services/featuremgmt/registry.go:1083-1088"
+      ],
+      "equivalent_path": "Threshold case at pkg/expr/reader.go:160 gates RecoveryThreshold with h.features.IsEnabledGlobally(...)",
+      "before_after": "The threshold path reads the real flag value. The new SQL path calls enableSqlExpressions, which always returns false, so it returns the error before ReadVal runs whatever the flag says.",
+      "visible_effect": "The caller of ReadQuery gets \"sqlExpressions is not implemented\" for every SQL query.",
+      "failure_mode": "Not applicable. This is a synchronous error return with no state kept. Enabling the toggle has no effect.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand/TablesList now use the stub sql.DB instead of go-duck",
+      "location": "pkg/expr/sql_command.go:96",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql/db.go:12-26",
+        "pkg/expr/sql/parser.go:22-31",
+        "pkg/expr/sql_command.go:30-36",
+        "pkg/expr/sql_command.go:96-105",
+        "pkg/expr/nodes.go:123-160"
+      ],
+      "equivalent_path": "Legacy node path pkg/expr/nodes.go:159-160 (UnmarshalSQLCommand -> NewSQLCommand -> sql.TablesList)",
+      "before_after": "Before, go-duck ran DuckDB. Now TablesList, RunCommands and QueryFramesInto always return errors.New(\"not implemented\"). NewSQLCommand maps the TablesList error to a BadRequest with a generic message. Execute returns rsp.Error with a nil error.",
+      "visible_effect": "Creating an SQL expression fails with \"error reading SQL command\". Execute, if it were ever reached, would put the \"not implemented\" error in the result.",
+      "failure_mode": "The failure is visible to the user as an error, not silent. No state is left behind. Nothing else in the repo imports go-duck or the removed indirect modules, so the go.mod and go.sum removals are consistent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR removes go-duck and replaces it with a stub `sql.DB` whose methods always return \\\"not implemented\\\". It also adds a feature guard in `reader.go` that always rejects SQL queries. The dependency removals look consistent: I found no remaining imports of the removed modules. Both findings are minor. `enableSqlExpressions` has self-contradicting logic and ignores the toggle, and the legacy node path is disabled only by the stub, with a misleading \\\"error reading SQL command\\\" message.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.1779674
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1779674,
+    "usage": {
+      "input": 10,
+      "output": 4058,
+      "cacheRead": 127914,
+      "cacheWrite": 31144
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 43127,
+    "stop": "complete",
+    "notices": []
+  }
+}

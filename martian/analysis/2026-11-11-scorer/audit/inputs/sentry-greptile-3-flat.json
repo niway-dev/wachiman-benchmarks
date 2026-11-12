@@ -1,0 +1,87 @@
+{
+ "pr": "sentry-greptile-3-flat",
+ "checkout": "/tmp/audit-wt/sentry-greptile-3-flat",
+ "audit_ids": [
+  0,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/api/helpers/error_upsampling.py",
+   "line": 137,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Negated `!event.type:error` counts as an error-focused query",
+   "body": "`_is_error_focused_query` checks for the substring `\"event.type:error\"`. `!event.type:error` contains that substring, and so does `event.type:error OR event.type:transaction`. With the discover dataset and all projects allowlisted, both queries get `count()` rewritten to `sum(sample_weight)` even though they mostly return transactions. Transactions have no sample weight (see the docstring at line 106), so those counts come out wrong without any error. One fix is to parse the query with `event_search.parse_search_query` and accept only a positive `event.type:error` filter with no OR. Please also add a test case for `!event.type:error`."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/api/endpoints/organization_events_stats.py",
+   "line": 221,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Eligibility check uses the outer `dataset` and `request.GET[\"query\"]`, not `scoped_dataset` and `query`",
+   "body": "`_get_event_stats` gets `scoped_dataset` and `query` as arguments. The dashboard-split path calls it with `discover` and a rewritten query: `(...) AND !event.type:transaction` at lines 363-364 and 383-388. The new check ignores both arguments and passes the closure's `dataset` (a metrics dataset whenever this path runs; see line 344) plus the raw request query. `_should_apply_sample_weight_transform` returns False for metrics datasets. So error-split dashboard widgets are never upsampled, while the same query on the errors view is. A user comparing the two sees different counts and nothing tells them why. Pass `scoped_dataset` and `query` into the helper instead of reading them from the closure and `request`."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/api/helpers/error_upsampling.py",
+   "line": 95,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`as count` alias probably breaks `transformAliasToInputFormat=1` responses",
+   "body": "The serializer looks up the result column with `resolve_axis_column(query_columns[0], ...)` from the original, untransformed columns (`src/sentry/api/bases/organization_events.py:563-565`, `605-606`). With `transform_alias_to_input_format` it returns the column unchanged, so the lookup key is `count()` (`organization_events.py:75-76`). The builder renames each output column to `function_details.field` (`src/sentry/search/events/builder/base.py:1566-1570`), which here would be `upsampled_count() as count`, not `count()`. If so, these requests get zero-filled series for upsampled projects. Can you confirm the response key with `transformAliasToInputFormat=1`, or emit the alias the serializer expects?"
+  },
+  {
+   "id": 3,
+   "path": "sentry-repo",
+   "line": 1,
+   "severity": "fix",
+   "topic": "cleanup",
+   "title": "Stray submodule gitlink committed",
+   "body": "This adds a gitlink (`Subproject commit a5d2909...`) named `sentry-repo` with no `.gitmodules` entry. It looks like a local checkout that got committed by accident. Remove it from the index (`git rm --cached sentry-repo`)."
+  },
+  {
+   "id": 4,
+   "path": "src/sentry/api/helpers/error_upsampling.py",
+   "line": 30,
+   "severity": "consider",
+   "topic": "perf",
+   "title": "Cache adds a network round-trip to every events-stats request",
+   "body": "The cache lookup runs before the dataset check. Every events-stats request, including spans, transactions, logs and metrics, now makes a cache round-trip for a result that `_should_apply_sample_weight_transform` will throw away anyway. The cached value only replaces an `options.get` plus a membership test, and option values are already cached in-process. Checking the dataset and query first, and dropping the cache, would be cheaper and would also remove the 60s staleness after an allowlist change. Separately, `all(project_id in allowlist ...)` is O(n\u00b7m); convert the allowlist to a `set` first."
+  },
+  {
+   "id": 5,
+   "path": "src/sentry/api/helpers/error_upsampling.py",
+   "line": 67,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "`invalidate_upsampling_cache` is never called, and the docstrings contradict the cache",
+   "body": "Nothing calls `invalidate_upsampling_cache`, and nothing hooks into changes to the `issues.client_error_sampling.project_allowlist` option. The cache-consistency its docstring promises does not exist. The docstring at lines 50-53 says the allowlist is read \"fresh each time\" to have \"the latest configuration state\". The caller caches the result for 60s, so that is not true. Either delete the helper and fix the docstrings, or wire up invalidation."
+  },
+  {
+   "id": 6,
+   "path": "src/sentry/search/events/datasets/discover.py",
+   "line": 1048,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Events with a null `sample_weight` count as 0",
+   "body": "`sum(sample_weight)` skips NULLs. Any error in an allowlisted project stored without a sample weight would drop out of the count entirely, instead of counting as 1. That includes events ingested before the project was allowlisted, and SDKs that send no `client_sample_rate`. Is it guaranteed that every such event has the column set? If not, `sum(ifNull(sample_weight, 1))` would keep those counts correct. Also, `default_result_type=\"number\"` does not match the `toInt64` result; `\"integer\"` matches."
+  },
+  {
+   "id": 7,
+   "path": "tests/sentry/api/helpers/test_error_upsampling.py",
+   "line": 21,
+   "severity": "consider",
+   "topic": "rules",
+   "title": "Test creates the organization directly instead of with a factory helper",
+   "body": "CLAUDE.md (Common Gotchas #7) says to use `self.create_*` helpers rather than creating models directly. Use `self.create_organization(name=\"test-org\")`."
+  }
+ ]
+}

@@ -1,0 +1,66 @@
+{
+ "pr": "cal.com-7232",
+ "checkout": "/tmp/audit-wt/cal.com-7232",
+ "audit_ids": [
+  0,
+  3,
+  4,
+  5
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/ee/workflows/api/scheduleEmailReminders.ts",
+   "line": 53,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "One failed SendGrid cancel stops every other cancellation in the run, and none of the rows get deleted",
+   "body": "The whole cancel loop sits inside one `try` (53-77). If `client.request` throws for any reminder (lines 57-64), for example on a SendGrid error, a rate limit, or a batch that is already cancelled, the loop exits and the rest of the `remindersToCancel` never reach SendGrid. Those emails then go out for bookings that were cancelled or rescheduled. The only trace is a `console.log`.\n\nThe `prisma.workflowReminder.delete(...)` calls pushed at 66-72 are lazy PrismaPromises, so they only run at `await Promise.all` on line 74. That line is skipped when an error is thrown, so even reminders that SendGrid already cancelled keep `cancelled: true`. The next cron run POSTs them first again. If SendGrid rejects a second cancel of the same batch, the same reminder fails on every run, and every cancelled reminder queued behind it stays blocked until its send time passes.\n\nFix: put the try/catch around each reminder, and delete or mark each row right after its own cancel succeeds."
+  },
+  {
+   "id": 1,
+   "path": "packages/features/ee/workflows/lib/reminders/emailReminderManager.ts",
+   "line": 213,
+   "severity": "consider",
+   "topic": "question",
+   "title": "Do the immediate-cancel callers stay under SendGrid's limit on cancelled batches?",
+   "body": "As I understand it, the new design waits to cancel until 1 hour before the send (`scheduleEmailReminders.ts:43-51`) because SendGrid allows only a few batches in `cancel`/`pause` status at once. Three paths still cancel right away, once per reminder, in an un-awaited `forEach`: deleting a workflow (`workflows.tsx:212-218`), deleting a step (`workflows.tsx:519-525`), and rescheduling (`handleNewBooking.ts:966-972`). A workflow with many future bookings could pass that limit in one call. Each failed cancel only reaches `console.log` at line 234, and the row is removed by cascade, so nothing retries it and the email still goes out. Is that limit the reason for the deferral? If so, should these paths also defer, for example by setting `cancelled: true` before the cascade delete? Or is there a reason they can't?"
+  },
+  {
+   "id": 2,
+   "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+   "line": 485,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Reminder cancellation is no longer awaited",
+   "body": "The old code put the `workflowReminder.deleteMany` promises into `prismaPromises` and awaited them at line 497. Now `deleteScheduledEmailReminder`/`deleteScheduledSMSReminder` are called fire-and-forget inside `forEach`, so the `cancelled: true` update or the row delete is never awaited by the handler. On a serverless runtime that freezes once the response is sent, an update that hasn't finished is lost. The cron then never cancels the batch, and the attendee gets a reminder for a cancelled booking. The same pattern was added in `bookings.tsx:488-494`, where the old `await Promise.all(remindersToDelete)` was removed. Collecting the returned promises and awaiting them with the other Prisma work would bring back the old guarantee."
+  },
+  {
+   "id": 3,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 964,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "This try/catch never catches anything",
+   "body": "`deleteScheduledEmailReminder` and `deleteScheduledSMSReminder` are async and handle their own errors (`emailReminderManager.ts:233-235`, `smsReminderManager.ts:187-189`). Inside a synchronous `forEach` their promises are dropped, so the `catch` at 973-975 can never fire and the 'Error while canceling scheduled workflow reminders' log never prints. Either await the calls (`Promise.all(...map(...))`) or remove the try/catch."
+  },
+  {
+   "id": 4,
+   "path": "packages/trpc/server/routers/viewer/workflows.tsx",
+   "line": 216,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "SMS row delete races the cascade delete of the workflow or step",
+   "body": "`deleteScheduledSMSReminder` now ends with `prisma.workflowReminder.delete({ where: { id } })` (`smsReminderManager.ts:182-186`). On workflow delete (216) and step delete (523) it isn't awaited, and it races `workflow.deleteMany` (220) and `workflowStep.delete` (527). Both of those already remove the reminder through `onDelete: Cascade` (`schema.prisma:643`). Whichever finishes second gets 'Record to delete does not exist', which is logged as 'Error canceling reminder'. Nothing is lost, but every such delete produces a misleading error log. Await the cancellations before the cascade delete, or skip the row delete on these paths."
+  },
+  {
+   "id": 5,
+   "path": "packages/trpc/server/routers/viewer/workflows.tsx",
+   "line": 2,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "`Prisma` import is no longer used, and type-only imports became value imports",
+   "body": "After this change `Prisma` (line 9) is unused, and `PrismaPromise` is only used as a type (line 342). The previous `import type` was turned into a value import, and the new list has no trailing comma after `Prisma`. Lines 901-961 are also re-indented inside a block comment. Restore `import type { PrismaPromise }`, remove `Prisma`, and revert the comment reformatting."
+  }
+ ]
+}

@@ -1,0 +1,145 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of grafana-103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "grafana-103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/cache.go",
+      "line": 31,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Denial cache key is ambiguous: name and parent are joined with \"_\" and both can contain \"_\"",
+      "body": "`userPermDenialCacheKey` builds `ns.perm_<uid>_<action>_<name>_<parent>` by plain concatenation. `name` and `parent` come straight from `req.GetName()` and `req.GetFolder()` (service.go:226-227), and Grafana UIDs can contain `_`. Two different requests can therefore produce the same key. For example, `name=\"a_b\", folder=\"c\"` and `name=\"a\", folder=\"b_c\"` both give `..._a_b_c`. Once one of them is denied, `Check` (service.go:117) returns `Allowed:false` for the other for up to 30s. It does this before any permission lookup, and nothing logs it. The result is a silent wrong denial for a resource the user may have access to. Use an unambiguous encoding, such as a separator that cannot appear in a UID, length-prefixing, or hashing the tuple. Also consider a distinct prefix such as `.perm_denied_`, so the key can never share a namespace with `userPermCacheKey` in the same underlying cache.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 979,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Deny-entry test comment contradicts the data it sets up, and the allow side is never exercised",
+      "body": "The comment says \"Allow access to the dashboard to prove this is not checked\", but the permCache entry is `{\"dashboards:uid:dash1\": false}`, which is not an allow. The test therefore does not prove the denial entry takes precedence over cached allow permissions. Set the value to `true`, which is what `getScopeMap` would produce for a granted permission, so the test fails if the denial lookup is moved after the permission lookup. Also, nothing tests that a denial is written after a DB-backed deny (`permDenialCache.Set` at service.go:154), or that the key is isolated per name and folder. There is also no cached-path test for the anonymous identity type in `getCachedIdentityPermissions`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac.go",
+      "line": 103,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "low",
+      "title": "In-process client now has no client-side cache; each Check decodes the user's whole permission map from JSON",
+      "body": "The in-process client previously used a 30s local cache of check results (the removed `newRBACClient`). It now uses `NoopCache`, so every Check reaches `Service.Check`. `getCachedIdentityPermissions` then does `json.Unmarshal` of the user's entire scope map (cache.go:70) before `checkPermission` runs. For users with many permissions this is per-request CPU and allocation that was previously avoided on repeated identical checks. Please confirm this was measured. Also, `NoopCache` is an exported type in package `authz` with no other users in `pkg` (grep). Unexport it, or use an existing no-op cache if authlib has one.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check consults a per-(user,action,name,folder) denial cache, then the cached permission map, before falling back to the DB path",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-158",
+        "pkg/services/authz/rbac/cache.go:30-32",
+        "pkg/services/authz/rbac/cache.go:58-92",
+        "pkg/services/authz/rbac/service.go:32"
+      ],
+      "equivalent_path": "Previously getUserPermissions/getAnonymousPermissions read permCache themselves and then ran checkPermission; the client-side authlib cache (30s) fronted the in-process service.",
+      "before_after": "Before: the cache read lived inside getUserPermissions (removed at service.go:379) and a cached map was always used for the decision. After: a cached map that does not allow the request falls through to the DB (service.go:131-139), and a DB-backed deny is cached for shortCacheTTL (service.go:153-155). The cache hit and miss metrics are moved up into Check and List.",
+      "visible_effect": "A deny is served from cache for up to 30s even if the permission is granted in the meantime. Same staleness bound as permCache (shortCacheTTL=30s, service.go:32).",
+      "failure_mode": "The denial key can collide across different name/folder pairs (cache.go:31), which gives a silent wrong deny. Cache Get/Set failures are only logged and fall through to the DB (cache.go:65-90).",
+      "evidence_checked": true
+    },
+    {
+      "action": "List reads cached permissions first and falls back to getIdentityPermissions",
+      "location": "pkg/services/authz/rbac/service.go:180",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:180-192",
+        "pkg/services/authz/rbac/service.go:342-368",
+        "pkg/services/authz/rbac/service.go:379-380"
+      ],
+      "equivalent_path": "Check's cached lookup at service.go:123",
+      "before_after": "Before: a single getIdentityPermissions call, with the cache check inside. After: the cache is checked first (errors are swallowed) and the DB path runs on any error. getUserPermissions no longer rechecks the cache inside singleflight (service.go:379-380). Concurrent misses are still coalesced by sf.Do.",
+      "visible_effect": "The same List results; the cache metric is now emitted in List.",
+      "failure_mode": "If GetUserIdentifiers fails in the cached path, the error is swallowed and retried in the DB path, which returns the error (service.go:186-191). Nothing is lost.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The caching restructure in `Check` and `List` is sound in outline. The main defect is the denial cache key (`pkg/services/authz/rbac/cache.go:31`). It joins free-form `name` and `folder` strings with `_`, so different resources can share a key and get a silent, cached wrong denial. The deny-entry test also sets a `false` value where its comment says it grants access. Dropping the in-process client cache (`NoopCache`) shifts per-check JSON decoding of the whole permission map onto the service, which is worth confirming.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.17924840000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.17924840000000003,
+    "usage": {
+      "input": 6,
+      "output": 5914,
+      "cacheRead": 52524,
+      "cacheWrite": 28711
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 55805,
+    "stop": "complete",
+    "notices": []
+  }
+}

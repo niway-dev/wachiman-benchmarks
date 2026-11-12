@@ -1,0 +1,128 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-107534-flat` of grafana-107534-flat against d9a8253640464014aa3662c91131278990cfb828 (merge-base d9a8253)",
+    "repository": {
+      "name": "grafana-107534-flat"
+    },
+    "base": {
+      "sha": "d9a8253640464014aa3662c91131278990cfb828",
+      "ref": "d9a8253640464014aa3662c91131278990cfb828"
+    },
+    "head": {
+      "sha": "42e1895430aaa5b1ddc86ed6032dda5e762e0717",
+      "ref": "pr-107534-flat"
+    },
+    "title": "pr-107534-flat",
+    "description": "Advanced Query Processing Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts"
+    ],
+    "reviewed": [
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+      "line": 299,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "applyTemplateVariables now runs 2–3 times on the same query, and it is not idempotent",
+      "body": "`runSplitQuery` now calls `datasource.applyTemplateVariables(query, scopedVars, request.filters)` (line 299). `runSplitGroupedQueries` then sends these already-interpolated targets to `datasource.runQuery` (querySplitting.ts:180), which calls `super.query`. `DataSourceWithBackend.query` calls `applyTemplateVariables` again on every target, with the same `request.filters` (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185). On the shard path it happens three times: `runShardSplitQuery` applies it (shardQuerySplitting.ts:52), passes the result to `runSplitQuery` (shardQuerySplitting.ts:163), which applies it again, and then the backend wrapper applies it a third time.\n\n`applyTemplateVariables` is not safe to repeat (datasource.ts:1127-1130). It runs `templateSrv.replace` and then appends the ad-hoc filters, so each later pass:\n- re-runs `templateSrv.replace` over text that was already substituted. That text includes ad-hoc filter values, which the first pass appends after replacing. If a variable value or ad-hoc value contains `$name` and a variable called `name` exists, it gets replaced. The query changes and nothing tells the user.\n- appends the ad-hoc filters again. For stream-selector matchers `addFilterToStreamSelector` removes duplicates (modifyQuery.ts:494). For queries with a parser, `addFilterAsLabelFilter` (modifyQuery.ts:511-541) does not, so `{a=\"b\"} | json` with ad-hoc `x=y` reaches Loki as `... | x=`y` | x=`y`` (three copies on the shard path). That is the query the Query Inspector shows.\n\nBefore this PR, the non-shard split path applied it once, in `super.query`. The shard path applied `interpolateVariablesInQueries` without ad-hoc filters, then the backend wrapper applied it once.\n\nFix: interpolate exactly once. One way is to interpolate only in `runShardSplitQuery`/`runSplitQuery` for the values the splitting logic reads (expr for `querySupportsSplitting`/`isLogsQuery`, step for `calculateStep`), and keep sending the raw targets to `runQuery`. Another is to stop the backend wrapper from re-applying for these sub-requests. Either way, `runSplitQuery` should not interpolate again when `runShardSplitQuery` calls it. The tests do not catch this because they mock `runQuery`. The assertion `toHaveBeenCalledTimes(5)` in shardQuerySplitting.test.ts:112 encodes the 1 + 4 repeated calls instead of the intended single interpolation.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "runSplitQuery interpolates template variables and ad-hoc filters on targets before splitting",
+      "location": "public/app/plugins/datasource/loki/querySplitting.ts:296-299",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/querySplitting.ts:174-180",
+        "public/app/plugins/datasource/loki/querySplitting.ts:327-329",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185",
+        "public/app/plugins/datasource/loki/datasource.ts:350-357",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "public/app/plugins/datasource/loki/modifyQuery.ts:511-541"
+      ],
+      "equivalent_path": "Non-split path: LokiDatasource.query -> runQuery -> DataSourceWithBackend.query, which applies applyTemplateVariables once per target",
+      "before_after": "The equivalent path interpolates once, inside super.query. The new path interpolates in runSplitQuery and then again in super.query (via runQuery), so each query is interpolated twice; on the shard path it is three times.",
+      "visible_effect": "Interpolated expr/step decide splitting (querySupportsSplitting, isLogsQuery, calculateStep). The same targets go to Loki through runQuery, with ad-hoc filters and replace applied again. The duplicated filters show in the executed query.",
+      "failure_mode": "No new async call. The failure is silent: `$name` text gets substituted again, and parser-stage ad-hoc filters are duplicated.",
+      "evidence_checked": true
+    },
+    {
+      "action": "runShardSplitQuery uses applyTemplateVariables (with ad-hoc filters, step, legendFormat) instead of interpolateVariablesInQueries",
+      "location": "public/app/plugins/datasource/loki/shardQuerySplitting.ts:49-52",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/datasource.ts:429-447",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:154-166",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:252-275",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:148-191"
+      ],
+      "equivalent_path": "Before: interpolateVariablesInQueries (datasource.ts:429-447) interpolated expr only, set the datasource ref and added no ad-hoc filters, because none were passed",
+      "before_after": "Now the step and legend are interpolated too, and ad-hoc filters are included in the selector used to fetch __stream_shard__ values. The datasource ref is no longer set, and DataSourceWithBackend falls back to this.getRef() when q.datasource is undefined. The interpolated queries then go through runSplitQuery (line 163), which interpolates again.",
+      "visible_effect": "Shard values are fetched with the ad-hoc-filtered selector. The sub-requests carry the filters several times (see finding).",
+      "failure_mode": "If fetchLabelValues rejects, the error is caught and logged, and the group runs without shards (shardQuerySplitting.ts:270-275). Nothing changes there.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This PR interpolates Loki queries before query splitting and shard splitting, so `$step` and dashboard variables are resolved before the splitting decisions (expr, step). Those values are now correct. The problem is that the interpolated targets are still sent through `runQuery` → `DataSourceWithBackend.query`, which calls `applyTemplateVariables` again. On the shard path, `runSplitQuery` adds another pass. As a result, variables and ad-hoc filters are applied 2–3 times. That function is not safe to repeat: queries with a parser get duplicated ad-hoc label filters, and `$name` text is substituted a second time. The new tests mock `runQuery`, so they cannot catch this, and the shard test's `toHaveBeenCalledTimes(5)` asserts the repeated calls. I read the code to reach this; I did not run the tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 63,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.596421
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d9a8253640464014aa3662c91131278990cfb828"
+  },
+  "execution": {
+    "costUsdEstimate": 0.596421,
+    "usage": {
+      "input": 24,
+      "output": 10634,
+      "cacheRead": 314505,
+      "cacheWrite": 40093
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 117991,
+    "stop": "complete",
+    "notices": []
+  }
+}

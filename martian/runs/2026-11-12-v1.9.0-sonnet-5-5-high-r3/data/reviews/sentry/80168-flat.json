@@ -1,0 +1,144 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80168-flat` of sentry-80168-flat against bdd229e3f22e307fe40b30ef99e92ff3f6723da4 (merge-base bdd229e)",
+    "repository": {
+      "name": "sentry-80168-flat"
+    },
+    "base": {
+      "sha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4",
+      "ref": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+    },
+    "head": {
+      "sha": "781605afac1aa48e829bb514faf813eed48a37e4",
+      "ref": "pr-80168-flat"
+    },
+    "title": "pr-80168-flat",
+    "description": "feat(workflow_engine): Add in hook for producing occurrences from the stateful detector",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "reviewed": [
+      "src/sentry/incidents/grouptype.py",
+      "src/sentry/workflow_engine/models/detector.py",
+      "src/sentry/workflow_engine/processors/detector.py",
+      "tests/sentry/workflow_engine/processors/test_detector.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/incidents/grouptype.py",
+      "line": 11,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "MetricAlertDetectorHandler is now abstract and cannot be instantiated",
+      "body": "`MetricAlertDetectorHandler` now subclasses `StatefulDetectorHandler` with only `pass`. That base class declares abstract `counter_names`, `get_dedupe_value`, `get_group_key_values` (src/sentry/workflow_engine/processors/detector.py:142-164) and the newly added `build_occurrence_and_event_data` (line 166-170). None of them is implemented here. `Detector.detector_handler` returns `group_type.detector_handler(self)` (src/sentry/workflow_engine/models/detector.py:86). For any detector with type `metric_alert_fire`, that call raises `TypeError: Can't instantiate abstract class`, and `process_detectors` (processors/detector.py:53) does not catch it. The old stub returned `[]` and did not raise.\n\nI found no non-test caller of `process_detectors` or of `MetricAlertFire`, so nothing breaks today. But the registered group type is now unusable, and a later caller will crash on the first metric-alert detector. The `# TODO: This will be a stateful detector...` comment on line 10 is also stale now. Either implement the abstract methods with placeholders, or keep the previous non-stateful stub (returning `{}`) until the real implementation lands.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 244,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Mock occurrence builder ignores `value`, so tests pass inputs that don't match what they assert",
+      "body": "`build_mock_occurrence_and_event` takes `value` but never uses it. Several tests exploit that: `test_results_on_change` evaluates with value 100 and `test_dedupe` with value 8, yet both build the expected occurrence with value 6. `TestEvaluateGroupKeyValue.test_dedupe` builds the expected occurrence for group key `val1`, but the result is for `group_key`. These pass only because the mock is insensitive to both. A regression where `evaluate_group_key_value` passes the wrong `value` or `group_key` to `build_occurrence_and_event_data` would go undetected. Have the mock put `value` into `evidence_data` (or the subtitle) and use the real inputs in the expectations.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/workflow_engine/processors/test_detector.py",
+      "line": 161,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No process_detectors test covers the resolve (StatusChangeMessage) path",
+      "body": "`process_detectors` now iterates `detector_results.values()` and calls `create_issue_occurrence_from_result`. The new tests only assert `produce_occurrence_to_kafka` for the occurrence case (`PayloadType.OCCURRENCE`). The `PayloadType.STATUS_CHANGE` branch is not exercised through `process_detectors`. Consider adding a test that goes active, then OK, and asserts the status-change payload is produced.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Detector.detector_handler instantiates MetricAlertDetectorHandler, which is now a StatefulDetectorHandler subclass",
+      "location": "src/sentry/incidents/grouptype.py:11",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/incidents/grouptype.py:11-12",
+        "src/sentry/workflow_engine/processors/detector.py:142-170",
+        "src/sentry/workflow_engine/models/detector.py:86",
+        "src/sentry/workflow_engine/processors/detector.py:53"
+      ],
+      "equivalent_path": "Test handler MockDetectorStateHandler implements all abstract methods (tests/sentry/workflow_engine/processors/test_detector.py:27-39)",
+      "before_after": "Before: the stub handler returned [] from evaluate. After: it has abstract methods unimplemented, so instantiation raises TypeError.",
+      "visible_effect": "No production caller of process_detectors found, so no user-visible effect yet.",
+      "failure_mode": "TypeError from group_type.detector_handler(self) at src/sentry/workflow_engine/models/detector.py:86, uncaught in process_detectors (processors/detector.py:53).",
+      "evidence_checked": true
+    },
+    {
+      "action": "process_detectors now consumes a dict of results and produces occurrences for each",
+      "location": "src/sentry/workflow_engine/processors/detector.py:58-65",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/workflow_engine/processors/detector.py:237-244",
+        "src/sentry/workflow_engine/processors/detector.py:60-62"
+      ],
+      "equivalent_path": "Previous list-based loop with duplicate group-key detection",
+      "before_after": "Duplicate detection is removed. Dict keys by result.group_key make duplicates impossible, and get_group_key_values already returns a dict.",
+      "visible_effect": "None directly; produces Kafka occurrences.",
+      "failure_mode": "A custom DetectorHandler returning a dict whose key differs from result.group_key is not checked.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The main problem is `MetricAlertDetectorHandler` in `src/sentry/incidents/grouptype.py`. It now subclasses `StatefulDetectorHandler` without implementing the abstract methods, so instantiating it raises `TypeError`. I found no non-test caller of `process_detectors`, so nothing breaks yet. The processor and model changes look correct. Two test-quality notes remain: the mock occurrence builder ignores its `value` argument, and no test covers the status-change path through `process_detectors`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 400,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.1829578
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1829578,
+    "usage": {
+      "input": 10,
+      "output": 4156,
+      "cacheRead": 131418,
+      "cacheWrite": 32059
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 38980,
+    "stop": "complete",
+    "notices": []
+  }
+}

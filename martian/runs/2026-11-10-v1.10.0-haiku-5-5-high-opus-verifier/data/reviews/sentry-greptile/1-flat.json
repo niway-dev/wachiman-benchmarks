@@ -1,0 +1,757 @@
+{
+  "format": "wachiman.review-result/2",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-1-flat` of sentry-greptile-1-flat against 74618671bff8114fcec8fe77c6260c9a2bc2864a (merge-base 7461867)",
+    "repository": {
+      "name": "sentry-greptile-1-flat"
+    },
+    "base": {
+      "sha": "74618671bff8114fcec8fe77c6260c9a2bc2864a",
+      "ref": "74618671bff8114fcec8fe77c6260c9a2bc2864a"
+    },
+    "head": {
+      "sha": "20fe38a18abe28df711740ce01f6010ddd69b763",
+      "ref": "pr-1-flat"
+    },
+    "title": "pr-1-flat",
+    "description": "Enhanced Pagination Performance for High-Volume Audit Logs",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.10.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.321",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/api/endpoints/organization_auditlogs.py",
+      "src/sentry/api/paginator.py",
+      "src/sentry/utils/cursors.py"
+    ],
+    "reviewed": [
+      "src/sentry/api/endpoints/organization_auditlogs.py",
+      "src/sentry/api/paginator.py",
+      "src/sentry/utils/cursors.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 838,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "OptimizedCursorPaginator raises TypeError on every non-empty page",
+      "body": "`get_item_key` (lines 838-840) is the numeric version copied from `Paginator`. The endpoint sorts with `order_by=\"-datetime\"` (organization_auditlogs.py:80), so `getattr(item, \"datetime\")` is a `datetime`, and `math.ceil`/`math.floor` raise TypeError on it. `build_cursor` calls the key on the first result whenever the page is non-empty (cursors.py:121-122, 137, 160), so `?optimized_pagination=true` returns a 500 for any admin or global-access caller when the org has at least one audit log. Only empty pages succeed, which is why a shallow test would not notice.\n\nThe cursor side is also wrong: `value_from_cursor` (lines 842-843) returns the raw integer, while `DateTimePaginator.value_from_cursor` (paginator.py:238-241) converts it to a datetime. The next-page `WHERE datetime <= %s` (paginator.py:121-126) would then compare a timestamp with an integer.\n\n`get_result` (lines 845-911) is a near-copy of `BasePaginator.get_result` (136-215). Subclassing `DateTimePaginator` and keeping only the negative-offset branch would fix the key and value conversion in one place.",
+      "origin": "introduced",
+      "originReason": "This PR adds the whole OptimizedCursorPaginator class and the endpoint path that uses it.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/api/paginator.py",
+          "line": 838
+        }
+      ],
+      "verification": {
+        "candidateId": "c1",
+        "status": "supported",
+        "reason": "`OptimizedCursorPaginator.get_item_key` calls `math.floor`/`math.ceil` on `getattr(item, 'datetime')`, and passing a datetime to those raises TypeError. `_build_next_values` calls `key(results[0])` and `key(results[-1])` whenever the page has results, so any non-empty page fails. `value_from_cursor` also returns the raw integer, while `DateTimePaginator` converts it to a datetime.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 838
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 842
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 233
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 238
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 121
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 80
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/base.py",
+            "line": 533
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+      "line": 71,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Line 71 dereferences organization_context.member on every request, including the default path",
+      "body": "`enable_advanced` is evaluated before the `use_optimized` check and for every request. `RpcUserOrganizationContext.member` is typed `RpcOrganizationMember | None` and is documented as None when the user has no membership (src/sentry/organizations/services/organization/model.py:344-346). `OrganizationAuditPermission` can pass without membership: `OrganizationPermission.has_object_permission` checks scopes (src/sentry/api/bases/organization.py:86-94), and the audit permission also accepts `is_active_superuser(request)` (lines 113-124). For a caller who passes the permission but is not `request.user.is_superuser`, `.has_global_access` on None raises AttributeError, so the default GET that worked before now returns a 500. I did not trace sentry-app or API-token auth to confirm `member` is None for them.\n\nSuggested fix: compute the flag only when `use_optimized` is true, and guard the None, for example `organization_context.member is not None and organization_context.member.has_global_access`.",
+      "origin": "introduced",
+      "originReason": "The member dereference was added by this diff. Before, the endpoint called paginate directly without touching `member`.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+          "line": 71
+        }
+      ],
+      "verification": {
+        "candidateId": "c2",
+        "status": "supported",
+        "reason": "Line 71 runs on every request and reads `organization_context.member.has_global_access` with no None check. `member` is typed Optional and is documented as None for non-members. The context is built with `user_id=request.user.id`, and `OrganizationAuditPermission` passes on scopes alone, so a caller with scopes but no membership who is not `is_superuser` (for example a non-user token) would get an AttributeError on the default path.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 71
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/organizations/services/organization/model.py",
+            "line": 346
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 94
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 124
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 289
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 182,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Shared BasePaginator now silently clamps negative offsets for every paginator; the comment is wrong",
+      "body": "The clamp at lines 182-184 changes `BasePaginator.get_result`, which `Paginator` and `DateTimePaginator` use on every audit-log and other list request. Legitimate cursors never carry a negative offset (`prev_offset`/`next_offset` only increment), so normal behaviour is unchanged. The change only affects crafted cursors such as `v:-5:0`. For those, a non-prev request now returns the page from 0 instead of failing. A prev request with a negative offset still reaches the slice and fails, so the two directions behave differently.\n\nThe comment says \"the underlying queryset will handle boundary conditions\". I believe Django rejects a negative slice start (`AssertionError: Negative indexing is not supported`), which would mean the clamp replaces a 500 with a silent result. I did not read Django's QuerySet in this checkout. The change is also not needed by the new paginator, which has its own copy of the logic. Consider reverting lines 179-184 to the previous `queryset[offset:stop]` form, or doing the clamp only in the new class.",
+      "origin": "introduced",
+      "originReason": "The diff replaced `queryset[offset:stop]` with the clamped `start_offset` form.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/api/paginator.py",
+          "line": 182
+        }
+      ],
+      "verification": {
+        "candidateId": "c3",
+        "status": "supported",
+        "reason": "The shared `BasePaginator.get_result` now clamps negative offsets to 0, but only for non-prev cursors. `Cursor.from_string` accepts negative offsets such as `v:-5:0`, so crafted cursors now return page 0 silently, while prev cursors with a negative offset still reach the negative slice. The comment saying the queryset 'will handle boundary conditions' does not match this. Normal cursors are unaffected, so 'consider' fits.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 182
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 184
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 59
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 877,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Negative-offset branch raises instead of providing the access its comments describe",
+      "body": "When `enable_advanced_features` is true and `cursor.offset < 0`, the code slices `queryset[start_offset:stop]` with a negative start (line 882). Django rejects negative slice bounds (AssertionError: Negative indexing is not supported; I did not read Django in this checkout), so a superuser or global-access member who sends a negative cursor offset gets a 500.\n\nThe comments at lines 874-880 say this enables \"access to data beyond normal pagination bounds\" and that it is \"safe because permissions are checked at the queryset level\". That describes a bypass that does not exist. The queryset is org-scoped (organization_auditlogs.py:48), so there is no exposure today, but the comment would mislead anyone who tries to make the branch work.\n\nRemove the branch or implement a real reverse query, and correct the comments.",
+      "origin": "introduced",
+      "originReason": "The negative-offset branch and its comments are new in this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/api/paginator.py",
+          "line": 877
+        }
+      ],
+      "verification": {
+        "candidateId": "c4",
+        "status": "supported",
+        "reason": "With `enable_advanced_features` set and `cursor.offset < 0`, line 882 slices the QuerySet with a negative start, which Django rejects. If that raise did not happen, the non-empty-page TypeError from c1 would still fail the request. The comments at lines 876-879 describe a negative-slicing ability and 'access to data beyond normal pagination bounds' that does not exist. The queryset is org-scoped, so nothing leaks.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 877
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 882
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 48
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 59
+          }
+        ]
+      },
+      "tier": "Important",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/utils/cursors.py",
+      "line": 26,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Comment claims negative offsets enable reverse pagination; this file's behaviour is unchanged",
+      "body": "The added comment (lines 26-27) says the change \"enables efficient reverse pagination from arbitrary positions in large datasets\". The diff only adds the comment. `self.offset = int(offset)` (line 28) is the same as before, and no negative-offset handling exists in this file or in the paginators that consume it. The comment describes a feature that does not exist. Remove it, or keep it only if the feature is implemented.",
+      "origin": "introduced",
+      "originReason": "The comment was added by this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/utils/cursors.py",
+          "line": 26
+        }
+      ],
+      "verification": {
+        "candidateId": "c5",
+        "status": "supported",
+        "reason": "The only change in cursors.py is the added comment. `self.offset = int(offset)` is unchanged, and nothing anywhere implements working reverse pagination from negative offsets, so the comment is misleading.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 26
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 28
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/paginator.py",
+      "line": 821,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "New paginator and opt-in query parameter have no tests",
+      "body": "The PR adds `OptimizedCursorPaginator` and the `optimized_pagination` query parameter, and the diff touches no test files. A single request with one audit-log row and `?optimized_pagination=true` by an admin would have exposed the TypeError in `get_item_key` (paginator.py:838-840). Add an endpoint test for the opt-in path with non-empty results, plus a test for a non-member caller on the default path (see the line 71 finding).",
+      "origin": "introduced",
+      "originReason": "The new paginator and query parameter that lack tests are added by this diff.",
+      "originEvidence": [
+        {
+          "snapshot": "head",
+          "path": "src/sentry/api/paginator.py",
+          "line": 821
+        }
+      ],
+      "verification": {
+        "candidateId": "c6",
+        "status": "supported",
+        "reason": "The diff touches only paginator.py, organization_auditlogs.py and cursors.py, with no test files. One endpoint test with a single audit-log row and `optimized_pagination=true` would have hit the `get_item_key` TypeError.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 821
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 838
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 70
+          }
+        ]
+      },
+      "tier": "Nit",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Admin or global-access caller sends ?optimized_pagination=true; the GET is served by OptimizedCursorPaginator",
+      "location": "src/sentry/api/endpoints/organization_auditlogs.py:73-83",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/endpoints/organization_auditlogs.py:73-83",
+        "src/sentry/api/paginator.py:838-840",
+        "src/sentry/api/paginator.py:842-843",
+        "src/sentry/api/paginator.py:897-906",
+        "src/sentry/utils/cursors.py:121-122",
+        "src/sentry/api/base.py:540-541"
+      ],
+      "equivalent_path": "src/sentry/api/endpoints/organization_auditlogs.py:85-91 (DateTimePaginator, same queryset and order_by)",
+      "before_after": "Before: one paginate call with DateTimePaginator, which converts datetime keys to ms and back. After: the same queryset goes to OptimizedCursorPaginator, whose get_item_key calls math.floor/ceil on a datetime and whose value_from_cursor returns the raw int.",
+      "visible_effect": "Any page with at least one row returns 500. Empty pages succeed.",
+      "failure_mode": "TypeError from math.floor/ceil propagates. base.py:540-541 catches only BadPaginationError, so this is a visible 500, not a silent result.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Every GET to the audit-log endpoint now evaluates organization_context.member.has_global_access before choosing a paginator",
+      "location": "src/sentry/api/endpoints/organization_auditlogs.py:70-71",
+      "status": "open",
+      "evidence": [
+        "src/sentry/api/endpoints/organization_auditlogs.py:70-71",
+        "src/sentry/organizations/services/organization/model.py:344-346",
+        "src/sentry/api/bases/organization.py:86-94",
+        "src/sentry/api/bases/organization.py:113-124"
+      ],
+      "equivalent_path": "src/sentry/api/endpoints/organization_auditlogs.py:85-91 (the default path had no such evaluation)",
+      "before_after": "Before: no attribute access on organization_context.member. After: attribute access on every request, unless the caller is request.user.is_superuser.",
+      "visible_effect": "For a caller who passes the permission without a membership, the default request now returns 500 instead of the audit log.",
+      "failure_mode": "AttributeError on None; visible 500. The permission gate is unchanged, so this is not an access bypass.",
+      "open_question": "Can a caller pass OrganizationAuditPermission with org:write scope, or through is_active_superuser, while request.user.is_superuser is false and organization_context.member is None? Trace determine_access and the sentry-app and API-token paths.",
+      "candidates": [
+        "src/sentry/auth/access.py",
+        "src/sentry/organizations/services/organization/impl.py",
+        "src/sentry/api/bases/organization.py"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "enable_advanced_features=True and order_by travel from the endpoint through paginate() into the paginator constructor",
+      "location": "src/sentry/api/endpoints/organization_auditlogs.py:76-83",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/base.py:514",
+        "src/sentry/api/base.py:533",
+        "src/sentry/api/base.py:547-552",
+        "src/sentry/utils/pagination_factory.py:65-66",
+        "src/sentry/api/paginator.py:834-836"
+      ],
+      "equivalent_path": "src/sentry/api/base.py:533 with src/sentry/utils/pagination_factory.py:65-66 (the same kwargs path used by DateTimePaginator)",
+      "before_after": "Before: paginator_kwargs built from queryset/order_by/on_results. After: the new kwarg is added. on_results is a named paginate() parameter, so it is not passed to the paginator and is applied once at base.py:547-552.",
+      "visible_effect": "None on the paginator construction path. There is no double serialization.",
+      "failure_mode": "None on this path. A TypeError from the key appears later, in get_result.",
+      "evidence_checked": true
+    },
+    {
+      "action": "BasePaginator.get_result now clamps a negative cursor offset to 0 for non-prev cursors (shared by every BasePaginator subclass)",
+      "location": "src/sentry/api/paginator.py:182-184",
+      "status": "open",
+      "evidence": [
+        "src/sentry/api/paginator.py:176-184",
+        "src/sentry/utils/cursors.py:121-137"
+      ],
+      "equivalent_path": "src/sentry/api/paginator.py:184 before the change: queryset[offset:stop] with no clamp",
+      "before_after": "Before: a crafted negative offset went straight to the slice. After: non-prev requests clamp to 0. Prev requests keep the negative value and still reach the slice.",
+      "visible_effect": "A crafted non-prev cursor with a negative offset returns the first page instead of failing. Legitimate cursors are unchanged, since offsets are never negative and max(0, offset) is then the identity.",
+      "failure_mode": "A crafted prev cursor with a negative offset still fails in the slice. Whether the pre-change non-prev case was a 500 depends on Django rejecting negative slice starts.",
+      "open_question": "Does Django's QuerySet.__getitem__ raise on a negative slice start? If it does, the pre-change non-prev path was a 500 and the clamp turns it into a silent result.",
+      "candidates": [
+        "Django's db/models/query.py in the installed Django package (not in this checkout)"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Cursor.__init__ gets a comment about negative offsets",
+      "location": "src/sentry/utils/cursors.py:26-28",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/utils/cursors.py:26-28"
+      ],
+      "equivalent_path": "src/sentry/utils/cursors.py:28 (self.offset = int(offset), unchanged)",
+      "before_after": "No code change; the comment is the only change.",
+      "visible_effect": "None.",
+      "failure_mode": "None. The comment is inaccurate for future readers.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The negative-offset branch of OptimizedCursorPaginator.get_result",
+      "location": "src/sentry/api/paginator.py:877-882",
+      "status": "open",
+      "evidence": [
+        "src/sentry/api/paginator.py:874-882",
+        "src/sentry/api/endpoints/organization_auditlogs.py:48"
+      ],
+      "equivalent_path": "src/sentry/api/paginator.py:884-886 (the clamped slice used otherwise)",
+      "before_after": "Before: no such branch exists. After: when enable_advanced_features is set and the offset is negative, the code slices with a negative start.",
+      "visible_effect": "A crafted negative cursor offset from a superuser or global-access member gets a 500.",
+      "failure_mode": "Django's negative-slice rejection (not verified in this checkout) propagates as a 500.",
+      "open_question": "Confirm that Django rejects the negative slice start on this queryset.",
+      "candidates": [
+        "Django's db/models/query.py in the installed Django package"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Legitimate paging through BasePaginator (non-negative offsets) after the change",
+      "location": "src/sentry/api/paginator.py:182-184",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/paginator.py:182-184",
+        "src/sentry/utils/cursors.py:121-137"
+      ],
+      "equivalent_path": "src/sentry/api/paginator.py:184 before the change",
+      "before_after": "For offsets >= 0 and for any prev cursor, start_offset equals the old offset, so the same slice is taken.",
+      "visible_effect": "None for normal cursors.",
+      "failure_mode": "None for normal cursors.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The opt-in optimized pagination path cannot serve any page that has rows. OptimizedCursorPaginator inherits a numeric get_item_key and gets a datetime sort key, so math.floor/ceil raises TypeError (blocker). Two further defects: the line-71 membership check runs on the default path and can raise for non-member callers who pass the permission, and the negative-offset branch and the shared BasePaginator clamp rely on Django slicing behaviour the checkout does not show. The PR has no tests, so none of this was caught. The PR body's \"performance\" claim is not supported: the new path issues the same query as DateTimePaginator, and the diff contains no measurement. I did not run any code. docs/adr is not present in the checkout, so there was no ADR-based check.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 138,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 18,
+      "costUsd": 0.028870069999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "74618671bff8114fcec8fe77c6260c9a2bc2864a"
+  },
+  "execution": {
+    "costUsdEstimate": 0.31274307,
+    "usage": {
+      "input": 28,
+      "output": 32782,
+      "cacheRead": 419032,
+      "cacheWrite": 79631
+    },
+    "calls": 2,
+    "callsWithOutput": 1,
+    "turns": 18,
+    "durationMs": 207704,
+    "stop": "complete",
+    "notices": []
+  },
+  "verification": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "status": "verified",
+    "costUsd": 0.28387300000000004,
+    "entries": [
+      {
+        "id": "c1",
+        "path": "src/sentry/api/paginator.py",
+        "line": 838,
+        "title": "OptimizedCursorPaginator raises TypeError on every non-empty page",
+        "topic": "bug",
+        "severity": "blocker",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "This PR adds the whole OptimizedCursorPaginator class and the endpoint path that uses it.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 838
+          }
+        ],
+        "reason": "`OptimizedCursorPaginator.get_item_key` calls `math.floor`/`math.ceil` on `getattr(item, 'datetime')`, and passing a datetime to those raises TypeError. `_build_next_values` calls `key(results[0])` and `key(results[-1])` whenever the page has results, so any non-empty page fails. `value_from_cursor` also returns the raw integer, while `DateTimePaginator` converts it to a datetime.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 838
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 842
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 233
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 238
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 121
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 137
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 80
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/base.py",
+            "line": 533
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c2",
+        "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+        "line": 71,
+        "title": "Line 71 dereferences organization_context.member on every request, including the default path",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The member dereference was added by this diff. Before, the endpoint called paginate directly without touching `member`.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 71
+          }
+        ],
+        "reason": "Line 71 runs on every request and reads `organization_context.member.has_global_access` with no None check. `member` is typed Optional and is documented as None for non-members. The context is built with `user_id=request.user.id`, and `OrganizationAuditPermission` passes on scopes alone, so a caller with scopes but no membership who is not `is_superuser` (for example a non-user token) would get an AttributeError on the default path.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 71
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/organizations/services/organization/model.py",
+            "line": 346
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 94
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 124
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/bases/organization.py",
+            "line": 289
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c3",
+        "path": "src/sentry/api/paginator.py",
+        "line": 182,
+        "title": "Shared BasePaginator now silently clamps negative offsets for every paginator; the comment is wrong",
+        "topic": "bug",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The diff replaced `queryset[offset:stop]` with the clamped `start_offset` form.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 182
+          }
+        ],
+        "reason": "The shared `BasePaginator.get_result` now clamps negative offsets to 0, but only for non-prev cursors. `Cursor.from_string` accepts negative offsets such as `v:-5:0`, so crafted cursors now return page 0 silently, while prev cursors with a negative offset still reach the negative slice. The comment saying the queryset 'will handle boundary conditions' does not match this. Normal cursors are unaffected, so 'consider' fits.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 182
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 184
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 59
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c4",
+        "path": "src/sentry/api/paginator.py",
+        "line": 877,
+        "title": "Negative-offset branch raises instead of providing the access its comments describe",
+        "topic": "bug",
+        "severity": "fix",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The negative-offset branch and its comments are new in this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 877
+          }
+        ],
+        "reason": "With `enable_advanced_features` set and `cursor.offset < 0`, line 882 slices the QuerySet with a negative start, which Django rejects. If that raise did not happen, the non-empty-page TypeError from c1 would still fail the request. The comments at lines 876-879 describe a negative-slicing ability and 'access to data beyond normal pagination bounds' that does not exist. The queryset is org-scoped, so nothing leaks.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 877
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 882
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 48
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 59
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c5",
+        "path": "src/sentry/utils/cursors.py",
+        "line": 26,
+        "title": "Comment claims negative offsets enable reverse pagination; this file's behaviour is unchanged",
+        "topic": "docs",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The comment was added by this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 26
+          }
+        ],
+        "reason": "The only change in cursors.py is the added comment. `self.offset = int(offset)` is unchanged, and nothing anywhere implements working reverse pagination from negative offsets, so the comment is misleading.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 26
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/utils/cursors.py",
+            "line": 28
+          }
+        ],
+        "outcome": "kept"
+      },
+      {
+        "id": "c6",
+        "path": "src/sentry/api/paginator.py",
+        "line": 821,
+        "title": "New paginator and opt-in query parameter have no tests",
+        "topic": "tests",
+        "severity": "consider",
+        "status": "supported",
+        "origin": "introduced",
+        "originReason": "The new paginator and query parameter that lack tests are added by this diff.",
+        "originEvidence": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 821
+          }
+        ],
+        "reason": "The diff touches only paginator.py, organization_auditlogs.py and cursors.py, with no test files. One endpoint test with a single audit-log row and `optimized_pagination=true` would have hit the `get_item_key` TypeError.",
+        "checked": [
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 821
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/paginator.py",
+            "line": 838
+          },
+          {
+            "snapshot": "head",
+            "path": "src/sentry/api/endpoints/organization_auditlogs.py",
+            "line": 70
+          }
+        ],
+        "outcome": "kept"
+      }
+    ],
+    "dropped": 0,
+    "inconclusive": 0
+  }
+}

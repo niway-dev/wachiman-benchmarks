@@ -1,0 +1,82 @@
+{
+ "pr": "cal.com-11059",
+ "checkout": "/tmp/audit-wt/cal.com-11059",
+ "audit_ids": [
+  4,
+  7
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 97,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Google credential key is overwritten with a SafeParse result object",
+   "body": "`parseRefreshTokenResponse` returns the whole `safeParse` result (`parseRefreshTokenResponse.ts:29`), so `key` here is `{ success: true, data: {...} }`. Line 100 writes that object to `credential.key`. The next time the service is built, `googleCredentialSchema.parse(credential.key)` (line 75) throws, because `access_token`/`refresh_token` are now nested under `data`. This runs on every Google token refresh, whether or not credential sharing is enabled, so every Google Calendar user breaks after their first refresh. Use `parseRefreshTokenResponse(...).data` (or keep `googleCredentialSchema.parse`)."
+  },
+  {
+   "id": 1,
+   "path": "packages/app-store/_utils/oauth/parseRefreshTokenResponse.ts",
+   "line": 8,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Computed schema keys evaluate to the literal \"[object Object]\"",
+   "body": "`[z.string().toString()]` and `[z.string().optional().toString()]` both become the property name `\"[object Object]\"`. The second one overwrites the first, so the schema is really `{ access_token: string, \"[object Object]\"?: unknown }`. Zod's `z.object` strips unknown keys, so in sync mode every expiry field (`expiry_date`, `expires_in`, `instance_url`, ...) is dropped from `data`. For example, Office 365 merges `tokenResponse.data` over the stored credentials (office365calendar CalendarService.ts:264), so the stored expiry never moves forward and the token counts as expired on every call. Use `.passthrough()` (or `z.object({access_token: z.string()}).catchall(z.unknown())`) instead of computed keys."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/_utils/oauth/refreshOAuthTokens.ts",
+   "line": 15,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Sync path returns a fetch Response, but several callers expect SDK or axios shapes",
+   "body": "In sync mode this returns a raw `fetch` `Response`, and the callers were written for other return shapes:\n- Google (`googlecalendar/lib/CalendarService.ts:94`) reads `res?.data`, which is undefined on a Response, so line 95 throws.\n- HubSpot (`hubspot/lib/CalendarService.ts:192-198`) treats it as a `HubspotToken` and writes the Response object into `credential.key`.\n- Zoho Bigin (`zoho-bigin/lib/CalendarService.ts:96`) and Zoho CRM read `.data.error` as if it were an axios response.\n\nOnly the fetch-based adapters (Office 365, Zoom, Webex, Lark) work with the sync endpoint. Either return parsed JSON in a shape every caller agrees on, or adapt each caller."
+  },
+  {
+   "id": 3,
+   "path": "packages/app-store/zoho-bigin/lib/CalendarService.ts",
+   "line": 93,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Credential id passed where the user id is expected",
+   "body": "`refreshOAuthTokens` sends its third argument to the sync endpoint as `calcomUserId` (refreshOAuthTokens.ts:11). Here it gets `credentialId` (`credential.id`, line 53), so the parent application gets asked for tokens for the wrong user, which can mean another user's tokens. Every other caller passes `credential.userId`. Pass `credential.userId` here too (it has to be threaded into `refreshAccessToken`)."
+  },
+  {
+   "id": 4,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 96,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`prisma` is used without an import",
+   "body": "This file never imports `prisma` (imports at lines 1-20), so this line resolves to the global `prisma`. `packages/prisma/index.ts:56-59` sets `globalThis.prisma` only conditionally (the dev-only hot-reload cache). In production, every Salesforce client construction would then throw a ReferenceError after the token fetch. Add `import prisma from \"@calcom/prisma\";`."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/salesforce/lib/CalendarService.ts",
+   "line": 75,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Salesforce refreshes on every construction, ignores the sync endpoint, and keeps using the stale token",
+   "body": "Three problems with this block:\n- `getClient` now calls Salesforce's token endpoint on every `SalesforceCalendarService` construction, with no expiry check.\n- It doesn't go through `refreshOAuthTokens`, so the sync endpoint is never used for Salesforce, yet in sync mode `parseRefreshTokenResponse` switches to the minimal schema and drops `instance_url`. The saved key then has no `instance_url`, and the next construction builds a connection with `instanceUrl: undefined`.\n- The new access token is saved to the database, but the `jsforce.Connection` at lines 101-108 is still built from the old `credentialKey.access_token`/`instance_url`.\n\nAlso, `response.statusText !== \"OK\"` is fragile: HTTP/2 responses have an empty statusText. Use `response.ok`."
+  },
+  {
+   "id": 6,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 31,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Malformed body or bad ciphertext surfaces as an unhandled 500",
+   "body": "`parse` (line 31), `symmetricDecrypt` and `JSON.parse` (lines 57-59) all throw on bad input, and nothing catches them, so the caller gets a generic 500 with no message. The handler also accepts any HTTP method. Consider `safeParse`, returning 400 on decrypt/parse failure, and restricting to POST."
+  },
+  {
+   "id": 7,
+   "path": "apps/web/pages/api/webhook/app-credential.ts",
+   "line": 24,
+   "severity": "consider",
+   "topic": "security",
+   "title": "Webhook secret compared with `!==`",
+   "body": "This endpoint can overwrite any user's credentials. The shared secret is checked with plain string inequality, which isn't constant-time. Consider `crypto.timingSafeEqual` on equal-length buffers, and reject the request when the header is missing or is an array."
+  }
+ ]
+}

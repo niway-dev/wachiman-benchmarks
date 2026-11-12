@@ -1,0 +1,41 @@
+{
+  "pr": "cal.com-8087",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "Making the Wipemycalother reschedule callback async prevents its outer catch from observing calendar-construction failures.",
+      "verdict": "real-defect",
+      "duplicate_of": 1,
+      "would_fix": "yes",
+      "evidence": "packages/app-store/wipemycalother/api/wipe.ts:50-56 calls and awaits Reschedule through its queue; reschedule.ts:67-76 cancels the booking, and :117-128 passes the stored credential to getCalendar without validating its key. A google_calendar credential with a non-null empty object key passes getCalendar.ts:10 but fails googleCredentialSchema.parse at packages/app-store/googlecalendar/lib/CalendarService.ts:38 (required fields are defined in googleCredentialSchema.ts:3-8). The async callback at reschedule.ts:125-134 now rejects an ignored promise, bypassing logger.error at :135-137 and skipping deletion at :129; previously the synchronous construction exception reached that catch. The deletion already failed for that malformed key before this PR, but the loss of the error-reporting path is new; finding 1 reports the same callback/catch root cause in the parallel Vital implementation.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "This PR causes recurring cancellation to lose getCalendar errors that previously propagated out of the handler.",
+      "verdict": "wrong",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "The pre-change implementation at commit 38119707^, packages/features/bookings/lib/handleCancelBooking.ts:451-460, already uses forEach(async (credential) => ...) around synchronous getCalendar, so a synchronous throw already became an ignored callback-promise rejection. At head, :458-470 retains that async callback and merely awaits the now-async factory; :452 still awaits the initial reference credential outside the callback, so failures there remain visible. The late apiDeletes.push and unawaited recurring deletion loop are real pre-existing problems, but the claimed newly lost propagation is refuted by the original async callback.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The appStore object starts every dynamic import during evaluation instead of deferring imports until an app is selected.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/app-store/index.ts:1-30 evaluates import expressions for all app entries immediately and stores promises, rather than functions. packages/app-store/_utils/getCalendar.ts:15 and packages/core/videoClient.ts:26 await an already-created promise, so app selection does not initiate loading. The diff replaces an equivalent set of static imports with these dynamic imports, and git log identifies commit 38119707 as 'Async import of the appStore packages'; neither establishes a measured performance regression or a requirement to load only the selected app. The eager-start observation is correct, but a concrete behavioural defect or performance consequence is not demonstrated.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "An eagerly created app import can reject before any app lookup attaches a handler, with uncertain server reporting.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/app-store/index.ts:3-30 creates import promises without attaching rejection handlers, and getCalendar.ts:15 only awaits the selected entry. apps/web/sentry.server.config.js:4-16 initializes Sentry without explicitly configuring rejection handling, while apps/web/next.config.js:335-338 conditionally wraps Next configuration with Sentry based on NEXT_PUBLIC_SENTRY_DSN; no explicit unhandledRejection registration appears in the checked repository. This establishes the potential unobserved-promise interval, but does not establish an app module that actually fails during loading or the deployed runtime/SDK behaviour that determines visibility and termination. A question about that runtime cannot be resolved as a concrete new production defect from these sources.",
+      "confidence": "medium"
+    }
+  ]
+}

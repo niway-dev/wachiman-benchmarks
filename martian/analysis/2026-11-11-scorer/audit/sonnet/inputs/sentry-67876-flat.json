@@ -1,0 +1,66 @@
+{
+ "pr": "sentry-67876-flat",
+ "checkout": "/tmp/audit-wt/sentry-67876-flat",
+ "audit_ids": [
+  2,
+  3,
+  4,
+  5
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 402,
+   "severity": "fix",
+   "topic": "security",
+   "title": "OAuth `state` is a constant, not a per-flow secret, so it gives no CSRF protection",
+   "body": "`state = pipeline.signature`, and `Pipeline.signature` is `md5(<view class names>)` (src/sentry/pipeline/base.py:132-133). It is the same value for every user and every request, and anyone can compute it. The test hardcodes it (`9cae5e88...`). The check at line 412 only confirms the caller knows that constant. It does not bind the callback to the browser session that started the flow.\n\nAn attacker can install the GitHub app on their own account, authorize it, and get a valid `code`. They can then lure an org admin to `/extensions/github/setup/?code=<attacker code>&state=<constant>`. The victim's pipeline records `github_authenticated_user` as the attacker, and the org can end up linked to the attacker-controlled installation. Use a random, per-flow nonce. Store it with `pipeline.bind_state` and compare it with `constant_time_compare`. Do not reuse the signature."
+  },
+  {
+   "id": 1,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 503,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "`integration.metadata[\"sender\"][\"login\"]` raises KeyError for integrations that have no stored sender",
+   "body": "`sender` is only stored in `build_integration` when `state.get(\"sender\")` is truthy (line 376). The only caller I found that passes it is the webhook `created` handler (src/sentry/integrations/github/webhook.py:201-209). Integrations created by other paths have no `sender` key. That includes integrations that predate this field and integrations created from the pipeline, where state has no `sender`.\n\nFor such an integration that still has no OrganizationIntegration, this line raises KeyError and the user gets a 500. Use `.get` chains. Decide explicitly what to do when the sender is unknown: fail closed with `error(...)`, or fall back to the old behavior. Add a test for it."
+  },
+  {
+   "id": 2,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 423,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Network and HTTP errors from the token exchange and user lookup are not handled",
+   "body": "`safe_urlopen` at line 423 sits outside the `try`. `get_user_info` at line 434 calls `raise_for_status()` (src/sentry/identity/github/provider.py:16). A timeout or a non-2xx response from GitHub, for example a revoked token, becomes an unhandled exception and a 500. The sibling `OAuth2CallbackView.exchange_token` returns an error payload in the same situation. Wrap both calls and return `error(...)`."
+  },
+  {
+   "id": 3,
+   "path": "src/sentry/integrations/github/integration.py",
+   "line": 408,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "redirect_uri and state are interpolated into the authorize URL without encoding",
+   "body": "`redirect_uri` is a full URL placed into the query string unencoded. Use `urlencode`. The new test also asserts the unencoded form (test_integration.py:235), so it would need updating."
+  },
+  {
+   "id": 4,
+   "path": "tests/sentry/integrations/github/test_integration.py",
+   "line": 396,
+   "severity": "fix",
+   "topic": "tests",
+   "title": "`test_installation_not_found` no longer tests the 404 installation path",
+   "body": "The test stubs a 404 on `/app/installations/...` and used to assert \"The GitHub installation could not be found.\" Now the callback is sent with `state=ddd023d8...`, which does not match the pipeline signature. The pipeline returns the generic error from the state check in `OAuthLoginView` (integration.py:412-413), and the test asserts \"Invalid installation request.\" The `IntegrationError` 404 branch in `build_integration` is no longer exercised. The test now covers a bad state, not a missing installation. Send the valid state so the pipeline reaches `build_integration`, and keep the original assertion. Add a separate test for the bad-state case."
+  },
+  {
+   "id": 5,
+   "path": "tests/sentry/integrations/github/test_integration.py",
+   "line": 399,
+   "severity": "consider",
+   "topic": "tests",
+   "title": "No test for a mismatched OAuth state with a valid code, or for an installation with no stored sender",
+   "body": "The new `OAuthLoginView` branches are only covered by the happy path and by the user-mismatch test. The missing cases are a wrong `state`, a token exchange that returns no `access_token`, a `/user` response with no `login`, and an existing Integration whose metadata has no `sender` (see the KeyError finding)."
+  }
+ ]
+}
