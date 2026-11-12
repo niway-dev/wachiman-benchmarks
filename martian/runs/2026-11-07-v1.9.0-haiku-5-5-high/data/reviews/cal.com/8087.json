@@ -1,0 +1,412 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-8087` of cal.com-8087 against ba9688a04a8398c9a8332ee7061bfae2f2efd524 (merge-base ba9688a)",
+    "repository": {
+      "name": "cal.com-8087"
+    },
+    "base": {
+      "sha": "ba9688a04a8398c9a8332ee7061bfae2f2efd524",
+      "ref": "ba9688a04a8398c9a8332ee7061bfae2f2efd524"
+    },
+    "head": {
+      "sha": "820d7fa87e0c824c5dee8082a33efadb1a2566f7",
+      "ref": "pr-8087"
+    },
+    "title": "pr-8087",
+    "description": "fix: remove validateSlug Query (#8015)\nchore: update robots.txt to allow api/app-store (#8023)\nSet GCal & Outlook `iCalUID` in .ics file (#8010)\nfix: flickering of tips card rendering while changing routes (#8065)\nv2.7.7\nAsync import of the appStore packages\nMerge branch 'main' into techdebt/async-app-store-load",
+    "author": "Alex van Andel"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/app-store/_utils/getCalendar.ts",
+      "packages/app-store/index.ts",
+      "packages/app-store/vital/lib/reschedule.ts",
+      "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "packages/core/CalendarManager.ts",
+      "packages/core/EventManager.ts",
+      "packages/core/videoClient.ts",
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/lib/payment/deletePayment.ts",
+      "packages/lib/payment/handlePayment.ts",
+      "packages/trpc/server/routers/viewer/bookings.tsx"
+    ],
+    "reviewed": [
+      "packages/app-store/_utils/getCalendar.ts",
+      "packages/app-store/index.ts",
+      "packages/app-store/vital/lib/reschedule.ts",
+      "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "packages/core/CalendarManager.ts",
+      "packages/core/EventManager.ts",
+      "packages/core/videoClient.ts",
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/lib/payment/deletePayment.ts",
+      "packages/lib/payment/handlePayment.ts",
+      "packages/trpc/server/routers/viewer/bookings.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/trpc/server/routers/viewer/bookings.tsx",
+      "line": 553,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Reschedule: getCalendar failures are now silently dropped by forEach(async)",
+      "body": "The callback passed to `bookingRefsFiltered.forEach` is now `async`, and `getCalendar` is awaited at line 556. Before this change `getCalendar` ran synchronously, so a throw from `new CalendarService(credential)` (packages/app-store/_utils/getCalendar.ts:22) escaped the forEach and failed the mutation. That failure happened after the booking was already set to CANCELLED (packages/trpc/server/routers/viewer/bookings.tsx:482). Now the rejection is never observed: forEach drops the promise, the mutation returns success, and the calendar event is not deleted. The throw is reachable: the googlecalendar constructor parses `credential.key` with zod synchronously (packages/app-store/googlecalendar/lib/CalendarService.ts:38). The `deleteEvent` rejections were already unhandled before this change, so the new loss is specifically the getCalendar failure. The same PR converts the old-behaviour loop in packages/features/bookings/lib/handleCancelBooking.ts:480-483 to `for...of`, which is the pattern to use here. This block has no enclosing try (no `try {` between lines 480 and 600 of this file).",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/vital/lib/reschedule.ts",
+      "line": 125,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Vital reschedule: the try/catch can no longer catch calendar failures",
+      "body": "The `try` at line 124 wraps `bookingRefsFiltered.forEach(async ...)`. The callback is async, so `await getCalendar(...)` at line 128 turns a synchronous throw into a rejected promise that forEach drops. The `logger.error` at line 137 is therefore unreachable for calendar-creation failures, and the failure is lost: the calendar event is not deleted, and nothing is logged by this code. Before this change the synchronous throw from getCalendar was caught here and logged. The `_video` branch (line 131) keeps its previous behaviour. Fix: iterate with `for...of` and await inside the try, as in packages/features/bookings/lib/handleCancelBooking.ts:480-483.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "line": 125,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Wipemycalother reschedule: the try/catch can no longer catch calendar failures",
+      "body": "Same defect as the vital reschedule. The `try` at line 124 wraps `bookingRefsFiltered.forEach(async ...)`, and `await getCalendar(...)` at line 128 turns a synchronous throw into a rejected promise that forEach drops. The `logger.error` at line 137 no longer sees calendar-creation failures, so the calendar event is silently left in place. Fix: use `for...of` with await inside the try.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+      "line": 460,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Recurring cancel: a getCalendar failure silently skips the remaining calendar deletions",
+      "body": "In the recurring branch, `.forEach(async (credential) => { const calendar = await getCalendar(credential); for (...) { ... await calendar?.deleteEvent(...) } })` at lines 458-470. Before this change `getCalendar` was synchronous, so a throw propagated out of forEach and out of the handler, and the cancel request failed visibly. Now the rejection is dropped: that credential's deletions are skipped with no error, and the handler still returns \"Booking successfully cancelled.\" (line 656). A pre-existing race is also in this block: the `apiDeletes.push(deletedEvent)` at line 467 runs after the forEach callback has started, and the snapshot taken at line 652 (`Promise.all(prismaPromises.concat(apiDeletes))`) may not include those entries. This PR already converts the old-behaviour branch at lines 480-483 to `for...of`; the recurring branch should use the same pattern so the getCalendar await and the deleteEvent await are both sequenced by the handler.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/core/videoClient.ts",
+      "line": 52,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "createMeeting: an app load failure now throws instead of falling back to Cal Video",
+      "body": "`getVideoAdapters` is now async and does `await appStore[...]`, and `createMeeting` awaits it at line 52, which is outside the `try` that starts at line 70. The Cal Video fallback is in that try's `catch` (lines 86-91). Before this change `getVideoAdapters` could not reject on a module load. Now, if the dynamic import of a video app rejects, `createMeeting` rejects before the fallback runs, so the booking fails instead of falling back. This needs a module load failure to occur, so it is rare; moving the call inside the try, or catching it, would keep the fallback.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/index.ts",
+      "line": 3,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "Async import of appStore does not defer loading: import() runs when the object literal is evaluated",
+      "body": "Each `import(\"./x\")` in the object literal starts loading the module as soon as `index.ts` is evaluated. The set of modules loaded is the same as with the earlier static imports; only the values changed from modules to promises. The PR title and commit message (\"Async import of the appStore packages\") suggest the goal is to defer loading. To defer it, store thunks (`applecalendar: () => import(\"./applecalendar\")`) and call them at the six lookup sites (packages/app-store/_utils/getCalendar.ts:15, packages/core/videoClient.ts:26, packages/features/bookings/lib/handleCancelBooking.ts:589, packages/trpc/server/routers/viewer/bookings.tsx:967, packages/lib/payment/handlePayment.ts:26, packages/lib/payment/deletePayment.ts:16).",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/index.ts",
+      "line": 3,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Unawaited app import rejections: is there an unhandledRejection handler in the server runtime?",
+      "body": "Each `import()` promise is created at module evaluation. If one app module throws while loading, its promise rejects at startup, and nothing awaits it until that app is looked up. Before this change, a failing static import would have thrown at module load, which is visible at startup. Is there an unhandledRejection handler for the web server that would make this visible? The candidates are apps/web/sentry.server.config.js and apps/web/next.config.js. I did not check either file.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Each appStore entry is now an import() promise, evaluated when index.ts loads",
+      "location": "packages/app-store/index.ts:3",
+      "status": "closed",
+      "evidence": [
+        "packages/app-store/index.ts:2-31",
+        "packages/app-store/_utils/getCalendar.ts:15",
+        "packages/core/videoClient.ts:26",
+        "packages/lib/payment/handlePayment.ts:26",
+        "packages/lib/payment/deletePayment.ts:16",
+        "packages/features/bookings/lib/handleCancelBooking.ts:589",
+        "packages/trpc/server/routers/viewer/bookings.tsx:967"
+      ],
+      "equivalent_path": "packages/app-store/index.ts:2-30 (base commit: static import * lines)",
+      "before_after": "Before: all 28 app modules statically imported when index.ts evaluated; values are modules. After: the same 28 modules begin loading at the same time; values are Promises that every lookup must await.",
+      "visible_effect": "None on success; the six lookup sites all await.",
+      "failure_mode": "A module load failure rejects only that key's promise. If the key is not awaited, the rejection is unhandled (see the open question on the same line).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Unawaited import rejection at startup",
+      "location": "packages/app-store/index.ts:3",
+      "status": "open",
+      "evidence": [
+        "packages/app-store/index.ts:3"
+      ],
+      "failure_mode": "A broken app module produces an unhandled rejection at startup if no handler is installed, and no visible error at the call site until the app is used.",
+      "open_question": "Does the web server runtime install an unhandledRejection handler, or does Sentry capture it?",
+      "candidates": [
+        "apps/web/sentry.server.config.js",
+        "apps/web/next.config.js"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "getCalendar becomes async and returns Promise<Calendar | null>",
+      "location": "packages/app-store/_utils/getCalendar.ts:9-22",
+      "status": "closed",
+      "evidence": [
+        "packages/app-store/_utils/getCalendar.ts:9-23",
+        "packages/app-store/googlecalendar/lib/CalendarService.ts:31-38"
+      ],
+      "equivalent_path": "Base getCalendar (synchronous) at the same location",
+      "before_after": "Before: synchronous lookup and construction. After: await on the app promise, then construction. A null credential or missing key returns null as before.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A throw from the CalendarService constructor (for example googlecalendar's zod parse at packages/app-store/googlecalendar/lib/CalendarService.ts:38) becomes a rejection. Each caller that uses forEach(async) loses it (see the findings).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Synchronous getCalendar call replaced by awaited call in the CalendarManager event functions",
+      "location": "packages/core/CalendarManager.ts:233,284,335",
+      "status": "closed",
+      "evidence": [
+        "packages/core/CalendarManager.ts:228-341",
+        "packages/app-store/_utils/getCalendar.ts:15"
+      ],
+      "equivalent_path": "packages/core/CalendarManager.ts:233 (createEvent), 284 (updateEvent), 335 (deleteEvent)",
+      "before_after": "Before: getCalendar(credential) then a check for null. After: await then the same check. deleteEvent is now async; I found no callers outside this file.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A rejection from getCalendar propagates out of createEvent/updateEvent/deleteEvent. Before, the same throw propagated synchronously, so the behaviour is the same.",
+      "evidence_checked": true
+    },
+    {
+      "action": "getCalendarCredentials now returns a Promise in each calendar field",
+      "location": "packages/core/CalendarManager.ts:23-36",
+      "status": "closed",
+      "evidence": [
+        "packages/core/CalendarManager.ts:23-36",
+        "packages/core/CalendarManager.ts:44-51",
+        "packages/core/CalendarManager.ts:94-111",
+        "packages/trpc/server/routers/viewer.tsx:340-347",
+        "packages/trpc/server/routers/viewer.tsx:415-416",
+        "apps/web/pages/api/availability/calendar.ts:83-85"
+      ],
+      "equivalent_path": "packages/core/CalendarManager.ts:44-51 (getConnectedCalendars awaits item.calendar inside try/catch)",
+      "before_after": "Before: calendar was a Calendar instance. After: calendar is a Promise. The only consumer, getConnectedCalendars, awaits it inside a try that returns an error entry on failure.",
+      "visible_effect": "A connected-calendar entry shows \"Could not get connected calendars\" if construction fails, instead of the whole procedure throwing.",
+      "failure_mode": "Rejection is caught per integration at packages/core/CalendarManager.ts:94-111.",
+      "evidence_checked": true
+    },
+    {
+      "action": "getCachedResults maps getCalendar over credentials",
+      "location": "packages/core/CalendarManager.ts:142",
+      "status": "closed",
+      "evidence": [
+        "packages/core/CalendarManager.ts:135-175"
+      ],
+      "equivalent_path": "Base getCachedResults at the same location",
+      "before_after": "Before: synchronous map producing Calendar|null entries. After: Promise.all over the same map, then the same use.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A rejection makes getCachedResults reject, which is the same as before for a sync throw.",
+      "evidence_checked": true
+    },
+    {
+      "action": "getVideoAdapters becomes async and loops sequentially",
+      "location": "packages/core/videoClient.ts:21-36",
+      "status": "closed",
+      "evidence": [
+        "packages/core/videoClient.ts:21-41",
+        "packages/core/videoClient.ts:52",
+        "packages/core/videoClient.ts:70-91",
+        "packages/core/videoClient.ts:111",
+        "packages/core/videoClient.ts:144",
+        "packages/core/getBusyTimes.ts:137"
+      ],
+      "equivalent_path": "Base getVideoAdapters (synchronous reduce) at the same location",
+      "before_after": "Before: synchronous reduce. After: sequential for-loop with await per credential.",
+      "visible_effect": "None on success.",
+      "failure_mode": "Load failure propagates as a rejection to each caller (see the createMeeting finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Reschedule mutation deletes the calendar event and video meeting",
+      "location": "packages/trpc/server/routers/viewer/bookings.tsx:553-567",
+      "status": "closed",
+      "evidence": [
+        "packages/trpc/server/routers/viewer/bookings.tsx:553-567",
+        "packages/trpc/server/routers/viewer/bookings.tsx:482",
+        "packages/trpc/server/routers/viewer/bookings.tsx:570-572"
+      ],
+      "equivalent_path": "packages/app-store/vital/lib/reschedule.ts:124-139 (the same pattern, which has a try)",
+      "before_after": "Before: getCalendar was synchronous inside forEach, so deleteEvent was started before the email send. After: deleteEvent starts after a microtask, still before the email is awaited.",
+      "visible_effect": "The cancelled booking's calendar event may remain if getCalendar fails, with no error shown.",
+      "failure_mode": "A getCalendar rejection is dropped by forEach(async). There is no enclosing try in this block (grep for try in this file finds only lines 632 and 711).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Reschedule-with-email reschedule path deletes calendar and video references",
+      "location": "packages/app-store/vital/lib/reschedule.ts:124-139 and packages/app-store/wipemycalother/lib/reschedule.ts:124-139",
+      "status": "closed",
+      "evidence": [
+        "packages/app-store/vital/lib/reschedule.ts:124-139",
+        "packages/app-store/wipemycalother/lib/reschedule.ts:124-139"
+      ],
+      "equivalent_path": "Each file's own try/catch around the forEach",
+      "before_after": "Before: a synchronous getCalendar throw was caught and logged. After: the rejection is dropped and the catch is unreachable.",
+      "visible_effect": "The calendar event is not deleted, and nothing is logged by this code.",
+      "failure_mode": "See the two findings on these files.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cancel booking: recurring-event branch deletes calendar events via forEach(async)",
+      "location": "packages/features/bookings/lib/handleCancelBooking.ts:458-470",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleCancelBooking.ts:458-470",
+        "packages/features/bookings/lib/handleCancelBooking.ts:480-483",
+        "packages/features/bookings/lib/handleCancelBooking.ts:652",
+        "packages/features/bookings/lib/handleCancelBooking.ts:656"
+      ],
+      "equivalent_path": "packages/features/bookings/lib/handleCancelBooking.ts:480-483 (old-behaviour branch, now for...of)",
+      "before_after": "Before: forEach with a synchronous getCalendar. After: forEach(async) with await getCalendar, and deleteEvent pushes happen after the forEach callbacks have started.",
+      "visible_effect": "Calendar events for the remaining recurring bookings may not be deleted, and the request still reports success.",
+      "failure_mode": "A getCalendar rejection drops that credential's deletions silently. The pushes at line 467 can also run after the snapshot at line 652.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cancel booking: single-calendar and old-behaviour branches",
+      "location": "packages/features/bookings/lib/handleCancelBooking.ts:243,265,452,461,481",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleCancelBooking.ts:236-249",
+        "packages/features/bookings/lib/handleCancelBooking.ts:262-271",
+        "packages/features/bookings/lib/handleCancelBooking.ts:448-484",
+        "packages/features/bookings/lib/handleCancelBooking.ts:652"
+      ],
+      "equivalent_path": "packages/features/bookings/lib/handleCancelBooking.ts:243 (sibling calls in the same loop)",
+      "before_after": "Before: synchronous getCalendar then push into integrationsToDelete or apiDeletes. After: await then the same push. The old-behaviour branch now uses for...of, which sequences the awaits.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A getCalendar rejection in the for loops makes the handler reject, which is the same as the earlier synchronous throw.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Payment app lookup in cancel path",
+      "location": "packages/features/bookings/lib/handleCancelBooking.ts:589",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleCancelBooking.ts:586-594",
+        "packages/trpc/server/routers/viewer/bookings.tsx:964-970",
+        "packages/lib/payment/handlePayment.ts:23-30"
+      ],
+      "equivalent_path": "packages/trpc/server/routers/viewer/bookings.tsx:967 and packages/lib/payment/handlePayment.ts:26",
+      "before_after": "Before: synchronous lookup. After: await lookup. The three sites now behave the same.",
+      "visible_effect": "None on success. The warning on a missing app now prints the module object rather than undefined.",
+      "failure_mode": "A rejected import propagates to the cancel call, which already has no try around this lookup.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Payment app lookup in refund and payment-create helpers",
+      "location": "packages/lib/payment/deletePayment.ts:16 and packages/lib/payment/handlePayment.ts:26",
+      "status": "closed",
+      "evidence": [
+        "packages/lib/payment/deletePayment.ts:13-25",
+        "packages/lib/payment/handlePayment.ts:23-30"
+      ],
+      "equivalent_path": "packages/features/bookings/lib/handleCancelBooking.ts:589",
+      "before_after": "Before: synchronous lookup. After: await lookup, rest unchanged.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A rejected import propagates out of the helper.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Booking creation: delete the original booking's calendar event when attendees are cleared",
+      "location": "packages/features/bookings/lib/handleNewBooking.ts:887-894",
+      "status": "closed",
+      "evidence": [
+        "packages/features/bookings/lib/handleNewBooking.ts:873-912"
+      ],
+      "equivalent_path": "packages/features/bookings/lib/handleNewBooking.ts:884-886 (video delete in the same loop)",
+      "before_after": "Before: synchronous getCalendar. After: await getCalendar inside the same for...of loop, and the result is pushed into integrationsToDelete, which is awaited at line 899.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A rejection propagates to the caller through the awaited loop, which is the same as the earlier synchronous throw.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Event update: delete the old calendar event when merging two bookings",
+      "location": "packages/core/EventManager.ts:488-489",
+      "status": "closed",
+      "evidence": [
+        "packages/core/EventManager.ts:478-491",
+        "packages/app-store/_utils/getCalendar.ts:10"
+      ],
+      "equivalent_path": "packages/core/EventManager.ts:468 (updateEvent in the same method)",
+      "before_after": "Before: synchronous getCalendar. After: await getCalendar. The call is inside an async method that already awaits prisma.",
+      "visible_effect": "None on success.",
+      "failure_mode": "A null credential returns null from getCalendar, so the optional call is skipped.",
+      "evidence_checked": true
+    },
+    {
+      "action": "createMeeting awaits getVideoAdapters before its try",
+      "location": "packages/core/videoClient.ts:52",
+      "status": "closed",
+      "evidence": [
+        "packages/core/videoClient.ts:46-52",
+        "packages/core/videoClient.ts:70-91"
+      ],
+      "equivalent_path": "packages/core/videoClient.ts:111 (updateMeeting) and packages/core/videoClient.ts:144 (deleteMeeting)",
+      "before_after": "Before: synchronous adapter lookup, no rejection. After: awaited adapter lookup outside the try that holds the Cal Video fallback.",
+      "visible_effect": "A load failure of the video app fails the booking instead of falling back to Cal Video.",
+      "failure_mode": "A rejected import rejects createMeeting before the fallback at lines 86-91.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed all 12 files in this part. The main change is that appStore entries and getCalendar became async; the call sites that await them are correct, and the consumers of getCalendarCredentials await item.calendar in getConnectedCalendars. Four findings are fix-level: three fire-and-forget `forEach(async …)` blocks (trpc bookings reschedule, vital and wipemycalother reschedule) and the recurring-cancel block in handleCancelBooking. In each, a getCalendar throw that used to surface synchronously is now an unhandled rejection, so calendar deletions can be dropped silently. The vital and wipemycalother try/catch blocks can no longer catch those errors. Two consider-level findings cover the eager import() in index.ts, which does not defer loading, and createMeeting's fallback being skipped on an adapter load failure. I did not run or build anything. For EventManager.ts and handleNewBooking.ts I read the changed lines and their enclosing async functions, not the whole files. The index.ts unhandled-rejection question is open because I did not check the server runtime's handlers.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 12,
+      "lines": 189,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 35,
+      "costUsd": 0.07398131
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "ba9688a04a8398c9a8332ee7061bfae2f2efd524"
+  },
+  "execution": {
+    "costUsdEstimate": 0.07398131,
+    "usage": {
+      "input": 28,
+      "output": 40723,
+      "cacheRead": 793385,
+      "cacheWrite": 95382
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 35,
+    "durationMs": 192122,
+    "stop": "complete",
+    "notices": []
+  }
+}

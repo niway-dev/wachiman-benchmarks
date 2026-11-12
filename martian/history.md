@@ -9,6 +9,7 @@ is in each run's `metrics.json`, under `judge_cost`.
 
 | Run | PRs | High+Critical | Recall | Precision | F1 (All) | F2 (Core) | False positives | Reviews total | $/PR median | $/PR p90 | $/1k changed lines | $/golden found | $/High+Critical found | Partial reviews |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [2026-11-07 · v1.9.0 · Haiku 5.5 · high · arm 1](runs/2026-11-07-v1.9.0-haiku-5-5-high/README.md) | 50 | 47/66 | 64.2% | 26.1% | 37.1% | 49.1% | 314 | $8.98 | $0.10 | $0.35 | $0.46 | $0.08 | $0.19 | 0 |
 | [2026-11-07 · v1.9.0 · Opus 5.5 · high](runs/2026-11-07-v1.9.0-opus-5-5/README.md) | 50 | 47/66 | 63.6% | 38.7% | 48.1% | 55.7% | 174 | $25.01 | $0.48 | $0.61 | $1.29 | $0.23 | $0.53 | 0 |
 
 Reference tools, same judge, same 50 PRs (do not change between runs unless the judge route does):
@@ -18,6 +19,10 @@ Reference tools, same judge, same 50 PRs (do not change between runs unless the 
 | qodo-extended-v2 | 44/66 | 56.1% | 63.0% | 59.3% | 60.0% |
 | augment | 46/66 | 59.0% | 57.0% | 58.0% | 60.2% |
 | claude-code | 29/66 | 44.5% | 45.8% | 45.2% | 44.1% |
+
+Arm 1 (Haiku 5.5 high alone) is done. Planned next rows, one at a time: arm 2 (Opus 5.5 + a findings
+falsifier on `fix`/`consider`), arm 3 (Haiku 5.5 high + the same falsifier). Arm 4 (feature-guarantee
+falsifier) is measured on kaipu-record. Details and decision rules: [PLAN.md](PLAN.md#planned-arms-test-measures).
 
 ## Questions each row answers
 

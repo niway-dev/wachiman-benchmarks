@@ -1,0 +1,189 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80528-flat` of sentry-80528-flat against 0cfc28e76ddc986d2d89dd9b9f63ee916a18a5f9 (merge-base 0cfc28e)",
+    "repository": {
+      "name": "sentry-80528-flat"
+    },
+    "base": {
+      "sha": "0cfc28e76ddc986d2d89dd9b9f63ee916a18a5f9",
+      "ref": "0cfc28e76ddc986d2d89dd9b9f63ee916a18a5f9"
+    },
+    "head": {
+      "sha": "77af2dab6d8ab5f25bce20ac704337014cce8635",
+      "ref": "pr-80528-flat"
+    },
+    "title": "pr-80528-flat",
+    "description": "ref(crons): Reorganize incident creation / issue occurrence logic",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/monitors/logic/incident_occurrence.py",
+      "src/sentry/monitors/logic/incidents.py",
+      "src/sentry/monitors/logic/mark_failed.py",
+      "src/sentry/monitors/types.py"
+    ],
+    "reviewed": [
+      "src/sentry/monitors/logic/incident_occurrence.py",
+      "src/sentry/monitors/logic/incidents.py",
+      "src/sentry/monitors/logic/mark_failed.py",
+      "src/sentry/monitors/types.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/monitors/logic/incident_occurrence.py",
+      "line": 160,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Monitor config copy is computed and then discarded",
+      "body": "`get_monitor_environment_context` copies `monitor.config` into `config` (line 160) and rewrites `config[\"schedule_type\"]` to the display name (line 162), but the returned dict uses `monitor_environment.monitor.config` (line 168). The display value is never used. The lines were moved verbatim from the base `mark_failed.py`, so this PR does not introduce the behaviour. `tests/sentry/monitors/logic/test_mark_failed.py:111-122` asserts `\"schedule_type\": 2` (the raw integer) in the event contexts, so the current output is pinned by a test. Either delete the dead lines and keep the integer, or return `config` and update that test expectation. Not a regression in this change.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "mark_failed() hands off to try_incident_threshold() after the monitor-environment update and refresh",
+      "location": "src/sentry/monitors/logic/mark_failed.py:79",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/monitors/logic/mark_failed.py:33-79",
+        "src/sentry/monitors/logic/incidents.py:14-18"
+      ],
+      "equivalent_path": "base mark_failed.py `return mark_failed_threshold(failed_checkin, failure_issue_threshold, received)` (removed in this diff)",
+      "before_after": "Same arguments and same return value. Only the callee name changed (mark_failed_threshold -> try_incident_threshold). The module moved to logic/incidents.py.",
+      "visible_effect": "Same as before: incident and issue-occurrence side effects, and the monitor_environment_failed signal.",
+      "failure_mode": "Unchanged. Any exception from the callee propagates to the caller of mark_failed.",
+      "evidence_checked": true
+    },
+    {
+      "action": "try_incident_threshold() sets monitor status to ERROR and get_or_creates the MonitorIncident before any occurrence is produced",
+      "location": "src/sentry/monitors/logic/incidents.py:56-70",
+      "status": "open",
+      "evidence": [
+        "src/sentry/monitors/logic/incidents.py:56-70",
+        "src/sentry/monitors/logic/incidents.py:92-102",
+        "src/sentry/monitors/logic/mark_failed.py:76-79"
+      ],
+      "equivalent_path": "base mark_failed.py mark_failed_threshold, the same lines (removed in this diff)",
+      "before_after": "Identical: save(update_fields=status) then get_or_create, with no transaction added here.",
+      "visible_effect": "Monitor environment shows error status and an incident row exists.",
+      "failure_mode": "Pre-existing ordering. If create_incident_occurrence raises after the save (incidents.py:95-100), the ERROR status and the incident row stay committed, and the occurrence and monitor_environment_failed signal are skipped. Whether the caller retries or wraps this in a transaction was not read.",
+      "open_question": "Do the callers of mark_failed (monitor consumer and clock tasks) wrap it in a transaction or retry on exception? If not, a failed produce leaves the env in ERROR without an occurrence; the next check-in then takes the ERROR branch, which may or may not recover the occurrence.",
+      "candidates": [
+        "src/sentry/monitors/consumers/monitor_consumer.py",
+        "src/sentry/monitors/clock_tasks/check_missed.py",
+        "src/sentry/monitors/clock_tasks/check_timeout.py"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "create_incident_occurrence() produces the occurrence to Kafka via produce_occurrence_to_kafka",
+      "location": "src/sentry/monitors/logic/incident_occurrence.py:109-113",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/monitors/logic/incident_occurrence.py:34-35",
+        "src/sentry/monitors/logic/incident_occurrence.py:109-113",
+        "tests/sentry/monitors/logic/test_mark_failed.py:26-27"
+      ],
+      "equivalent_path": "base mark_failed.py create_issue_platform_occurrence, the same produce_occurrence_to_kafka call (removed in this diff)",
+      "before_after": "Identical payload and kwargs. The function was renamed and moved. The imports stay inside the function, so tests that patch sentry.issues.producer.produce_occurrence_to_kafka still intercept the call.",
+      "visible_effect": "Issue-platform occurrence for the monitor incident, same as before.",
+      "failure_mode": "Unchanged. Exceptions propagate as before.",
+      "evidence_checked": true
+    },
+    {
+      "action": "get_monitor_environment_context() builds the monitor context placed in the occurrence event",
+      "location": "src/sentry/monitors/logic/incident_occurrence.py:159-171",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/monitors/logic/incident_occurrence.py:159-171",
+        "tests/sentry/monitors/logic/test_mark_failed.py:111-122"
+      ],
+      "equivalent_path": "base mark_failed.py get_monitor_environment_context (moved unchanged)",
+      "before_after": "Identical to base. The computed display config is dropped, so the event carries the raw config.",
+      "visible_effect": "The event contexts.monitor.config.schedule_type is the integer, as pinned by the test.",
+      "failure_mode": "None new.",
+      "evidence_checked": true
+    },
+    {
+      "action": "try_incident_threshold() loops over the check-ins in the window and calls create_incident_occurrence once per row",
+      "location": "src/sentry/monitors/logic/incidents.py:93-100",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/monitors/logic/incidents.py:40-48",
+        "src/sentry/monitors/logic/incidents.py:93-100",
+        "src/sentry/monitors/validators.py:142-149",
+        "src/sentry/monitors/logic/incident_occurrence.py:46-48"
+      ],
+      "equivalent_path": "base mark_failed.py mark_failed_threshold loop (moved unchanged)",
+      "before_after": "Identical. One occurrence per row. The loop is bounded by the threshold window, not by the number of rows in the table.",
+      "visible_effect": "Several occurrences per incident when failure_issue_threshold > 1, as before.",
+      "failure_mode": "Each iteration runs queries (checkin.monitor_environment access, get_last_successful_checkin). The list length is at most failure_issue_threshold, which the validator caps at MAX_THRESHOLD.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SimpleCheckIn TypedDict moves from logic/mark_failed.py to monitors/types.py",
+      "location": "src/sentry/monitors/types.py:105-112",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/monitors/types.py:105-112",
+        "src/sentry/monitors/logic/incidents.py:9",
+        "src/sentry/monitors/logic/incident_occurrence.py:20"
+      ],
+      "equivalent_path": "base mark_failed.py SimpleCheckIn (removed in this diff)",
+      "before_after": "Same fields (id, date_added, status). Only the module changed.",
+      "visible_effect": "None.",
+      "failure_mode": "Any importer of sentry.monitors.logic.mark_failed.SimpleCheckIn would break. The repository search found none.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This part is a move-refactor: mark_failed_threshold, create_issue_platform_occurrence, the failure-reason helpers and SimpleCheckIn move out of mark_failed.py into incidents.py, incident_occurrence.py and types.py. I compared the removed and added lines and the bodies match apart from the renames, so the behaviour is unchanged. The imports are all used, there are no circular-import risks I could find, and the tests that patch produce_occurrence_to_kafka still work. The only finding is a pre-existing dead variable (`config` in get_monitor_environment_context) that the test suite currently pins; I rate it \"consider\". One contract stays open: whether the callers of mark_failed roll back or retry when the occurrence produce raises after the ERROR status is saved. I did not read the callers.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 553,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 18,
+      "costUsd": 0.0213889
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "0cfc28e76ddc986d2d89dd9b9f63ee916a18a5f9"
+  },
+  "execution": {
+    "costUsdEstimate": 0.0213889,
+    "usage": {
+      "input": 14,
+      "output": 18484,
+      "cacheRead": 252250,
+      "cacheWrite": 48115
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 18,
+    "durationMs": 89558,
+    "stop": "complete",
+    "notices": []
+  }
+}

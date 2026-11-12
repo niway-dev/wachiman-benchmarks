@@ -1,0 +1,276 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-33832-flat` of keycloak-33832-flat against 10aca5552314d6e5c9226f3c6d0107861c38c693 (merge-base 10aca55)",
+    "repository": {
+      "name": "keycloak-33832-flat"
+    },
+    "base": {
+      "sha": "10aca5552314d6e5c9226f3c6d0107861c38c693",
+      "ref": "10aca5552314d6e5c9226f3c6d0107861c38c693"
+    },
+    "head": {
+      "sha": "b6ab976c03bb140daf6df420d81a563a5e66cf12",
+      "ref": "pr-33832-flat"
+    },
+    "title": "pr-33832-flat",
+    "description": "Add AuthzClientCryptoProvider for authorization client cryptographic operations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "authz/client/pom.xml",
+      "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Encoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "authz/client/src/main/resources/META-INF/services/org.keycloak.common.crypto.CryptoProvider",
+      "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java",
+      "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java",
+      "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java",
+      "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java"
+    ],
+    "reviewed": [
+      "authz/client/src/main/resources/META-INF/services/org.keycloak.common.crypto.CryptoProvider",
+      "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Encoder.java",
+      "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "authz/client/pom.xml",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java",
+      "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java",
+      "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java",
+      "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java",
+      "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java",
+      "line": 57,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Equal order() values now pick the crypto provider by classpath order, and the multiple-provider guard is gone",
+      "body": "Before this change, two CryptoProvider implementations on the classpath made detectProvider throw IllegalStateException. Now the stable sort at line 57 keeps ServiceLoader order whenever order() ties, and the surplus providers are only logged at debug (lines 64-70).\n\nDefaultCryptoProvider (crypto/default/.../DefaultCryptoProvider.java:82-85), FIPS1402Provider (crypto/fips1402/.../FIPS1402Provider.java:113-116) and WildFlyElytronProvider (crypto/elytron/.../WildFlyElytronProvider.java:75-78) all return 200, so they tie.\n\nConcrete case: integration/client-cli/client-cli-dist/pom.xml:37-56 declares keycloak-crypto-default and keycloak-crypto-fips1402 as plain dependencies, and Globals.main calls CryptoIntegration.init(cl) at integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:44. On that classpath the provider is whichever jar comes first, and a FIPS-intended run can silently use the non-FIPS provider. The Quarkus server is not affected because KeycloakRecorder.setCryptoProvider sets the provider explicitly (quarkus/runtime/.../KeycloakRecorder.java:214-215).\n\nSuggested fix: give the FIPS provider a higher order than the default provider so the choice is deterministic, and log ignored providers at a level that is visible by default (or keep failing on an equal top order). No test covers the new selection rule.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java",
+      "line": 95,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "AuthzClient.create() installs a low-order fallback provider for the whole JVM and it cannot be replaced",
+      "body": "CryptoIntegration.init only sets the provider when none is set (CryptoIntegration.java:29-38), so the first caller wins. AuthzClient.create() now calls it, and when AuthzClientCryptoProvider (order 100) is the only provider visible to the authz-client classloader, it becomes the JVM-wide provider.\n\nWhat breaks for other Keycloak code in that JVM:\n- A later init from another classloader that does see crypto-default (order 200) is a no-op, so the order mechanism cannot help.\n- AuthzClientCryptoProvider throws UnsupportedOperationException for getPemUtils, getKeyFactory, getKeyPairGen, getAesGcm/CbcCipher, getX509CertFactory, getCertificateUtils and others (AuthzClientCryptoProvider.java:80-97, 173-190, 203-225). Callers include PemUtils (common/.../PemUtils.java:53-135), KeyUtils.generateRsaKeyPair (common/.../KeyUtils.java:52), AbstractJWKParser (core/.../AbstractJWKParser.java:98) and JWERegistry (core/.../JWERegistry.java:55).\n- getBouncyCastleProvider returns the default KeyStore's provider, which is SUN (AuthzClientCryptoProvider.java:61-67). CryptoIntegration.java:34 reads BouncyIntegration.PROVIDER when init runs, and BouncyIntegration.java:31-40 fixes it to that name, so BouncyIntegration.PROVIDER becomes \"SUN\" for the JVM and survives a later setProvider.\n\nBefore this change the authz client never initialised crypto, so core code in the same JVM failed with 'Please init first' (CryptoIntegration.java:46-51) unless someone else had initialised it. The regression needs the classloader split described above, hence medium confidence.\n\nOptions: do not let the fallback stay sticky (re-run detection while the current provider is this fallback); or have getBouncyCastleProvider return a real BC provider, or null as WildFlyElytronProvider.java:71-73 does.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+      "line": 42,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "ES384 and ES512 tests use a P-256 key, so the P-521 (ES512) long-form DER path is never exercised",
+      "body": "The key is generated once with KeyPairGenerator.getInstance(\"EC\").genKeyPair() (line 42), which is a 256-bit key, and all three tests sign with it (lines 61-72). ES512 expects P-521 signatures: ECDSAAlgorithm.ES512 has signature length 132 (core/.../ECDSAAlgorithm.java:29), so r and s are 66 bytes each. With P-256, r and s stay at 32 bytes and the DER SEQUENCE stays under 128 bytes.\n\nThe long-form length branches are therefore untested: the encoder's writeLength for length > 127 (ASN1Encoder.java:66-83) and the decoder's long-form readLength (ASN1Decoder.java:137-164). Only a P-521 signature reaches them. testES512 and testES384 pass without touching the code that most needs coverage.\n\nFix: generate a key per algorithm with the matching curve (secp384r1 for ES384, secp521r1 for ES512) via KeyPairGenerator.initialize(new ECGenParameterSpec(...)).",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java",
+      "line": 56,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "The round-trip assertion accepts a DER encoding that a JDK verifier would reject",
+      "body": "The test only checks RS -> DER -> RS consistency (lines 53-56). The DER output is fed back into the same new decoder and never checked against the JDK. A broken encoder can still pass, for example one that drops the 0x00 sign byte when r or s has its top bit set: the decoder reads the INTEGER back as a negative BigInteger, and integerToBytes (AuthzClientCryptoProvider.java:151-163) restores the same 32 bytes, so assertArrayEquals still passes.\n\nSuggestion: assert that the re-encoded DER equals the JDK's output (assertArrayEquals(sign, asn1Des)), or verify asn1Des with java.security.Signature against the public key.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "line": 114,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Dead statements in concatenatedRSToASN1DER",
+      "body": "Lines 114-115 build two ASN1Encoder instances and discard them. The return at lines 117-121 builds the sequence independently, so these two calls have no effect. Remove them.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/pom.xml",
+      "line": 67,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "hamcrest test dependency is unused",
+      "body": "The new org.hamcrest:hamcrest test dependency is not used. ECDSAAlgorithmTest imports only org.junit.Assert and org.junit.Test (ECDSAAlgorithmTest.java:27-28). Drop the dependency, or use a hamcrest matcher if one is intended.",
+      "anchor": "diff"
+    },
+    {
+      "path": "common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java",
+      "line": 44,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "order() is added as an abstract method, breaking out-of-tree CryptoProvider implementations",
+      "body": "Any CryptoProvider implementation outside this repository stops compiling until it adds order(). The interface already gives defaults to newer methods (getSupportedKeyStoreTypes at line 104, getSupportedRsaKeySizes at line 137). Consider a default implementation, for example returning 0, so existing providers keep compiling. The four in-repo providers already implement it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java",
+      "line": 58,
+      "severity": "info",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "PR body does not describe the behaviour changes",
+      "body": "The PR body is one line: 'Add AuthzClientCryptoProvider for authorization client cryptographic operations'. The diff also changes how the JVM-wide crypto provider is selected (CryptoIntegration.java:56-71), adds an abstract order() API (CryptoProvider.java:44), and makes AuthzClient.create() initialise crypto (AuthzClient.java:95). AuthzClientCryptoProvider implements only the ECDSA conversion, getKeyStore and getBouncyCastleProvider; the rest throw UnsupportedOperationException (lines 74-97). Worth stating in the description.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "AuthzClient.create(...) initialises the JVM-wide CryptoIntegration with the classloader of AuthzClient",
+      "location": "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java:95",
+      "status": "closed",
+      "evidence": [
+        "authz/client/src/main/java/org/keycloak/authorization/client/AuthzClient.java:94-97",
+        "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:29-38",
+        "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:46-51",
+        "common/src/main/java/org/keycloak/common/util/BouncyIntegration.java:31-40",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:61-67",
+        "services/src/main/java/org/keycloak/services/resources/KeycloakApplication.java:88-90",
+        "integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:41-44"
+      ],
+      "equivalent_path": "services/src/main/java/org/keycloak/services/resources/KeycloakApplication.java:88-90 (startup init); integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:41-44 (sets TCCL, then init)",
+      "before_after": "Before: AuthzClient never called init, so any core crypto call without another init threw IllegalStateException (common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:46-51). After: the first create() installs the provider that detection finds from AuthzClient's classloader; later init calls are no-ops (CryptoIntegration.java:29-38). Siblings initialise once at startup before any use; AuthzClient does it on every create() call, which is idempotent.",
+      "visible_effect": "None on the authz-client API itself. Other Keycloak crypto calls in the same JVM now run on AuthzClientCryptoProvider when it is the only provider visible to that classloader.",
+      "failure_mode": "The fallback provider becomes sticky. Unimplemented methods throw UnsupportedOperationException (AuthzClientCryptoProvider.java:80-97). BouncyIntegration.PROVIDER is frozen to the default KeyStore provider name, SUN (AuthzClientCryptoProvider.java:61-67; CryptoIntegration.java:34; BouncyIntegration.java:31-40). See the finding on AuthzClient.java:95.",
+      "evidence_checked": true
+    },
+    {
+      "action": "JWT client keystore credentials load their key pair through AuthzClientCryptoProvider.getKeyStore, so the authz client can sign client assertions from a keystore",
+      "location": "core/src/main/java/org/keycloak/protocol/oidc/client/authentication/JWTClientCredentialsProvider.java:141",
+      "status": "closed",
+      "evidence": [
+        "core/src/main/java/org/keycloak/protocol/oidc/client/authentication/JWTClientCredentialsProvider.java:141",
+        "common/src/main/java/org/keycloak/common/util/KeystoreUtil.java:88-107",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:197-200",
+        "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java:156-163",
+        "core/src/main/java/org/keycloak/crypto/AsymmetricSignatureSignerContext.java:48",
+        "common/src/main/java/org/keycloak/common/util/KeyUtils.java:76-78"
+      ],
+      "equivalent_path": "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java:156-163 (getKeyStore via the default provider)",
+      "before_after": "Default: JKS uses the JDK with no provider, PKCS12 and BCFKS use BouncyCastle. New: every format uses KeyStore.getInstance(format.name()) with no provider (AuthzClientCryptoProvider.java:197-200). Signing afterwards uses the JDK Signature without a provider (AsymmetricSignatureSignerContext.java:48) and KeyUtils.createKeyId uses MessageDigest only (KeyUtils.java:76-78), so JKS and PKCS12 keystores work end to end.",
+      "visible_effect": "Client authentication with a JKS or PKCS12 keystore works. A BCFKS keystore fails at bootstrap.",
+      "failure_mode": "BCFKS: KeyStoreException is wrapped by KeystoreUtil into RuntimeException('Failed to load private key: ...') (KeystoreUtil.java:104-106). Loud, not silent.",
+      "evidence_checked": true
+    },
+    {
+      "action": "ECDSA signing converts the DER signature from the JDK into the JWS R||S form through the new ASN1Decoder",
+      "location": "core/src/main/java/org/keycloak/crypto/ECDSASignatureSignerContext.java:33",
+      "status": "open",
+      "evidence": [
+        "core/src/main/java/org/keycloak/crypto/ECDSASignatureSignerContext.java:30-36",
+        "core/src/main/java/org/keycloak/crypto/ECDSAAlgorithm.java:49-51",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:124-144",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:151-163",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java:49-74",
+        "crypto/default/src/main/java/org/keycloak/crypto/def/BCECDSACryptoProvider.java:51-70"
+      ],
+      "equivalent_path": "crypto/default/src/main/java/org/keycloak/crypto/def/BCECDSACryptoProvider.java:51-70 (BouncyCastle ASN1InputStream parse, then X9IntegerConverter)",
+      "before_after": "Before: BouncyCastle parses the DER, casts to ASN1Integer and calls X9IntegerConverter.integerToBytes. After: ASN1Decoder.readSequence and readInteger (ASN1Decoder.java:49-74), then the local integerToBytes (AuthzClientCryptoProvider.java:151-163) pads or keeps the low bytes, and output length is signLength. Both paths produce the same output shape; whether X9IntegerConverter handles every case identically is not verified.",
+      "visible_effect": "The JWS ES256/384/512 signature bytes.",
+      "failure_mode": "Malformed DER throws IOException or NumberFormatException (a zero-length INTEGER), wrapped by ECDSASignatureSignerContext.java:34-35 as SignatureException. The input is produced by the local JDK Signature, so it is not attacker-controlled.",
+      "open_question": "Does BouncyCastle's X9IntegerConverter.integerToBytes (in the bcprov jar, not in this repository) handle the pad and truncate cases exactly as AuthzClientCryptoProvider.integerToBytes does? Only the ECDSAAlgorithmTest round trip covers it, and that does not check the padding cases.",
+      "candidates": [
+        "crypto/default/src/main/java/org/keycloak/crypto/def/BCECDSACryptoProvider.java",
+        "authz/client/src/test/java/org/keycloak/authorization/client/test/ECDSAAlgorithmTest.java"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "ECDSA verification converts the incoming R||S signature to DER through the new encoder",
+      "location": "core/src/main/java/org/keycloak/crypto/ECDSASignatureVerifierContext.java:30",
+      "status": "closed",
+      "evidence": [
+        "core/src/main/java/org/keycloak/crypto/ECDSASignatureVerifierContext.java:27-35",
+        "core/src/main/java/org/keycloak/crypto/AsymmetricSignatureVerifierContext.java:57-65",
+        "crypto/default/src/main/java/org/keycloak/crypto/def/BCECDSACryptoProvider.java:28-48",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:102-122",
+        "authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Encoder.java:46-83"
+      ],
+      "equivalent_path": "crypto/default/src/main/java/org/keycloak/crypto/def/BCECDSACryptoProvider.java:28-48",
+      "before_after": "Both build a SEQUENCE of two INTEGERs from a zero-prefixed BigInteger. The new code uses ASN1Encoder minimal encodings (ASN1Encoder.java:46-83). The JDK verifier is tried first (AsymmetricSignatureVerifierContext.java:60); the provider's getSignature is only a fallback on NoSuchAlgorithmException (lines 61-63), so standard algorithms never call the new provider's unimplemented methods.",
+      "visible_effect": "Verification returns true or false. Errors surface as VerificationException.",
+      "failure_mode": "A short signature gives ArrayIndexOutOfBoundsException, which ECDSASignatureVerifierContext.java:32-33 wraps as VerificationException. Nothing is lost silently. The authz client itself does not call verify.",
+      "evidence_checked": true
+    },
+    {
+      "action": "CryptoIntegration.detectProvider with several providers on the classpath, now resolved by order() and classpath order",
+      "location": "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:55-73",
+      "status": "closed",
+      "evidence": [
+        "common/src/main/java/org/keycloak/common/crypto/CryptoIntegration.java:55-73",
+        "quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/KeycloakRecorder.java:210-215",
+        "integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:44",
+        "integration/client-cli/client-cli-dist/pom.xml:37-56",
+        "crypto/default/src/main/java/org/keycloak/crypto/def/DefaultCryptoProvider.java:82-85",
+        "crypto/fips1402/src/main/java/org/keycloak/crypto/fips/FIPS1402Provider.java:113-116",
+        "crypto/elytron/src/main/java/org/keycloak/crypto/elytron/WildFlyElytronProvider.java:75-78"
+      ],
+      "equivalent_path": "quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/KeycloakRecorder.java:210-215 (explicit setProvider, which bypasses detection); integration/client-cli/admin-cli/src/main/java/org/keycloak/client/cli/common/Globals.java:44 (detection through init)",
+      "before_after": "Before: more than one provider threw IllegalStateException('Multiple crypto providers loaded...'). After: the highest order() wins; ties keep ServiceLoader (classpath) order; the others are logged at debug (lines 64-70).",
+      "visible_effect": "The chosen provider decides which crypto implementation every Keycloak call uses (FIPS vs non-FIPS). With equal order there is no visible signal.",
+      "failure_mode": "Silent. Wrong provider chosen with no error, and the log that names the ignored providers is debug-only. See the finding on CryptoIntegration.java:57.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Part 1 (12 files) adds AuthzClientCryptoProvider with a hand-written DER encoder and decoder, a ServiceLoader registration, an order() API on CryptoProvider, and a change to CryptoIntegration's provider selection. Main concerns: (1) with equal order() values (Default, FIPS and Elytron all return 200) and the multiple-provider guard removed, the provider is picked by classpath order and silently, which matters for FIPS deployments such as client-cli-dist; (2) AuthzClient.create() can install its low-order fallback provider JVM-wide, where it cannot be replaced and freezes BouncyIntegration.PROVIDER to \"SUN\" (conditional on a classloader split, medium confidence); (3) the ECDSA test uses a P-256 key for ES384/ES512, so the long-form DER path that only P-521 signatures reach is never tested, and its round trip would accept a non-DER encoding. The DER encoder and decoder logic themselves checked out against the DER rules I traced. No thread replies were required. Nothing was built or run.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 12,
+      "lines": 682,
+      "maxRisk": 7,
+      "status": "reviewed",
+      "turns": 51,
+      "costUsd": 0.3032806
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "10aca5552314d6e5c9226f3c6d0107861c38c693"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3032806,
+    "usage": {
+      "input": 30,
+      "output": 79960,
+      "cacheRead": 1448724,
+      "cacheWrite": 174020
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 51,
+    "durationMs": 363330,
+    "stop": "complete",
+    "notices": []
+  }
+}

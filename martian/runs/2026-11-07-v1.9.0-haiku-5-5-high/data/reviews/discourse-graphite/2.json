@@ -1,0 +1,275 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-2` of discourse-graphite-2 against 56abd247e1829cb6de82dfcc8ce04deb5f0d1e91 (merge-base 56abd24)",
+    "repository": {
+      "name": "discourse-graphite-2"
+    },
+    "base": {
+      "sha": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91",
+      "ref": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91"
+    },
+    "head": {
+      "sha": "6669a2d94d76eea3b99b8c476d12b1eb66726b07",
+      "ref": "pr-2"
+    },
+    "title": "pr-2",
+    "description": "FEATURE: per-topic unsubscribe option in emails",
+    "author": "Régis Hanol"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/components/dropdown-button.js.es6",
+      "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/routes/app-route-map.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-from-params.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs",
+      "app/assets/javascripts/discourse/views/topic-unsubscribe.js.es6",
+      "app/assets/stylesheets/common/base/topic.scss",
+      "app/controllers/topics_controller.rb",
+      "app/mailers/user_notifications.rb",
+      "app/models/topic.rb",
+      "app/models/topic_user.rb",
+      "app/views/email/notification.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "lib/email/message_builder.rb",
+      "spec/components/email/message_builder_spec.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/components/dropdown-button.js.es6",
+      "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/routes/app-route-map.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-from-params.js.es6",
+      "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6",
+      "app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs",
+      "app/assets/javascripts/discourse/views/topic-unsubscribe.js.es6",
+      "app/assets/stylesheets/common/base/topic.scss",
+      "app/controllers/topics_controller.rb",
+      "app/mailers/user_notifications.rb",
+      "app/models/topic.rb",
+      "app/models/topic_user.rb",
+      "app/views/email/notification.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "lib/email/message_builder.rb",
+      "spec/components/email/message_builder_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 113,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Unsubscribe writes notification_level directly, so the muted state is reverted by auto-tracking and read tracking",
+      "body": "`unsubscribe` sets `notification_level` and calls `tu.save!` (lines 107-113). It does not go through `TopicUser.change`, which stamps `notifications_reason_id = user_changed` and `notifications_changed_at` (app/models/topic_user.rb:87-90) and publishes the change (topic_user.rb:112-114). Here the reason stays null. `update_last_read` sets the level to tracking whenever `notifications_reason_id` is null and `total_msecs_viewed` passes the threshold (app/models/topic_user.rb:160-167, the `case when tu.notifications_reason_id is null ...` branch), whatever the current level is. So a recipient who unsubscribes (muted) and later reads the topic past the threshold is moved back to tracking and receives notifications again. `auto_track` also only fires when the reason is null (topic_user.rb:37-49). The read path is reached from the timings endpoint (app/controllers/topics_controller.rb:392-401, which calls `PostTiming.process_timings`; that file is not in this part). Fix: use `TopicUser.change(current_user.id, topic.id, notification_level: ...)`, the same path `set_notifications` uses (topics_controller.rb:330-334).",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 105,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Unsubscribe crashes with a 500 when the logged-in user has no topic_users row",
+      "body": "`tu = TopicUser.find_by(user_id: current_user.id, topic_id: params[:topic_id])` can return nil. Line 107 then calls `tu.notification_level` on nil and raises NoMethodError. The row is created for the email recipient when the notification is sent (app/mailers/user_notifications.rb:312), but the link can be opened by any signed-in account, for example a shared browser that is logged in as someone else, or after the row was deleted. The result is an error page with no explanation. Fix: use `TopicUser.change`, which creates the row when it is missing (topic_user.rb:97-107), or handle the nil case.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_user.rb",
+      "line": 122,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "track_visit! records the visit against user_id = topic_id when given an integer user id (pre-existing, touched by this PR)",
+      "body": "`user_id = user.is_a?(User) ? user.id : topic` falls back to `topic`, the topic id, when `user` is an integer. The only caller in this part passes an integer: `TopicUser.track_visit! topic_id, user_id` (app/controllers/topics_controller.rb:483), where `user_id = current_user.id` (topics_controller.rb:465). So every logged-in HTML topic view writes or updates a `topic_users` row keyed to `user_id = topic_id`. The real user's `last_visited_at` is never updated, and rows are created for an unrelated user whose id happens to equal the topic id. The fallback should be `user`. This line is pre-existing, but this PR reformats the same method (line 125) without fixing it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 107,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "The 'stop receiving notifications' copy does not match the change for watching and tracking users",
+      "body": "For levels above regular the action sets `regular` (lines 107-108), not `muted`. The copy says \"You will stop receiving notifications for <strong>{{title}}</strong>\" (config/locales/client.en.yml:985), and the email text says \"To stop receiving notifications about this particular topic\" (config/locales/server.en.yml:1855). A user at watching or tracking who clicks the link will then be at regular, and regular (topic_user.rb:20) still gets reply and mention notifications. Is that the intended behavior? If not, either set `muted` or change the text.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/topics_controller.rb",
+      "line": 98,
+      "severity": "consider",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "A state-changing action is exposed as GET with no token",
+      "body": "`unsubscribe` changes the viewer's notification level on a GET (routes.rb:440-441). Any page that can make a signed-in browser load the URL, for example an `<img>` tag, can mute that user's topic. The impact is limited to one topic's notification level, and the email link needs this GET form, so the change may be acceptable. It is worth a deliberate decision, for example a confirmation page that POSTs, or a signed token in the link.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/components/email/message_builder_spec.rb",
+      "line": 167,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test covers the new topic unsubscribe link or the unsubscribe action",
+      "body": "The only change here adds `unsubscribe_url: \"/t/1234/unsubscribe\"` to the setup (line 172). The examples that follow (lines 174-180) check the List-Unsubscribe header and the preferences URL. None checks that the topic link appears in the text or HTML body (config/locales/server.en.yml:1852-1855, lib/email/message_builder.rb:88-91 and 61-68). No spec covers `TopicsController#unsubscribe` for the toggle, the slug-mismatch redirect, the logged-out case, or the missing-topic_users case. No spec covers `Topic#unsubscribe_url` (app/models/topic.rb:719-721).",
+      "anchor": "outside"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/topic-unsubscribe.js.es6",
+      "line": 5,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Misspelled property name stopNotificiationsText",
+      "body": "The property is spelled `stopNotificiationsText` here and in app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs:3. The spelling is consistent, so nothing breaks, but the name should be `stopNotificationsText` before it spreads.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GET /t/:slug/:id/unsubscribe and /t/:id/unsubscribe run TopicsController#unsubscribe, which toggles the viewer's notification_level and renders the topic page",
+      "location": "app/controllers/topics_controller.rb:98",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/topics_controller.rb:98-116",
+        "app/controllers/topics_controller.rb:330-334",
+        "app/models/topic_user.rb:37-49",
+        "app/models/topic_user.rb:77-118",
+        "app/models/topic_user.rb:160-167",
+        "app/controllers/topics_controller.rb:493-507",
+        "app/controllers/topics_controller.rb:392-401"
+      ],
+      "equivalent_path": "app/controllers/topics_controller.rb:330-334 (set_notifications, which calls TopicUser.change)",
+      "before_after": "set_notifications writes through TopicUser.change (app/models/topic_user.rb:77-118), which stamps notifications_changed_at and notifications_reason_id = user_changed (topic_user.rb:87-90) and publishes the change (topic_user.rb:112-114). unsubscribe writes notification_level with save! and none of that (topics_controller.rb:105-113).",
+      "visible_effect": "An HTML topic page with the notification button and the copy in client.en.yml, rendered by perform_show_response with the preloaded topic (topics_controller.rb:493-507, app/assets/javascripts/discourse/templates/topic/unsubscribe.hbs:1-8).",
+      "failure_mode": "If the logged-in user has no topic_users row, tu is nil and the request raises (topics_controller.rb:105-107). The reason stays null, so a later read or auto-track overrides the new level (app/models/topic_user.rb:37-49, 160-167). Both are reported as findings.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Ember route topicUnsubscribe model loads the topic with PostStream.loadTopicView(params.id) and then topic.updateFromJson",
+      "location": "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6:4-10",
+      "status": "open",
+      "evidence": [
+        "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6:4-10",
+        "app/assets/javascripts/discourse/models/post-stream.js.es6:211-215",
+        "app/assets/javascripts/discourse/models/post-stream.js.es6:811-825",
+        "app/controllers/topics_controller.rb:499"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/models/post-stream.js.es6:212-214 (the existing topic load path, which calls loadTopicView and then topic.updateFromJson)",
+      "before_after": "The existing path reads the preloaded topic_<id> from PreloadStore and falls back to GET /t/<id>.json (post-stream.js.es6:811-825). The new route does the same, and the preload was written by the unsubscribe response (topics_controller.rb:499), so it reflects the state after the change.",
+      "visible_effect": "The page renders the topic title (controllers/topic-unsubscribe.js.es6:5-7) and the notification button bound to model (templates/topic/unsubscribe.hbs:6).",
+      "failure_mode": "The promise from loadTopicView has no catch in this route (routes/topic-unsubscribe.js.es6:6-9). A rejected request, for example a 403 or 404, is not handled here.",
+      "open_question": "What does Ember do with an unhandled rejection from this route's model hook? Is there a shared error route that shows the user something, or is the page left blank?",
+      "candidates": [
+        "app/assets/javascripts/discourse/routes/exception.js.es6",
+        "app/assets/javascripts/discourse/routes/topic.js.es6"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "createRecord('topic', { id: params.id }) in the topicUnsubscribe model hook",
+      "location": "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6:5",
+      "status": "open",
+      "evidence": [
+        "app/assets/javascripts/discourse/routes/topic-unsubscribe.js.es6:5"
+      ],
+      "failure_mode": "If the store already holds a topic with this id, createRecord may conflict with it. The route is normally reached by a full page load, so the store should start empty.",
+      "open_question": "Does this app's store createRecord reject or duplicate an id that is already loaded? Is there any in-app navigation to this route while the topic is in the store?",
+      "evidence_checked": true
+    },
+    {
+      "action": "Unsubscribe link added to notification emails: user_notifications builds it with unsubscribe_url, and the message builder interpolates it into the text and HTML bodies",
+      "location": "app/mailers/user_notifications.rb:294-295",
+      "status": "closed",
+      "evidence": [
+        "app/mailers/user_notifications.rb:294-295",
+        "app/mailers/user_notifications.rb:230-315",
+        "lib/email/message_builder.rb:61-68",
+        "lib/email/message_builder.rb:88-91",
+        "config/locales/server.en.yml:1852-1855",
+        "app/views/email/notification.html.erb:20",
+        "app/models/topic.rb:709-721",
+        "app/mailers/rejection_mailer.rb:6-12"
+      ],
+      "equivalent_path": "lib/email/message_builder.rb:88-91 and 61-68 (the existing user-preferences unsubscribe link, built the same way)",
+      "before_after": "Before: one preferences link. After: a second link to the topic's /unsubscribe URL, added to the same text and HTML footers.",
+      "visible_effect": "A second sentence in the email footer, in both the text and HTML parts (config/locales/server.en.yml:1852-1855, app/views/email/notification.html.erb:20).",
+      "failure_mode": "If add_unsubscribe_link were set without unsubscribe_url, the interpolation would have no value for %{unsubscribe_url}. The only caller that sets add_unsubscribe_link is user_notifications.rb:294, and RejectionMailer disallows that key (app/mailers/rejection_mailer.rb:6-12), so this cannot happen from the code in this repository.",
+      "evidence_checked": true
+    },
+    {
+      "action": "dropdown-button renders the title header only when a title is set (previously it always rendered it, including the literal text 'undefined' when no title was given)",
+      "location": "app/assets/javascripts/discourse/components/dropdown-button.js.es6:26-31",
+      "status": "open",
+      "evidence": [
+        "app/assets/javascripts/discourse/components/dropdown-button.js.es6:26-31",
+        "app/assets/javascripts/discourse/components/notifications-button.js.es6:1-5",
+        "app/assets/javascripts/discourse/components/pinned-button.js.es6:1",
+        "app/assets/javascripts/discourse/components/topic-notifications-button.js.es6:1-3"
+      ],
+      "equivalent_path": "app/assets/javascripts/discourse/components/dropdown-button.js.es6:26-31 before this change (always pushes the h4)",
+      "before_after": "Before: the h4 is always pushed. After: it is pushed only when title is truthy.",
+      "visible_effect": "The header is omitted for callers that pass no title. Callers are notifications-button.js.es6 and pinned-button.js.es6, and topic-notifications-button extends notifications-button.",
+      "failure_mode": "None found in this change. An empty-string title used to render an empty h4 and now renders nothing.",
+      "open_question": "Do the callers pass a title, and does any of them rely on the h4 being present (for example, a CSS rule that targets .title)?",
+      "candidates": [
+        "app/assets/javascripts/discourse/components/notifications-button.js.es6",
+        "app/assets/javascripts/discourse/components/pinned-button.js.es6",
+        "app/assets/stylesheets/mobile/topic.scss"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Reviewed all 18 files of part 1 (17 changed files plus topic.scss) and the callers they touch. Three defects stand out on the new unsubscribe path. (1) `TopicsController#unsubscribe` writes notification_level directly, skipping `TopicUser.change`, so the notifications_reason_id stays null and a read past the threshold moves a muted user back to tracking (fix). (2) A logged-in user with no topic_users row gets a nil-dereference 500 (fix). (3) `TopicUser.track_visit!` falls back to the topic id instead of the user id when given an integer; this is pre-existing, but the PR reformats that method (fix). Also reported: copy that promises to stop all notifications while the change only lowers watching or tracking to regular (question), a state change on GET with no token (consider), missing specs for the new endpoint and link (consider), and a misspelled property name (cleanup). Client-side title rendering is escaped server-side by fancy_title, so there is no XSS finding. The mailer and message-builder changes are sound, and `add_unsubscribe_link` has no other caller that could lack `unsubscribe_url`. Open questions: how Ember handles the rejected loadTopicView promise, and whether the Ember store's createRecord conflicts with an id that is already loaded. Nothing was built or run.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 18,
+      "lines": 225,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 27,
+      "costUsd": 0.04228399
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91"
+  },
+  "execution": {
+    "costUsdEstimate": 0.04228399,
+    "usage": {
+      "input": 12,
+      "output": 43113,
+      "cacheRead": 292949,
+      "cacheWrite": 88984
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 27,
+    "durationMs": 191784,
+    "stop": "complete",
+    "notices": []
+  }
+}

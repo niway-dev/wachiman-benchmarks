@@ -1,0 +1,181 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-107534-flat` of grafana-107534-flat against d9a8253640464014aa3662c91131278990cfb828 (merge-base d9a8253)",
+    "repository": {
+      "name": "grafana-107534-flat"
+    },
+    "base": {
+      "sha": "d9a8253640464014aa3662c91131278990cfb828",
+      "ref": "d9a8253640464014aa3662c91131278990cfb828"
+    },
+    "head": {
+      "sha": "42e1895430aaa5b1ddc86ed6032dda5e762e0717",
+      "ref": "pr-107534-flat"
+    },
+    "title": "pr-107534-flat",
+    "description": "Advanced Query Processing Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts"
+    ],
+    "reviewed": [
+      "public/app/plugins/datasource/loki/querySplitting.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.ts",
+      "line": 299,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Ad hoc filters are applied again on the sub-request path, up to three times for shard splitting",
+      "body": "runSplitQuery now calls applyTemplateVariables(query, request.scopedVars, request.filters) on every target (querySplitting.ts:299). Each sub-request then goes through runQuery -> DataSourceWithBackend.query, which calls applyTemplateVariables with request.filters again (packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185). For shard splitting, runShardSplitQuery applies it once (shardQuerySplitting.ts:52) before handing the sub-requests to runSplitQuery, so the filters are added three times in total. Before this change the backend applied them once. addFilterToStreamSelector skips duplicates (modifyQuery.ts:494-497, labelExists at 602-604), but addFilterAsLabelFilter does not (modifyQuery.ts:511-541). So a query with a parser and a filter on a non-indexed label gets the same `| key=\"value\"` stage added on each pass. The results do not change, because repeated AND-ed filters match the same rows, but the text sent to Loki differs from the non-split path (datasource.ts:343), and the test below pins the repeated calls. Suggested fix: apply the ad hoc filters in one place only, for example drop the call in runShardSplitQuery or the one in runSplitQuery, once you confirm that the backend call at DataSourceWithBackend.ts:185 is the one that must stay for the non-split path.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/shardQuerySplitting.test.ts",
+      "line": 112,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Test pins the repeated interpolation count",
+      "body": "`expect(datasource.applyTemplateVariables).toHaveBeenCalledTimes(5)` counts one call in runShardSplitQuery (shardQuerySplitting.ts:52) plus one call for each of the four sub-requests in runSplitQuery (querySplitting.ts:299). The number records the duplicated interpolation described above rather than a requirement. Any change that removes one of the duplicate calls will fail this test, and its title, 'Interpolates queries before running', does not say that the count is the point. Assert the interpolated expressions the backend receives, which the test already does just above, or drop the count.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/querySplitting.test.ts",
+      "line": 78,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The interpolation tests mock away the behavior they are meant to check",
+      "body": "The new test at querySplitting.test.ts:75-88 gives createLokiDatasource a replace mock that turns `$__auto` and `$step` into '5m' itself (line 78-80). The production path does not do that. applyTemplateVariables removes __auto, __range, __range_s and __range_ms from scopedVars (datasource.ts:1113), and templateSrv has no built-in handling for them (public/app/features/templating/template_srv.ts has no `__auto` match), so `$__auto` is meant to reach the backend unresolved. These tests would still pass if that stripping were removed, and they never check what the backend receives for `$__auto`. The same mock is in shardQuerySplitting.test.ts:87-89. Add an assertion that a `$__auto` query keeps `$__auto` in the expression sent to runQuery, or use the real templateSrv behavior.",
+      "anchor": "diff"
+    },
+    {
+      "path": "public/app/plugins/datasource/loki/shardQuerySplitting.ts",
+      "line": 52,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Shard sub-requests now resolve $__auto per time chunk on the backend",
+      "body": "Before this change, runShardSplitQuery called interpolateVariablesInQueries(targets, scopedVars) (datasource.ts:429-447). That resolved `$__auto` once on the frontend against the scopedVars for the full range. Now applyTemplateVariables strips __auto from scopedVars (datasource.ts:1113), so `$__auto` is left for the backend, and every time chunk made by runSplitQuery gets its own value. On the backend, a range query's `$__auto` is its step, and step is max(interval, chunkRange/11000) (pkg/tsdb/loki/step.go:27-33, pkg/tsdb/loki/parse_query.go:147,157). A chunk's step can therefore differ from the full-range value when chunkRange/11000 is larger than the interval. Splitting without sharding already does this, so the shard path now behaves like it. I did not read how the frontend computes scopedVars.__auto, so I cannot say whether the old single value and the per-chunk values differ in practice. Please confirm that per-chunk `$__auto` is what you want for sharded queries.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "runSplitQuery applies applyTemplateVariables to every target before partitioning and sub-request creation",
+      "location": "public/app/plugins/datasource/loki/querySplitting.ts:296-301",
+      "status": "closed",
+      "evidence": [
+        "public/app/plugins/datasource/loki/querySplitting.ts:296-301",
+        "public/app/plugins/datasource/loki/querySplitting.ts:180",
+        "public/app/plugins/datasource/loki/querySplitting.ts:282-289",
+        "public/app/plugins/datasource/loki/querySplitting.ts:328-329",
+        "public/app/plugins/datasource/loki/querySplitting.ts:361-371",
+        "public/app/plugins/datasource/loki/datasource.ts:336-340",
+        "public/app/plugins/datasource/loki/datasource.ts:350-358",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "public/app/plugins/datasource/loki/datasource.ts:1132",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185",
+        "public/app/plugins/datasource/loki/queryUtils.ts:290-298",
+        "public/app/features/templating/template_srv.ts:293-294",
+        "pkg/tsdb/loki/parse_query.go:147",
+        "public/app/plugins/datasource/loki/tracking.ts:69-70"
+      ],
+      "equivalent_path": "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:185 (backend path applies applyTemplateVariables to each sub-request target), public/app/plugins/datasource/loki/datasource.ts:350-358 (runQuery)",
+      "before_after": "Before: runSplitQuery passed the raw targets through, and the backend call in DataSourceWithBackend.ts:185 interpolated each sub-request once. After: targets are interpolated once in runSplitQuery, and then the backend call interpolates them again. The expression and step seen by the classification steps (isLogsQuery at querySplitting.ts:301, querySupportsSplitting at 282-289, calculateStep at 328-329 and 361-371) are now the resolved ones. The resolved step is also what the backend reads, because DataSourceWithBackend.ts:185 resolves step too (datasource.ts:1132) and parse_query.go:147 reads model.Step, so the frontend partition now matches the backend step instead of falling back to the interval.",
+      "visible_effect": "Queries whose expression is a variable are classified as logs or metrics correctly and split with the resolved step. $__range queries are still excluded from splitting, because the check runs on the resolved expression and the frontend leaves $__range unresolved (queryUtils.ts:290-298, template_srv.ts has no __range handling). Tracking gets the resolved expression (tracking.ts:69-70, 181).",
+      "failure_mode": "Ad hoc filters are added twice here and once more in the shard path (finding on querySplitting.ts:299). A throw from applyTemplateVariables now escapes runSplitQuery synchronously, from datasource.ts:339, outside any Observable. Before, the same call ran inside runSplitGroupedQueries' subscription (querySplitting.ts:180), so it reached the subscriber as an error. The likelihood is low, because the function does plain string replacement.",
+      "evidence_checked": true
+    },
+    {
+      "action": "runShardSplitQuery applies applyTemplateVariables (with ad hoc filters) to each target, replacing interpolateVariablesInQueries, and the expression filter now runs before interpolation",
+      "location": "public/app/plugins/datasource/loki/shardQuerySplitting.ts:48-55",
+      "status": "open",
+      "evidence": [
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:48-55",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:163-166",
+        "public/app/plugins/datasource/loki/shardQuerySplitting.ts:252-258",
+        "public/app/plugins/datasource/loki/datasource.ts:324",
+        "public/app/plugins/datasource/loki/datasource.ts:377",
+        "public/app/plugins/datasource/loki/datasource.ts:429-447",
+        "public/app/plugins/datasource/loki/datasource.ts:1110-1141",
+        "public/app/plugins/datasource/loki/queryUtils.ts:421-427",
+        "public/app/plugins/datasource/loki/querySplitting.ts:282-289",
+        "public/app/plugins/datasource/loki/querySplitting.ts:298",
+        "public/app/plugins/datasource/loki/querySplitting.ts:342-346",
+        "packages/grafana-runtime/src/utils/DataSourceWithBackend.ts:148-176",
+        "pkg/tsdb/loki/parse_query.go:145-157",
+        "pkg/tsdb/loki/step.go:27-33"
+      ],
+      "equivalent_path": "public/app/plugins/datasource/loki/datasource.ts:429-447 (the old interpolateVariablesInQueries, still used by LokiQueryBuilderOptions.tsx:106), public/app/plugins/datasource/loki/datasource.ts:324 and :377 (other applyTemplateVariables callers that pass request.filters)",
+      "before_after": "Before: interpolateVariablesInQueries(request.targets, request.scopedVars) was called without ad hoc filters. It did not strip __auto or __range, it set datasource to this.getRef(), and it did not resolve step or legendFormat. The expr filter then ran on the interpolated expression. After: applyTemplateVariables gets request.filters, strips __auto/__range/__range_s/__range_ms, passes $__interval and $__interval_ms through, and resolves step and legendFormat. The expr filter now runs on the raw expression. The datasource ref is no longer set, but DataSourceWithBackend.ts:148-176 falls back to this datasource when a target has no datasource field, so the backend is not affected.",
+      "visible_effect": "The __stream_shard__ value lookup now uses a selector that includes the ad hoc filters, because getSelectorForShardValues takes the first Selector of the expression (queryUtils.ts:421-427, shardQuerySplitting.ts:252-258), so shard values are read only from the filtered streams. Before, the lookup ignored the filters. $__auto and $__range are now resolved by the backend for each sub-request. $__range stays correct because a query that contains it is not split and runs over request.range (querySplitting.ts:282-289, 342-346).",
+      "failure_mode": "Ad hoc filters are added several times (finding on querySplitting.ts:299). If the expression resolves to an empty string, runSplitQuery's expr filter removes it (querySplitting.ts:298) because the shard path passes already-interpolated targets to it, so no empty sub-request is sent. Whether the per-chunk $__auto matches the old full-range value is an open question.",
+      "open_question": "Is per-chunk backend resolution of $__auto (step = max(interval, chunkRange/11000)) the intended result for sharded queries, compared with the single frontend value used before this change? I did not read how the frontend builds scopedVars.__auto, so I cannot say whether the two values match.",
+      "candidates": [
+        "pkg/tsdb/loki/step.go",
+        "public/app/plugins/datasource/loki/datasource.ts"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Four files reviewed in full, with their callers and the backend step and template code they rely on. No blockers or fixes. The main concern is that ad hoc filters are applied more than once on the split and shard paths. The result is the same for AND-ed matchers, but the extra stages are sent to Loki and the new test pins the repeated count. The shard path also now leaves $__auto to the backend, which changes its per-chunk value. I could not confirm that as a defect, so it is a question. Nothing was built or run; the claims rest on reading the code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 63,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 42,
+      "costUsd": 0.24162305
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d9a8253640464014aa3662c91131278990cfb828"
+  },
+  "execution": {
+    "costUsdEstimate": 0.24162305,
+    "usage": {
+      "input": 50,
+      "output": 66268,
+      "cacheRead": 2186637,
+      "cacheWrite": 136023
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 42,
+    "durationMs": 331004,
+    "stop": "complete",
+    "notices": []
+  }
+}

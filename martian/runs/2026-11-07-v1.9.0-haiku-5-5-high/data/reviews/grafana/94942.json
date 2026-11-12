@@ -1,0 +1,221 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Haiku 5.5 via Claude Code 2.1.319",
+    "model": "claude-haiku-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions reads the feature flag and then ignores it",
+      "body": "Both branches of `enableSqlExpressions` return false (lines 195-199), so the `sqlExpressions` flag has no effect in the query reader: the SQL case at line 131 always errors, flag on or off. The shape suggests a flag gate that was never finished. If the intent is a hard disable (as the PR body says), replace the helper with an unconditional error at line 131 so the code states what it does. If the flag is meant to gate something later, the current helper is wrong.\n\nRelated, outside this part: the frontend still offers the SQL expression type when the flag is on (public/app/features/expressions/types.ts:71-76), so a user who enables the flag can pick SQL and every run fails. docs/sources/setup-grafana/configure-grafana/feature-toggles/index.md:187 still says the flag \"Enables using SQL and DuckDB functions as Expressions\", which is no longer true.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 131,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "high",
+      "title": "Saved SQL expressions now fail everywhere; is that intended, and is there a notice?",
+      "body": "Every saved SQL expression (dashboards, alert rules) now fails on evaluation. On the query API path, the parser returns the error for the whole request (pkg/registry/apis/query/parser.go:102-105), so a request that mixes a SQL expression with datasource queries fails as a whole. On the legacy node path, nodes.go:159-160 fails the expression at parse time, so alert rules with SQL expressions go to an error state. The error is visible, not silent. Please confirm this breakage is intended and whether users are told (release note, migration path). The PR body only says \"disable sql expressions\".",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql_command.go",
+      "line": 33,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Disabled SQL is reported to users as an invalid SQL query",
+      "body": "With the stub in pkg/expr/sql/db.go, `TablesList` always fails (pkg/expr/sql/parser.go:26-30). `NewSQLCommand` then returns the public error \"error reading SQL command\" (`sql-invalid-sql`, a bad request), which tells the user their SQL is wrong when the feature is disabled. The server logs a Warn with \"invalid sql query\" (line 32) and an Error with \"error serializing sql: not implemented\" (pkg/expr/sql/parser.go:28) on every evaluation. Return a distinct \"SQL expressions are disabled\" error from the stub or from `NewSQLCommand` so the cause is visible.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 128,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "No test covers the disabled SQL branch, and the SQL tests are skipped",
+      "body": "pkg/expr/reader_test.go has table tests for the other query types (reader_test.go:142 builds the reader with featuremgmt.WithFeatures()), but none for the SQL type, so nothing guards the new error. The SQL tests in pkg/expr/sql/parser_test.go (t.Skip at line 10 and onward) and pkg/expr/sql_command_test.go (t.Skip at line 9) assert working DuckDB output. They do not run today, and they would fail if someone unskipped them. Add a reader test that asserts the SQL type returns an error, and either delete the dead SQL tests or mark them as tied to the removed backend.",
+      "anchor": "diff"
+    },
+    {
+      "path": "go.mod",
+      "line": 144,
+      "severity": "fix",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Root go.mod/go.sum edits are not produced by the command the PR body names",
+      "body": "The PR body says to run `make update-workspace`. That target runs `go mod tidy` only in submodules (scripts/go-workspace/update-workspace.sh:9-14). The root module is skipped by scripts/go-workspace/main.go:89-92 (`path == \".\"` is skipped). So the root module edits here (go-duck and its indirect requires, removed between go.mod:144 and 145 and around lines 221, 229, 334, 349-350, 483-484, plus the matching go.sum lines) must come from a manual `go mod tidy` at the root, which the PR does not mention. Please confirm a root `go mod tidy` was run and that `go build ./pkg/expr/...` passes on the branch. I could not check this, because I am not allowed to run the Go tooling. Nothing in the repository still imports go-duck or the removed modules: I searched all non-go.sum files, and the only remaining references are in go.work.sum and in pkg/storage/unified/resource/go.mod (azblob, which is still required there).",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "User (query API) submits a SQL expression that reaches ReadQuery",
+      "location": "pkg/expr/reader.go:128",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-132",
+        "pkg/expr/reader.go:194-200",
+        "pkg/registry/apis/query/parser.go:102-105"
+      ],
+      "equivalent_path": "pkg/expr/sql_command.go:25-48 (NewSQLCommand), the path this branch used before the PR",
+      "before_after": "Before: the SQL case parsed the expression and called NewSQLCommand, which called DuckDB TablesList. After: the case returns an error immediately, before iter.ReadVal, for every SQL expression, flag on or off.",
+      "visible_effect": "The request fails with \"sqlExpressions is not implemented\". The whole request fails, not just the SQL expression.",
+      "failure_mode": "The error is returned through pkg/registry/apis/query/parser.go:102-105, which returns the error for the whole request. It is visible, not silent. Other queries in that request are lost for that request only.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Legacy node path evaluates a SQL expression (flag for the expression parser off)",
+      "location": "pkg/expr/nodes.go:159-160",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/nodes.go:159-165",
+        "pkg/expr/sql_command.go:30-36",
+        "pkg/expr/sql/parser.go:22-30",
+        "pkg/expr/sql/db.go:16-18"
+      ],
+      "equivalent_path": "pkg/expr/sql_command.go:25-36 (NewSQLCommand)",
+      "before_after": "Before: UnmarshalSQLCommand built the command through DuckDB TablesList. After: TablesList returns errors.New(\"not implemented\") via the stub, so NewSQLCommand returns a BadRequest error for any SQL input.",
+      "visible_effect": "The expression fails to parse with \"error reading SQL command\", and the node error reports \"failed to parse expression\". Alert rules containing SQL expressions go to an error state.",
+      "failure_mode": "The error propagates up through nodes.go:164-165. It is not silent, but the public message blames the SQL, not the disabled feature.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand.Execute runs (any caller holding a SQLCommand)",
+      "location": "pkg/expr/sql_command.go:96-105",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:96-105",
+        "pkg/expr/sql/db.go:20-22",
+        "pkg/expr/sql/parser.go:22-30",
+        "pkg/expr/sql_command.go:25-36"
+      ],
+      "equivalent_path": "pkg/expr/sql_command.go:96-105 before the PR (duck.NewInMemoryDB and QueryFramesInto)",
+      "before_after": "Before: DuckDB ran the query. After: the stub's QueryFramesInto returns an error. No SQLCommand value can be built now, because NewSQLCommand always fails, so this path is unreachable.",
+      "visible_effect": "None today. The branch is dead code.",
+      "failure_mode": "If a SQLCommand were ever built, the error is stored in rsp.Error (sql_command.go:103) and returned, so it would be surfaced, not swallowed.",
+      "evidence_checked": true
+    },
+    {
+      "action": "User with the sqlExpressions flag on opens the expression type picker",
+      "location": "public/app/features/expressions/types.ts:71-76",
+      "status": "closed",
+      "evidence": [
+        "public/app/features/expressions/types.ts:71-76",
+        "pkg/expr/reader.go:128-132"
+      ],
+      "before_after": "Before: the SQL type was offered when the flag was on and ran. After: the SQL type is still offered when the flag is on, and every run fails at the backend.",
+      "visible_effect": "The user can select SQL. Running the expression shows the backend error.",
+      "failure_mode": "The error is visible. The frontend does not hide the option, so the flag still advertises a feature that no longer works.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Build with go-duck and its transitive modules removed from the module graph",
+      "location": "go.mod:144",
+      "status": "open",
+      "evidence": [
+        "go.mod:138-149",
+        "pkg/expr/sql/parser.go:9-10",
+        "scripts/go-workspace/update-workspace.sh:9-14",
+        "scripts/go-workspace/main.go:89-92"
+      ],
+      "before_after": "Before: go.mod required go-duck v0.1.0 and its indirect deps (thrift, orderedmap, go-which, asmfmt, minio, JohnCGriffin), with matching go.sum lines. After: all of those requires and sum lines are removed from go.mod/go.sum, and go.work.sum is regenerated.",
+      "visible_effect": "None if the module graph is consistent. If a required go.sum line was removed, the build fails with a missing-go.sum error.",
+      "failure_mode": "A missing hash fails the build loudly, not silently. Confidence is limited because I could not run the Go tooling.",
+      "open_question": "Was a root `go mod tidy` run? update-workspace does not tidy the root module. Does `go build ./pkg/expr/...` pass on this branch with the root go.sum as it is?",
+      "candidates": [
+        "go.sum",
+        "go.work.sum",
+        "scripts/go-workspace/update-workspace.sh"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR disables SQL expressions. Its three Go source changes are internally consistent: the duck imports are gone, and the stub in pkg/expr/sql/db.go matches the calls in parser.go and sql_command.go. The problems are in how the disable is done. The flag helper in reader.go always returns false, so the flag is a no-op in the backend while the frontend still offers the option. Disabled SQL is reported as an invalid-SQL error. Nothing covers the new behaviour, and the root go.mod/go.sum edits come from a step the PR body does not name. I did not run any Go tooling, so the module-graph result is unverified. go.mod, go.sum and go.work.sum were checked through their diffs and targeted searches, not read line by line.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 34,
+      "costUsd": 0.04432875000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.04432875000000001,
+    "usage": {
+      "input": 28,
+      "output": 39023,
+      "cacheRead": 791925,
+      "cacheWrite": 84476
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 34,
+    "durationMs": 194285,
+    "stop": "complete",
+    "notices": []
+  }
+}
