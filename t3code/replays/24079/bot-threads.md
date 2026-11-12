@@ -1,0 +1,20 @@
+# Reference bot threads: pingdotgg/t3code#24079
+
+Original PR: https://github.com/pingdotgg/t3code/pull/24079 (fix(server): phones get the approval push when a subagent waits), merged 2026-11-09.
+
+Replay: base `4812dcad02a86874533540e6a0c4b7f5eaea297a`, head `69a7f1c3de1c5369fce93ea6dc543c8eba7aa2c2`.
+
+These are the CodeRabbit (`coderabbitai`) and Macroscope (`macroscopeapp`) threads raised on the replay head or on a later commit of the PR: 10 of the PR's 10 threads. They are the reference that Wachiman's findings on the replay are compared with. "Claim" is the thread's own headline. "Our verdict" comes from [`batches/2026-11-09/chunk-05.md`](../../batches/2026-11-09/chunk-05.md) (Track A, row T#), as verdict (outcome). The chunk row says whether that verdict was checked in code or judged from the thread text.
+
+| T# | bot | bot severity | path:line | commit | claim | our verdict | url |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | macroscopeapp | High | `apps/server/src/relay/AgentAwarenessRelay.ts:568` | 69a7f1c3 | A parent can keep publishing `waiting_for_approval` after its subagent request has resolved or the child has been deleted. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358690167) |
+| 2 | macroscopeapp | High | `apps/server/src/relay/AgentAwarenessRelay.ts:725` | e17084bc | A fresh child request or removal can fail to reach the relay indefinitely: these parent updates bypass `cancelPublishRetry`, so a transient failure reuses an exhausted retry budget and schedules no retry. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358730090) |
+| 3 | coderabbitai | Major | `apps/server/src/relay/AgentAwarenessRelay.ts:688` | e17084bc | Record child requests that appear while publishing is off. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358774911) |
+| 4 | macroscopeapp | High | `apps/server/src/relay/AgentAwarenessRelay.ts:671` | 1a89e06c | When a child replaces a pending approval with another approval while the publish worker is busy, the parent's relay row retains the old request timestamp. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358781302) |
+| 5 | coderabbitai | Major | `apps/server/src/relay/AgentAwarenessRelay.ts:693` | a3b9a8f4 | Track paused requests after the initial snapshot, not after the first individual publish. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358882850) |
+| 6 | coderabbitai | Major | `apps/server/src/relay/AgentAwarenessRelay.ts:729` | e98fac6f | Select a new approval when another child starts waiting. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4358996297) |
+| 7 | coderabbitai | Minor | `apps/server/src/relay/AgentAwarenessRelay.ts:765` | 347c7e5d | Select the later request when child timestamps match. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4368400331) |
+| 8 | macroscopeapp | High | `apps/server/src/relay/AgentAwarenessRelay.ts:699` | b406b70d | After a child wait clears, a later approval can reuse the same `updatedAt` and `alert_id`, so Android suppresses the second approval notification as already seen. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4371612198) |
+| 9 | coderabbitai | Minor | `apps/server/src/relay/AgentAwarenessRelay.ts:688` | b406b70d | Keep clearing publications newer than the approval publication. | wrong (disputed) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4371637100) |
+| 10 | coderabbitai | Minor | `apps/server/src/relay/AgentAwarenessRelay.ts:728` | b406b70d | Explain the deliberate use of `Effect.fnUntraced`. | nit (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/24079#discussion_r4371637113) |

@@ -1,0 +1,18 @@
+# Reference bot threads: pingdotgg/t3code#33758
+
+Original PR: https://github.com/pingdotgg/t3code/pull/33758 (feat(opencode): mirror native goals across clients), merged 2026-11-10.
+
+Replay: base `cec8d73a1f0fd3bd9a48df88640436e73a04afa3`, head `219d67c80c89af57995543d33c7140df9682e8b9`.
+
+These are the CodeRabbit (`coderabbitai`) and Macroscope (`macroscopeapp`) threads raised on the replay head or on a later commit of the PR: 8 of the PR's 8 threads. They are the reference that Wachiman's findings on the replay are compared with. "Claim" is the thread's own headline. "Our verdict" comes from [`batches/2026-11-10/chunk-02.md`](../../batches/2026-11-10/chunk-02.md) (Track A, row T#), as verdict (outcome). The chunk row says whether that verdict was checked in code or judged from the thread text.
+
+| T# | bot | bot severity | path:line | commit | claim | our verdict | url |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | macroscopeapp | High | `packages/provider-opencode/src/server/v2/adapter.ts:2648` | 219d67c8 | A reconnect fails every running turn after five attempts when four loaded sessions have stalled goal RPCs, even if the event connection and other session APIs are healthy. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4522608170) |
+| 2 | macroscopeapp | High | `packages/provider-opencode/src/server/v2/adapter.ts:2679` | 219d67c8 | A successfully ended turn can remain running indefinitely after reconnect if its goal was cleared while disconnected and `readGoal` fails: `endExecution` trusts the cached `active` status and stores `heldEnd` instead of  | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4522608179) |
+| 3 | coderabbitai | Minor | `packages/provider-opencode/src/server/v2/adapter.ts:3461` | 219d67c8 | Prevent a stale `/goal` read from replacing a newer event. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4522734122) |
+| 4 | macroscopeapp | High | `packages/provider-opencode/src/server/v2/adapter.ts:3459` | 545163f6 | A delayed `readGoal` can return after this turn is cleared and a replacement starts, so `finishTurn(state, ...)` completes the replacement turn and drops its tracking. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4526513798) |
+| 5 | macroscopeapp | High | `packages/provider-opencode/src/server/v2/adapter.ts:2695` | d674e881 | A successfully completed session can remain stuck in reconciliation, blocking subsequent turns. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4526593139) |
+| 6 | coderabbitai | Minor | `packages/provider-opencode/src/server/v2/adapter.ts:2700` | b12405fb | Reconcile drops the pending-steer hold when the goal refresh fails or times out. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4526837903) |
+| 7 | macroscopeapp | High | `packages/provider-opencode/src/server/v2/adapter.ts:2692` | 27c9f6a3 | After reconnect, a goal change can complete the T3 turn while the next OpenCode execution is still running, dropping its remaining output and terminal outcome. | real-bug (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4527200990) |
+| 8 | coderabbitai | Major | `packages/provider-opencode/src/server/driver.ts:137` | 27c9f6a3 | Keep the driver and session native-goal gates in sync. | real-minor (fixed-before-merge) | [thread](https://github.com/pingdotgg/t3code/pull/33758#discussion_r4527341092) |
