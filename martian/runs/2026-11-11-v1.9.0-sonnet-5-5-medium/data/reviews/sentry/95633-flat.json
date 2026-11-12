@@ -1,0 +1,197 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-95633-flat` of sentry-95633-flat against fd358e8a388939959369f08f616e29552cdaf96e (merge-base fd358e8)",
+    "repository": {
+      "name": "sentry-95633-flat"
+    },
+    "base": {
+      "sha": "fd358e8a388939959369f08f616e29552cdaf96e",
+      "ref": "fd358e8a388939959369f08f616e29552cdaf96e"
+    },
+    "head": {
+      "sha": "371d72c8c18ead287e4497a7346abf1493c55481",
+      "ref": "pr-95633-flat"
+    },
+    "title": "pr-95633-flat",
+    "description": "feat(uptime): Add ability to use queues to manage parallelism",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "src/sentry/remote_subscriptions/consumers/result_consumer.py",
+      "tests/sentry/remote_subscriptions/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "tests/sentry/uptime/consumers/test_results_consumer.py"
+    ],
+    "reviewed": [
+      "src/sentry/consumers/__init__.py",
+      "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "src/sentry/remote_subscriptions/consumers/result_consumer.py",
+      "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "tests/sentry/remote_subscriptions/__init__.py",
+      "tests/sentry/remote_subscriptions/consumers/__init__.py",
+      "tests/sentry/uptime/consumers/test_results_consumer.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 338,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Closing a strategy shuts down the factory-shared queue pool; after a rebalance messages are silently dropped and committed",
+      "body": "`queue_pool` is created once in `ResultsStrategyFactory.__init__` and passed to every strategy built by `create_with_partitions` (result_consumer.py:209-210, 247-259). Arroyo calls `close()`/`join()` on the strategy at every partition revoke, and `close()` calls `self.queue_pool.shutdown()` (line 338). That sets `worker.shutdown`, calls `q.shutdown()` on every queue and joins the workers, so the workers are dead after the first rebalance. The factory still holds the same pool, so the next strategy reuses it. `FixedQueuePool.submit` then calls `work_queue.put`, which raises `queue.ShutDown`. `SimpleQueueProcessingStrategy.submit` catches it (line 317), logs, and marks the offset added and completed (lines 319-325). The commit loop then commits those offsets, so every message after a rebalance is dropped and its offset committed. Fix: strategy `close()`/`terminate()` must not shut down the shared pool. Pool lifetime should belong to the factory's `shutdown()`. Alternatively, build the pool per strategy. Per-partition offset state should also be cleared on revoke.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 317,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Submit failures mark the offset complete so it gets committed without processing",
+      "body": "When `submit` raises (decode/grouping/queue put error), the except block adds and immediately completes the offset (lines 319-325), so it is committed even though the item was never processed. Combined with the pool-shutdown problem this loses data. Even on its own, a transient error becomes silent loss, visible only in a log line. Consider letting the error propagate, or at least emitting a metric.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 246,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Docstring promises backpressure and success-only commits that the code does not provide",
+      "body": "The docstring says 'Natural backpressure when queues fill up' and 'Only commits offsets after successful processing'. The queues are unbounded `queue.Queue()` (line 185), so `submit` never blocks and `poll` never pauses the consumer. Slow processing means unbounded memory growth. Offsets are also completed in the `finally` block (line 149) even when the processor raised. Either add a bound (e.g. `maxsize`, with `MessageRejected` handling) or correct the docstring.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/remote_subscriptions/consumers/queue_consumer.py",
+      "line": 287,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "commit function is invoked from a background thread",
+      "body": "`commit_function` is called from `_commit_loop` on a separate thread, while arroyo normally invokes `commit` from the consumer's main thread. Is the arroyo `commit` callable thread-safe here? `close()` also does no final commit of completed offsets, so work finished after the last 1s tick is re-processed after a rebalance.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/remote_subscriptions/consumers/test_queue_consumer.py",
+      "line": 98,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Hash-dependent assertion can flake; rebalance/reuse path untested",
+      "body": "`test_different_groups_distributed` asserts 20 random-hash groups cover all 3 queues. `hash(str)` is randomized per process, so this fails roughly 0.1% of runs. Also, no test creates a second strategy from the same factory after closing the first, which would have caught the shared-pool shutdown bug.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1874,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Error-handling test contradicts its docstring and passes only because of timing",
+      "body": "The docstring says errors \"don't block offset commits for other messages\", but the test asserts that no offset is committed (line 1922). In `OrderedQueueWorker.run` (src/sentry/remote_subscriptions/consumers/queue_consumer.py:148-149), `complete_offset` runs in `finally`, so a failed message is still marked complete. Offsets 100 and 101 therefore become committable, and the commit loop (queue_consumer.py:273-289) would commit 102. The test passes only because the loop sleeps 1s before its first commit and the test checks within about 0.3s. A slower or faster run, or a change to the commit interval, flips the result. The test should wait for the commit and assert that the partition reaches 102 despite the error. If the intent is that failures must not commit, the implementation contradicts that.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/uptime/consumers/test_results_consumer.py",
+      "line": 1861,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Timing-based polling is tight against the 1s commit interval",
+      "body": "The offset-commit, gaps and error tests poll for at most 20×0.1s = 2s. The first commit only happens after the 1s wait in `_commit_loop` (queue_consumer.py:276). On a loaded CI machine this can time out and the assertion at line 1869 then fails. The loop also never fails on timeout; it falls through to later asserts. Prefer a longer deadline, or a threading.Event set from the commit callback.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Strategy close() shuts down the queue pool, then the factory reuses the pool for the next assignment",
+      "location": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:335-338",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:317-325",
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:200-212",
+        "src/sentry/remote_subscriptions/consumers/result_consumer.py:180-185"
+      ],
+      "equivalent_path": "Other modes (parallel/batched) create per-strategy resources or keep factory-level pools that strategy close does not tear down (result_consumer.py:180-185 shutdown is factory-level).",
+      "before_after": "Existing: the factory shutdown owns pool teardown. New: strategy close() also tears down the factory's pool; create_with_partitions reuses the dead pool.",
+      "visible_effect": "After a rebalance, messages are not processed but their offsets are committed.",
+      "failure_mode": "queue.ShutDown on put is caught in submit, then the offset is completed and committed, a silent loss.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bounds on waiting: close() joins commit thread (5s) and each of N workers (5s each)",
+      "location": "src/sentry/remote_subscriptions/consumers/queue_consumer.py:242",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:242-243",
+        "src/sentry/remote_subscriptions/consumers/queue_consumer.py:337"
+      ],
+      "visible_effect": "Worst-case shutdown is about 5s x (queues+1), e.g. 105s with 20 workers if every worker is stuck, since each join has its own timeout and they are sequential.",
+      "failure_mode": "Slow shutdown/rebalance when processors hang.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 2.** The thread-queue-parallel mode has one blocker. Strategy `close()` shuts down the pool that the factory shares across strategies. After the first rebalance the workers are dead, `put` raises, and the error handler completes those offsets. The offsets are then committed, so messages are lost silently. There are also smaller issues: a docstring that promises backpressure the code doesn't give, the commit function being called from a background thread, a hash-dependent test, and no test for rebalance.\n\n**Batch 1 of 2, retry.** Both files are empty `__init__.py` package markers. They make the new test directories importable and have nothing to flag.\n\n**Batch 2 of 2.** Test-only part. The main problem is `test_thread_queue_parallel_error_handling`: it asserts no commit happens, which contradicts its docstring and the worker's `finally` completing the offset, so it passes only by timing. Several tests also poll tightly against the 1s commit interval.",
+  "batches": [
+    {
+      "label": "Batch 1 of 2",
+      "files": 6,
+      "lines": 814,
+      "maxRisk": 4,
+      "status": "reviewed after a retry",
+      "turns": 7,
+      "costUsd": 0.2237127
+    },
+    {
+      "label": "Batch 2 of 2",
+      "files": 1,
+      "lines": 468,
+      "maxRisk": 2,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.1434388
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fd358e8a388939959369f08f616e29552cdaf96e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.36715149999999996,
+    "usage": {
+      "input": 14,
+      "output": 6335,
+      "cacheRead": 124295,
+      "cacheWrite": 72836
+    },
+    "calls": 3,
+    "callsWithOutput": 3,
+    "turns": 11,
+    "durationMs": 71113,
+    "stop": "complete",
+    "notices": []
+  }
+}
