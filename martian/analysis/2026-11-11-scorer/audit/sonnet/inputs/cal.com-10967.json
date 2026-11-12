@@ -1,0 +1,95 @@
+{
+ "pr": "cal.com-10967",
+ "checkout": "/tmp/audit-wt/cal.com-10967",
+ "audit_ids": [
+  2,
+  3,
+  5,
+  6,
+  7,
+  8
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/core/EventManager.ts",
+   "line": 119,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Google Meet booking without a destination calendar throws TypeError",
+   "body": "`const [mainHostDestinationCalendar] = evt.destinationCalendar ?? [];` gives `undefined` when `destinationCalendar` is `null` or `[]`. Line 119 then reads `mainHostDestinationCalendar.integration` with no `?.`, so it throws. The old code used `evt.destinationCalendar?.integration`. `handleNewBooking.ts:1063-1067` sets `destinationCalendar: null` when neither the event type nor the organizer has one. The other handlers in this PR pass `[]`. This fallback exists for 'Meet selected without a Google Cal', so an event type with Meet and no destination calendar now throws in `EventManager.create` instead of falling back to Cal Video. Fix: `mainHostDestinationCalendar?.integration`."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/organizations/create.handler.ts",
+   "line": 151,
+   "severity": "blocker",
+   "topic": "bug",
+   "title": "Slug condition inverted when rewriting the spread expressions",
+   "body": "The base code was `...(!IS_TEAM_BILLING_ENABLED && { slug })`. It set `slug` only when team billing is disabled. The new line is `...(IS_TEAM_BILLING_ENABLED ? { slug } : {})`, which drops the `!`. With billing enabled, the org is now created with the slug straight away, bypassing the `requestedSlug` flow that line 153 still sets. With billing disabled, the org gets no slug at all. This file has nothing to do with multi-destination calendars. Fix: `!IS_TEAM_BILLING_ENABLED ? { slug } : {}`, or revert the hunk."
+  },
+  {
+   "id": 2,
+   "path": "packages/core/EventManager.ts",
+   "line": 170,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Video booking references lose their credentialId",
+   "body": "The old code was `credentialId: isCalendarType ? evt.destinationCalendar?.credentialId : result.credentialId`, so video results kept `result.credentialId`. The new code is `isCalendarType ? result.credentialId : undefined`, so video/meeting references are now saved with no credentialId. `createMeeting` does return `credentialId` (`packages/core/videoClient.ts:78`). Later flows that look up a video reference's credential will lose it. Fix: `credentialId: result.credentialId`."
+  },
+  {
+   "id": 3,
+   "path": "packages/core/EventManager.ts",
+   "line": 209,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "updateLocation drops externalCalendarId and credentialId for calendar references",
+   "body": "`updateLocation` builds references from `result.externalId` and `result.credentialId`. Calendar results here come from `CalendarManager.updateEvent` (`packages/core/CalendarManager.ts:313-322`), which returns neither field. The old code took them from `evt.destinationCalendar`. After this change, the references written after an edit-location call have `externalCalendarId` and `credentialId` undefined. Later updates and cancellations then fall back to 'every credential of this type' and to `primary` on Google. This affects `editLocation.handler.ts`. Fix: return `externalId` and `credentialId` from `updateEvent`, or keep the reference's own values in `updateLocation`."
+  },
+  {
+   "id": 4,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 256,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Fallback calendar lookup in updateEvent can never match",
+   "body": "The fallback runs only when `externalCalendarId` is falsy. It then calls `.find((cal) => cal.externalId === externalCalendarId)`, which compares against that falsy value. The result is `undefined`, or an entry with an empty externalId. The old fallback was `event.destinationCalendar.externalId`. Now `calendarId` is `undefined` for references saved without `externalCalendarId`, and `events.update` fails or targets the wrong calendar. The same pattern is at line 317 in `deleteEvent`, where it falls to `primary` instead of the destination calendar. Fix: use `mainHostDestinationCalendar?.externalId` (already computed at line 198) in `updateEvent`, and the equivalent in `deleteEvent`."
+  },
+  {
+   "id": 5,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 147,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "createEvent ignores destination calendars that have no credentialId",
+   "body": "The target calendar is now chosen only via `find((cal) => cal.credentialId === credentialId)`. `EventManager.createAllCalendarEvents` (lines 375-381) still handles destinations without a `credentialId`, which are legacy rows. It calls `createEvent(c, event)` for them, and the new `externalId` argument is not passed. For those rows no entry matches the credential, so the event goes to `primary` instead of the destination's `externalId`. The old code used `destinationCalendar.externalId` directly. Consider falling back to the destination whose `integration` matches the credential type when no `credentialId` match exists."
+  },
+  {
+   "id": 6,
+   "path": "packages/features/bookings/lib/handleCancelBooking.ts",
+   "line": 423,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Recurring-delete block now runs once per calendar reference",
+   "body": "The recurring branch (lines 444-468) deletes every remaining booking's first calendar reference on every user calendar credential. It now sits inside `for (const reference of bookingCalendarReference)`. A booking with N calendar references, which is the point of this PR, repeats the whole sweep N times. Each pass fires N\u00d7 redundant Google/Office delete calls, which return 404/410 on the repeats. Hoist the recurring branch out of the loop so it runs once. A single `bookingToDelete.references.find` per updated booking also only deletes the first calendar reference; consider iterating all of them."
+  },
+  {
+   "id": 7,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 1077,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Collective members' calendars are dropped when the organizer has no destination calendar",
+   "body": "`destinationCalendar` is `null` when neither the event type nor the organizer has one (lines 1063-1067). The push at line 1078 is `evt.destinationCalendar?.push(...)`, which does nothing on `null`. So other collective hosts' calendars are never booked, and the `EventManager` fallback path runs instead. Initialise to `[]` and push the team calendars. Then `EventManager.create` should treat an empty array as 'no destination' (it already does)."
+  },
+  {
+   "id": 8,
+   "path": "packages/features/bookings/lib/handleNewBooking.ts",
+   "line": 724,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unrelated loadUsers rewrite changes behaviour and select",
+   "body": "The `loadUsers` rewrite is not related to the destination-calendar change. It drops the `organization: { select: { slug: true } }` select for dynamic users. The `IsFixedAwareUser` type (line 355) still requires `organization`, and the event-type branch still selects it (line 321). It also turns any error into a 400 or 500 `HttpError`, and throws for an empty `dynamicUserList`. Please revert or split it out, or confirm that nothing reads `user.organization` for dynamic groups."
+  }
+ ]
+}

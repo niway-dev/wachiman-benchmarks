@@ -1,4 +1,4 @@
-"""Prepare audit inputs: audit_inputs.py <repo-substring> [opus|haiku] [worktree-root]
+"""Prepare audit inputs: audit_inputs.py <repo-substring> [opus|haiku|sonnet] [worktree-root]
 
 For each PR of the matching repos with at least one Opus finding the judge matched to no golden, writes
 audit/inputs/<key>.json and <key>.diff and checks out the PR head in a detached worktree. The json carries
@@ -15,7 +15,7 @@ repos = os.path.expanduser('~/.cache/wachiman-martian/repos/')
 here = os.path.join(os.path.dirname(__file__), '..', 'audit', *([] if who == 'opus' else [who]), 'inputs')
 os.makedirs(here, exist_ok=True); os.makedirs(root, exist_ok=True)
 total = 0
-for p in (data.opus() if who == 'opus' else data.haiku_fixed()).values():
+for p in {'opus': data.opus, 'haiku': data.haiku_fixed, 'sonnet': data.sonnet}[who]().values():
     r = p['row']
     if want not in r['repo']: continue
     key = data.pr_key(r); wt = os.path.join(root, key)

@@ -1,0 +1,84 @@
+{
+ "pr": "cal.com-22532",
+ "checkout": "/tmp/audit-wt/cal.com-22532",
+ "audit_ids": [
+  0,
+  3,
+  4,
+  7
+ ],
+ "findings": [
+  {
+   "id": 0,
+   "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+   "line": 42,
+   "severity": "fix",
+   "topic": "bug",
+   "title": "Deleting cache does not refresh the list when no onSuccess is passed, and is offered in read-only views",
+   "body": "deleteCacheMutation only calls the optional `onSuccess` prop. It does not invalidate `connectedCalendars`, which `disconnectMutation` does in `onSettled` (line 61-64). `SelectedCalendarsSettingsWebWrapper` is also rendered from `packages/features/eventtypes/components/tabs/advanced/EventAdvancedTab.tsx:372-384` with no `onChanged`. That caller sets `disableConnectionModification={true}`. There the toast says 'Cache deleted successfully' but the dropdown still shows the old 'Last updated' time and the 'Delete cached data' item until the query refetches. `refetchOnWindowFocus` is false, so that can be never. `hasCache` (line 69) also ignores `disableConnectionModification`, so the destructive cache action is still offered in the event-type view. That view disables Remove for exactly this reason. Fix: invalidate `utils.viewer.calendars.connectedCalendars` in the mutation's `onSuccess` or `onSettled`, as the disconnect path does. Decide explicitly whether `disableConnectionModification` should hide cache deletion."
+  },
+  {
+   "id": 1,
+   "path": "packages/trpc/server/routers/viewer/calendars/deleteCache.handler.ts",
+   "line": 25,
+   "severity": "consider",
+   "topic": "rules",
+   "title": "Plain Error for an authorization failure; no tests",
+   "body": "A missing or foreign credential throws a bare `Error`, which tRPC maps to INTERNAL_SERVER_ERROR (500) and logs as a server error. A `TRPCError` with code NOT_FOUND or FORBIDDEN is the usual convention for tRPC handlers. The in-memory delegation credential case (negative id) also ends up here. The ownership check at lines 17-22 is correct and sits right before the `deleteMany`. No test covers the new handler, the `getCacheStatusByCredentialIds` groupBy, or the dropdown. The input schema is also defined inline in `_router.tsx:29` instead of in a `deleteCache.schema.ts` file like the sibling handlers."
+  },
+  {
+   "id": 2,
+   "path": "packages/app-store/googlecalendar/lib/CalendarService.ts",
+   "line": 1024,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "updateMany with empty data on SelectedCalendar looks like dead or unreliable work",
+   "body": "`SelectedCalendarRepository.updateManyByCredentialId(this.credential.id, {})` relies on Prisma bumping `@updatedAt` for an empty update. That is implicit and I could not confirm it. Nothing in this PR reads `SelectedCalendar.updatedAt`. The 'Last updated' UI uses `CalendarCache.updatedAt` via `getCacheStatusByCredentialIds`. The `updatedAt` and `googleChannelId` additions to the selects in `user.ts` and `UserWithCalendars` are likewise unused in `getConnectedDestinationCalendars.ts`. The result is an extra write on every cache refresh, on the webhook path, against all rows of the credential. Either drop it, or explain what consumes it and set the timestamp explicitly (`{ updatedAt: new Date() }`)."
+  },
+  {
+   "id": 3,
+   "path": "packages/trpc/server/routers/viewer/calendars/connectedCalendars.handler.ts",
+   "line": 28,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Handler bypasses CalendarCache.init, so the new mock method is dead and the feature flag is ignored",
+   "body": "`new CalendarCacheRepository()` is used directly. Every other caller goes through `CalendarCache.init`, which returns `CalendarCacheRepositoryMock` when the `calendar-cache` feature is globally disabled (`packages/features/calendar-cache/calendar-cache.ts:22-29`). So `getCacheStatusByCredentialIds` in the mock is never reached, and a cache-status groupBy query runs on every `connectedCalendars` call even with the cache disabled. Use `await CalendarCache.init(null)`. Also note that `connectedCalendars` is used in several places (booker `useCalendars`, troubleshooter, destination calendar selector), so this query is added to all of them."
+  },
+  {
+   "id": 4,
+   "path": "packages/prisma/migrations/20250715160635_add_calendar_cache_updated_at/migration.sql",
+   "line": 4,
+   "severity": "consider",
+   "topic": "docs",
+   "title": "Stale warning comment; legacy rows get the migration time as 'Last updated'",
+   "body": "The auto-generated warning says the column was added 'without a default value', but line 9 adds it with `DEFAULT NOW()`. The comment contradicts the SQL. Because of that default, every existing `CalendarCache` row gets the deploy timestamp as `updatedAt`. After release the dropdown will show 'Last updated: <migration time>' for data that may be up to a month old (`CACHING_TIME` is 30 days). The status is silently wrong for legacy rows until they are refreshed."
+  },
+  {
+   "id": 5,
+   "path": "packages/features/apps/components/CredentialActionsDropdown.tsx",
+   "line": 89,
+   "severity": "consider",
+   "topic": "bug",
+   "title": "Timestamp hard-coded to en-US instead of the user's locale",
+   "body": "`new Intl.DateTimeFormat(\"en-US\", ...)` ignores the user's locale and timezone preferences, so non-English users see US-formatted dates inside a translated string. Use the locale from `useLocale` (`i18n.language`) or the app's existing date helpers."
+  },
+  {
+   "id": 6,
+   "path": "scripts/test-gcal-webhooks.sh",
+   "line": 68,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unrelated dev script is macOS-only and has fragile paths",
+   "body": "`sed -i ''` only works with BSD sed. GNU sed on Linux treats `''` as the script and fails. `ENV_FILE=\"../.env\"` is relative to the caller's working directory, not the script, so running it from the repo root edits or creates `.env` in the parent of the repo. `cleanup` always `exit 0`, including on the 'Failed to extract URL' and rate-limit paths. When reusing a running tunnel it reads whatever `/tmp/tmole.log` holds, which may be stale. This script and the `dev:cron` change from `ts-node` to `npx tsx` (`apps/web/package.json:11`) are not part of the cache-deletion feature. `tsx` is not a declared dependency (the grep found only `ts-node`), so `npx` fetches it at run time. Consider moving both to a separate PR."
+  },
+  {
+   "id": 7,
+   "path": "packages/lib/server/repository/selectedCalendar.ts",
+   "line": 260,
+   "severity": "consider",
+   "topic": "cleanup",
+   "title": "Unrelated removal of `satisfies` type check in findMany",
+   "body": "The `satisfies Prisma.SelectedCalendarFindManyArgs` guard was dropped from `findMany`. It is unrelated to this feature, and it was what checked the `select` and `where` types against Prisma's arg type. Consider reverting it."
+  }
+ ]
+}

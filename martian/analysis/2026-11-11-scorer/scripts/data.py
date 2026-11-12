@@ -9,7 +9,8 @@ import csv, glob, json, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 MARTIAN = os.environ.get('MARTIAN_DIR') or os.path.abspath(os.path.join(HERE, '..', '..', '..'))      # .../martian
 WL = list(csv.DictReader(open(MARTIAN + '/worklist.tsv'), delimiter='\t'))
-RUNS = {'opus': '2026-11-07-v1.9.0-opus-5-5', 'haiku': '2026-11-07-v1.9.0-haiku-5-5-high'}
+RUNS = {'opus': '2026-11-07-v1.9.0-opus-5-5', 'haiku': '2026-11-07-v1.9.0-haiku-5-5-high',
+        'sonnet': '2026-11-11-v1.9.0-sonnet-5-5-high'}
 FIX = '2026-11-11-keycloak-range-fix'
 FIXED_URLS = {'https://github.com/keycloak/keycloak/pull/37634', 'https://github.com/keycloak/keycloak/pull/36880'}
 HAIKU_FIX = os.path.join(HERE, '..', 'haiku-keycloak-rerun')            # filled by Experiment B
@@ -73,6 +74,11 @@ def haiku_stored():
 
 def haiku_fixed():
     return build('haiku', os.path.abspath(HAIKU_FIX))
+
+
+def sonnet():
+    """Sonnet 5.5 high, run of 2026-11-11 (corrected worklist from the start)."""
+    return build('sonnet')
 
 
 def pr_key(row):

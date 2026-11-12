@@ -18,7 +18,9 @@
 For the main reviewer two arms remain: **Sonnet high** (most found, $0.36 per PR) and **Opus medium**
 (fewer minor comments, $0.39 per PR). The recommendation written on 2026-11-12 is Sonnet high, because
 the plan is to order and section minor findings with a score, not to reduce them
-([scorer](analysis/2026-11-11-scorer/README.md)). The owner has not chosen yet.
+([scorer](analysis/2026-11-11-scorer/README.md)). **Decided 2026-11-12:** the owner chose Sonnet high; it is
+the product default since [wachiman#192](https://github.com/niway-dev/wachiman/pull/192). Two repeat runs
+of Sonnet high are measuring run-to-run variance.
 
 ## The five arms
 
@@ -61,13 +63,19 @@ set may be incomplete. GPT-6.1 Sol audited them against the code, one pass, no h
 | --- | --- | --- | --- | --- |
 | Opus high, 85 of its 177 (Cal.com, Sentry) | 34 | 47 | 2 | 2 |
 | Haiku high, 67 on Cal.com | 27 | 37 | 1 | 2 |
+| Sonnet high, 97 of its 190 (Cal.com, Sentry) | 30 | 60 | 2 | 5 |
 
 So the reviewer almost never invents. Martian precision is a floor, and the gap to the top tools is
 the volume of minor comments. Reports: [Opus audit](analysis/2026-11-11-scorer/audit/README.md),
-[Haiku audit](analysis/2026-11-11-scorer/audit/haiku/README.md).
+[Haiku audit](analysis/2026-11-11-scorer/audit/haiku/README.md),
+[Sonnet audit](analysis/2026-11-11-scorer/audit/sonnet/README.md).
 
-**Not audited:** the false positives of Opus medium, Sonnet high and Sonnet medium; Discourse, Grafana
-and Keycloak for any model; Haiku on Sentry. Whether their unlisted comments are the same "true but
+On the same 20 PRs Sonnet high and Opus high are each wrong twice. Sonnet writes more minor comments (60
+against 47) and labels severity less sharply: 12 of its 30 unlisted real defects are under `consider`,
+against 7 of 34 for Opus.
+
+**Not audited:** the false positives of Opus medium and Sonnet medium; Discourse, Grafana and Keycloak
+for any model; Haiku on Sentry. Whether their unlisted comments are the same "true but
 minor" kind is unknown.
 
 ## Telling serious from minor

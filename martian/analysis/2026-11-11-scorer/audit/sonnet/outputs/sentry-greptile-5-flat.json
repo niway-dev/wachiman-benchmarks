@@ -1,0 +1,140 @@
+{
+  "pr": "sentry-greptile-5-flat",
+  "audits": [
+    {
+      "id": 1,
+      "claim": "Every segment page sends the entire replay error list to Seer, repeating errors outside that page.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/api/paginator.py:520-544 slices segments by limit and cursor, and src/sentry/api/base.py:552 applies on_results to that single page; callers can request per_page=1 (base.py:490-500). For a replay with two segments and one error in the second segment, project_replay_summarize_breadcrumbs.py:94-100 supplies the same replay-wide errors on both page requests. Its gen_request_data resets error_idx at line 146 and unconditionally drains remaining errors at lines 165-168, so the first summary includes the later error and the second includes it again.",
+      "confidence": "high"
+    },
+    {
+      "id": 2,
+      "claim": "Disabling error context still performs the new Snuba replay lookup and leaves its failures unhandled.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py:70-84 executes and processes query_replay_instance before reading enable_error_context at lines 87-94. Thus enable_error_context=false avoids only nodestore fetching, not the replay query; the exception handler at lines 106-123 cannot protect this earlier call. This is definite unnecessary work and an additional dependency, although the repository provides no latency measurement or observed outage for it.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "An unlisted report type rejects the entire batch and prevents valid reports from being counted.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/issues/endpoints/browser_reporting_collector.py:21-40 limits types to eight choices, while the supplied diff shows the former dataclass merely annotated its string field with Literal. With the collector enabled, submit an otherwise valid deprecation report followed by the same valid report fields with type=network-error: lines 108-118 reject the latter and return 422 before the metrics loop at lines 123-128 runs. This drops the valid report metric as well, contrary to the endpoint's stated collection purpose at lines 74-77; the explicit invalid-type test does not protect mixed batches.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "PR comment formatting performs serial per-issue event and environment lookups.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/integrations/github/integration.py:401-413 and src/sentry/integrations/gitlab/integration.py:249-261 synchronously call get_environment_info for each issue. That helper calls get_recommended_event and get_environment at commit_context.py:584-590; models/group.py:881-890 falls back to another event lookup and eventstore/models.py:179-183 can query Environment. The N+1 structure is real, but no measured latency, task deadline violation, or incorrect output is established; changing logging is also a maintainability suggestion.",
+      "confidence": "high"
+    },
+    {
+      "id": 7,
+      "claim": "The assertion that migrations 0917 and 0920 never ran may be inaccurate for some installations.",
+      "verdict": "unverifiable",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/migrations/0917_convert_org_saved_searches_to_views.py:14-16 states that the migration never ran, and the migration is marked post-deployment at line 36. The checkout cannot establish which historical bodies any external installation executed. The replacement at 0921_convert_org_saved_searches_to_views_rerevised.py:18-39 checks for matching views before creating them, but this does not prove or disprove the deployment-history claim.",
+      "confidence": "medium"
+    },
+    {
+      "id": 9,
+      "claim": "Hidden span attributes remain visible with an empty search and disappear when searched.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "static/app/views/performance/newTraceDetails/traceDrawer/details/span/eapSections/attributes.tsx:51 initializes searchQuery to an empty string. With an input attribute named project_id, lines 59-63 return it because sortAttributes only sorts (traceDrawer/details/utils.tsx:98-110), and lines 135-139 pass it to AttributesTree. Entering project then reaches lines 65-68 and removes that same attribute, so the new hiding rule fails in the default view and behaves inconsistently when searching.",
+      "confidence": "high"
+    },
+    {
+      "id": 10,
+      "claim": "The Flex migration removes centering and spacing from the loaded row and the right placeholder group.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "The supplied traceTabsAndVitals.tsx diff removes FlexBox's align-items:center and gap and its Container subclass. At static/app/views/performance/newTraceDetails/traceTabsAndVitals.tsx:93 the replacement sets only justify, while the right placeholder group at lines 27-31 sets neither align nor gap; components/core/layout/flex.tsx:18-25 supplies no defaults for them. The three right placeholders therefore lose their previous separation, a concrete but cosmetic regression rather than a functional failure.",
+      "confidence": "high"
+    },
+    {
+      "id": 11,
+      "claim": "The hook changes fetch status/retry behavior and shares attribute query cache entries across organizations.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "static/app/views/explore/hooks/useTraceItemAttributeKeys.tsx:30-54 keys the query by options containing projects and dates but no organization, whereas useGetTraceItemAttributeKeys.tsx:61-78 chooses the actual endpoint using organization.slug. Two organizations using all-project selection (the same empty project list) and the same relative dates/type therefore share a cache key in the singleton client at static/app/appQueryClient.tsx:20, and a newly mounted hook initializes usePrevious from that cached data (utils/usePrevious.tsx:11-22) and returns it during fetching at useTraceItemAttributeKeys.tsx:56-61. This can display the first organization's attributes in the second until refetch completes. The loading change is also explicit, but removing staleTime=0 and refetchOnWindowFocus=false does not itself change their effective defaults here (utils/queryClient.tsx:19-26).",
+      "confidence": "high"
+    },
+    {
+      "id": 12,
+      "claim": "Custom table cells returning falsy React values incorrectly fall back to the default renderer.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "static/app/views/dashboards/widgets/tableWidget/tableWidgetVisualization.stories.tsx:110-114 documents undefined as the fallback sentinel. A renderTableBodyCell callback returning 0 for a raw row value of 7 is invoked at defaultTableCellRenderers.tsx:70, fails the truthiness check at line 71, and renders the raw/default value through lines 76-90 instead of the intended zero; false or an empty string likewise cannot suppress content. The header has the same root cause at lines 31-34. The secondary assertion that the meta guard is unreachable is incorrect because tableData is optional at line 54, but that does not refute the falsy-cell defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 13,
+      "claim": "Replacing flex:1 with grow=1 changes the integration description's flex basis and can redistribute header width.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "The supplied integrationLayout.tsx diff replaces a wrapper with flex:1 by Flex.Item grow={1} at static/app/views/settings/organizationIntegrations/detailedView/integrationLayout.tsx:247. components/core/layout/flex.tsx:35-45 confirms the new wrapper has basis:auto rather than 0%, and the sibling Metadata at integrationLayout.tsx:362-370 does not prevent shrinking. The styles are not equivalent, but the finding only proposes a possible layout change without establishing a concrete broken repository content/viewport combination, so this is a low-impact fidelity concern.",
+      "confidence": "medium"
+    },
+    {
+      "id": 14,
+      "claim": "The GitHub and GitLab environment assertions necessarily fail because only SnubaTestCase inserts events into Snuba.",
+      "verdict": "wrong",
+      "duplicate_of": null,
+      "would_fix": "no",
+      "evidence": "Plain Fixtures.store_event delegates to Factories.store_event (src/sentry/testutils/fixtures.py:303-304), which calls EventManager.save (factories.py:1025-1046). EventManager's storage path calls _eventstream_insert_many at event_manager.py:570, and that calls eventstream.backend.insert at line 1077, rather than relying on the module-level insert patch in SnubaTestCase. The default SENTRY_EVENTSTREAM is SnubaEventStream (conf/server.py:2172), whose _send posts to /tests/{entity}/eventstream (eventstream/snuba.py:430-436). Consequently the absence of that mixin alone does not imply these events are missing from Snuba, and the stated mandatory failure is refuted by the storage path.",
+      "confidence": "medium"
+    },
+    {
+      "id": 15,
+      "claim": "The rewritten collector tests omit the browser reports media type and the non-list request body case.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/api/endpoints/test_browser_reporting_collector.py:66-91 posts success cases without application/reports+json; the only explicit content type is the invalid one at line 79. The remaining tests at lines 105-175 submit lists with invalid report fields, not a top-level dict, so they do not cover the branch at src/sentry/issues/endpoints/browser_reporting_collector.py:99-104. This is a coverage gap, not a demonstrated runtime defect; the supplied diff also shows BrowserReportsJSONParser already existed before this PR, contrary to the comment's suggestion that it was added here.",
+      "confidence": "high"
+    },
+    {
+      "id": 16,
+      "claim": "The new None max_segment_id fixture does not exercise the production None-handling branch.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/replays/tasks/test_delete_replays_bulk.py:78-105 mocks delete_matched_rows for the test whose row at line 97 now contains None. Its assertion at lines 111-114 only verifies that the row is forwarded to that mock, so it never reaches src/sentry/replays/usecases/delete.py:73-90, where filename generation returns early for None. The criticism of branch coverage is valid, although the test still verifies job completion and forwarding rather than verifying nothing.",
+      "confidence": "high"
+    },
+    {
+      "id": 17,
+      "claim": "The replay summary tests copy the replay insert helper without resetting the replay table.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "tests/sentry/replays/test_project_replay_summarize_breadcrumbs.py:24-44 uses TransactionTestCase, assigns a new UUID in setUp, and defines the same insert helper as src/sentry/testutils/cases.py:2268-2272. It does not inherit the replay-table drop at cases.py:2263-2266; even the generic reset_snuba fixture lists other tables, not replays (testutils/pytest/fixtures.py:355-367). Rows can therefore remain, but the fresh replay UUID isolates these queries and no actual cross-test failure is established; this is cleanup/isolation hygiene.",
+      "confidence": "high"
+    },
+    {
+      "id": 18,
+      "claim": "The integration test can pass with an empty error message because it only checks substrings already present in the exception title.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/replays/test_project_replay_summarize_breadcrumbs.py:150-163 stores a ZeroDivisionError with value division by zero, and src/sentry/eventtypes/error.py:75-82 builds an exception title containing both strings. The substring checks at test_project_replay_summarize_breadcrumbs.py:209-210 would therefore still pass if fetch_error_details used an empty message, since the title alone satisfies them. The separate unit test at lines 308-330 checks full formatting for hand-built ErrorEvent values, but does not validate nodestore message extraction at src/sentry/replays/endpoints/project_replay_summarize_breadcrumbs.py:114-116; this is a limited integration coverage gap.",
+      "confidence": "high"
+    }
+  ]
+}

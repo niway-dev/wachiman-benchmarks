@@ -1,0 +1,50 @@
+{
+  "pr": "cal.com-8330",
+  "audits": [
+    {
+      "id": 0,
+      "claim": "The new working-hours predicate rejects a valid slot whenever another range for the same weekday excludes it.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/core/getUserAvailability.ts:210 obtains every working-hours range, and packages/lib/availability.ts:101-120 explicitly creates overlapping weekday entries when UTC conversion overflows midnight. For a winter UTC-8 Monday-Friday 09:00-17:00 schedule this produces 17:00-23:59 on days 1-5 and 00:00-01:00 on days 2-6; a Tuesday 18:00Z slot generated from the first range by packages/lib/slots.ts:163-176,248-256 is rejected by the second at packages/trpc/server/routers/viewer/slots.ts:139-150. The fixed-host filter at slots.ts:483-498 calls this with the individual schedule, so ordinary personal events lose that valid slot even without other hosts or busy events. The current-seats early return at slots.ts:95-97 does not protect an unbooked slot.",
+      "confidence": "high"
+    },
+    {
+      "id": 2,
+      "claim": "The date-override predicate rejects valid split ranges and only recognizes the UTC date of the converted override start.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "packages/features/schedules/components/DateOverrideInputDialog.tsx:103-115,143 supports multiple ranges, and packages/trpc/server/routers/viewer/availability.tsx:303-310,380-384 persists them without merging; packages/core/getUserAvailability.ts:215-224 returns one override per row. With organizer and invitee both UTC, overrides 09:00-12:00 and 14:00-17:00 on the same future date generate a 15:00 slot through packages/lib/slots.ts:206-245, but packages/trpc/server/routers/viewer/slots.ts:106-130 rejects it because 15:00 is after the first range end. That check is reached through slots.ts:488-493 for a personal fixed host. Independently, slots.ts:110-111 compares only the shifted start date, so a UTC+10 09:00-17:00 override converts to 23:00Z the previous day through 07:00Z and its after-midnight portion cannot set dateOverrideExist; it falls through to recurring hours at slots.ts:137-150.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "Shifting override bounds to minute-of-day can invert a range across midnight and remove all its slots.",
+      "verdict": "real-defect",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "For a future override stored as 15:00-21:00 on date D, organizer UTC and invitee UTC+6, packages/lib/slots.ts:206-208 selects it because 15:00Z falls inside invitee day D (18:00Z on D-1 through 18:00Z on D). The new offset calculation and extraction at slots.ts:212-223 yields startTime=1260 and endTime=180, losing the next-day component. slots.ts:228-245 removes that user's recurring ranges and inserts this inverted range, and buildSlots skips it at slots.ts:60-68, returning no slots for this host/day. The former unshifted 900-1260 range did not have this inversion, so the PR introduces the empty-day failure for this input.",
+      "confidence": "high"
+    },
+    {
+      "id": 5,
+      "claim": "The added timezone assertion covers only one host and a half-hour shift, leaving the changed multi-range and midnight behavior untested.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "apps/web/test/lib/getSchedule.test.ts:746-766 configures one user with the IST override fixture, whose single override is 14:00-18:00 at lines 107-128. The new assertion at getSchedule.test.ts:788-804 changes only the invitee timezone to UTC+6, using the same input window and expecting the same four slots. Existing collective and round-robin cases do exist later in this file (lines 817 and 1052), but the added case does not exercise those modes, split ranges or midnight overflow; this is a coverage gap rather than an additional runtime defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The reserved-slot check performs a schedule lookup solely to pass an organizer timezone that cannot affect that call.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/trpc/server/routers/viewer/slots.ts:418-421 defines availabilityCheckProps with only eventLength and currentSeats. The reserved-slot invocation at slots.ts:579-585 adds busy and organizerTimeZone but no dateOverrides or workingHours, so the defaults at slots.ts:79-80 leave both arrays empty. The only read of organizerTimeZone is inside the dateOverrides.find callback at slots.ts:106-107, which never executes here; the new lookup is unnecessary but does not change reserved-slot behavior.",
+      "confidence": "high"
+    }
+  ]
+}

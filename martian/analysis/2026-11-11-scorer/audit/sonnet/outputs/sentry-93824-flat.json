@@ -1,0 +1,41 @@
+{
+  "pr": "sentry-93824-flat",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "Creating a separate SpansBuffer per process changes max-flush-segments from a shared consumer-cycle allowance to a per-process allowance.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "src/sentry/spans/consumers/process/flusher.py:60-66 partitions assigned shards among processes, and line 93 constructs SpansBuffer(shards) independently for each. src/sentry/spans/buffer.py:382-390 divides the full option value only by that local buffer's shard count; with two single-shard processes and max-flush-segments=500, each can fetch 500 eligible segments instead of the former shared buffer's 250 per shard. The configuration comment at src/sentry/options/defaults.py:2716 describes a per-cycle maximum but does not require a consumer-wide aggregate across independent cycles. The scaling change is real, but no incorrect output or required global resource bound is established; also buffer.py:411 actually derives any_shard_at_limit from a segment's span count, so the finding's backpressure implication is not a clean queue-saturation contract.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "submit redundantly queries cluster-wide Redis memory once for every flusher buffer.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "With two flusher processes and spans.buffer.max-memory-percentage below 1.0, src/sentry/spans/consumers/process/flusher.py:297-303 calls get_memory_info twice and sums both result sets. src/sentry/spans/buffer.py:375-376 passes the buffer's Redis client to iter_cluster_memory_usage without using assigned_shards; src/sentry/processing/backpressure/memory.py:82-105 queries INFO for the cluster's nodes each time. This confirms redundant network work and duplicated totals, while a stable cluster's utilization ratio remains unchanged. The hot-path description overstates the demonstrated impact: flusher.py:262-265 explicitly says submit is infrequent, and no latency or production load evidence is available.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "The one-process-per-shard docstring ignores max_processes and the CLI and factory have different defaults.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "src/sentry/spans/consumers/process/flusher.py:32 promises one process per shard, but lines 51 and 60 cap the count with max_processes. src/sentry/consumers/__init__.py:433-436 defaults --flusher-processes to 1, whereas src/sentry/spans/consumers/process/factory.py:41 and :74 pass None when invoked without that argument, causing the flusher to use the shard count. The documentation is inaccurate for ordinary CLI use; differing entry-point defaults are confirmed but do not by themselves demonstrate a runtime defect.",
+      "confidence": "high"
+    },
+    {
+      "id": 6,
+      "claim": "The new process-limit test checks counts but not exact shard allocation, flushing, restarts, spawn execution or CLI wiring.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "yes",
+      "evidence": "tests/sentry/spans/consumers/process/test_consumer.py:93-123 passes produce_to_pipe, asserts process counts and total assigned shards, then joins without submitting spans or checking each process's shard list. That callback selects threading.Thread at src/sentry/spans/consumers/process/flusher.py:95-108, so it cannot exercise the production spawn branch. No checkout test references _ensure_processes_alive or process_restarts, while the existing tests/sentry/spans/consumers/process/test_flusher.py:17-83 only exercises backpressure. These are genuine coverage gaps; they do not independently prove the separate isinstance finding, which is not an audited ID here.",
+      "confidence": "high"
+    }
+  ]
+}

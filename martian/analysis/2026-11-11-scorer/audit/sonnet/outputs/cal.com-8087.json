@@ -1,0 +1,32 @@
+{
+  "pr": "cal.com-8087",
+  "audits": [
+    {
+      "id": 2,
+      "claim": "The unawaited async reschedule callbacks let calendar initialization and deletion failures bypass the surrounding catch.",
+      "verdict": "real-defect",
+      "duplicate_of": 1,
+      "would_fix": "yes",
+      "evidence": "packages/app-store/wipemycalother/lib/reschedule.ts:121-134 retains references with a matching credential but discards every async callback promise; its catch at :135-138 cannot observe their rejection. For a referenced apple_calendar credential encrypted with an old encryption key, getCalendar constructs AppleCalendarService at packages/app-store/_utils/getCalendar.ts:22, whose constructor at packages/app-store/applecalendar/lib/CalendarService.ts:5-6 invokes decryption at packages/lib/CalendarService.ts:91-95; decipher.final at packages/lib/crypto.ts:39 can throw. The new await at reschedule.ts:128 turns that initialization failure into an unhandled callback rejection while emails and the true return proceed at :143-151; previously this synchronous constructor failure reached the surrounding catch. Asynchronous deleteEvent/deleteMeeting rejection handling was already broken before the PR, but the initialization-error regression is new, and finding 1 reports the same root cause.",
+      "confidence": "high"
+    },
+    {
+      "id": 3,
+      "claim": "requestReschedule drops the async deletion callback promises, allowing calendar initialization failure to escape the mutation while its remaining work completes.",
+      "verdict": "real-defect",
+      "duplicate_of": 1,
+      "would_fix": "yes",
+      "evidence": "packages/trpc/server/routers/viewer/bookings.tsx:550-567 filters only for a matching credential and then discards the async forEach callback promises. A referenced apple_calendar credential encrypted with an old key reaches getCalendar at :556, new CalendarService at packages/app-store/_utils/getCalendar.ts:22, AppleCalendarService at packages/app-store/applecalendar/lib/CalendarService.ts:5-6, and decryption at packages/lib/CalendarService.ts:91-95, which can throw at packages/lib/crypto.ts:39. Previously that synchronous initialization exception rejected the mutation; now it rejects the detached callback while the mutation continues to email at bookings.tsx:570 and complete webhook processing at :618-620. Rejections from already-asynchronous provider deletions were also dropped before this PR; the newly detached initialization failure establishes the regression and shares finding 1's root cause.",
+      "confidence": "high"
+    },
+    {
+      "id": 4,
+      "claim": "getCalendarCredentials now exposes calendar promises, creating a maintainability concern for future consumers that expect Calendar objects.",
+      "verdict": "real-minor",
+      "duplicate_of": null,
+      "would_fix": "maybe",
+      "evidence": "packages/core/CalendarManager.ts:23-35 does place the async getCalendar result into calendar without awaiting it, but the inferred return type records that promise. Its only runtime consumer awaits item.calendar inside a try at :44-48 and handles rejection at :94-110. All current callers immediately pass the result to that consumer (packages/trpc/server/routers/viewer.tsx:340-347 and :415-416; apps/web/pages/api/availability/calendar.ts:83-85), so the proposed abandoned-result or direct listCalendars misuse is hypothetical rather than an established failing path.",
+      "confidence": "high"
+    }
+  ]
+}
