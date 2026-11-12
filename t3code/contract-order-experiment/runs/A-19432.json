@@ -1,0 +1,128 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 36f91c4 of t3code-fork against its parent (7371925)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+      "ref": "7371925"
+    },
+    "head": {
+      "sha": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+      "ref": "36f91c4"
+    },
+    "title": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "description": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/ssh/src/tunnel.test.ts",
+      "packages/ssh/src/tunnel.ts"
+    ],
+    "reviewed": [
+      "packages/ssh/src/tunnel.ts",
+      "packages/ssh/src/tunnel.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [],
+  "contracts": [
+    {
+      "action": "Reconnect to a managed remote server that is alive but not answering now waits up to T3_READY_TIMEOUT_MS and then exits 1, instead of killing and relaunching after the 2s reuse probe",
+      "location": "packages/ssh/src/tunnel.ts:711",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:54-55",
+        "packages/ssh/src/tunnel.ts:65",
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:1771-1791",
+        "packages/ssh/src/tunnel.ts:780-792"
+      ],
+      "equivalent_path": "The same branch before this change (kill -0 then a 2s wait_ready, then kill and relaunch), and the fresh-launch readiness wait at tunnel.ts:744",
+      "before_after": "Before: 2s probe failed, server killed, new one launched. After: wait_ready with the 60s budget; on failure prints 'left running' to stderr and exits 1 without touching PID/port/managed files. A changed runner (RUNNER_CHANGED=1) still kills and replaces.",
+      "visible_effect": "A temporarily busy server (long SQLite stall) now survives a reconnect. A server hung for good makes every reconnect fail after 60s with the stderr message, until the user disconnects.",
+      "failure_mode": "The wait is bounded by one wait_ready call of 60s, inside the 90s node-mode launch timeout (REMOTE_LAUNCH_TIMEOUT_MS) and the 900s archive timeout. Nothing else in this branch waits; wait_for_pid_exit is capped at 2s. disconnectEnvironment runs stopRemoteServer even without a tunnel entry (tunnel.ts:1771-1791), so a hung managed server can be stopped from the UI.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Stale SSH forward replacement now deletes the map entry before closing it, so the entry's scope finalizer skips the remote stop",
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1587-1599",
+        "packages/ssh/src/tunnel.ts:1656-1677",
+        "packages/ssh/src/tunnel.ts:1383-1399",
+        "packages/ssh/src/tunnel.ts:1780-1791"
+      ],
+      "equivalent_path": "disconnectEnvironment deletes the entry and closes it (tunnel.ts:1782-1785), then runs the remote stop explicitly",
+      "before_after": "Before: closing a stale entry ran the finalizer, which stopped the remote server (tunnels.get(key) === entry), so each stale forward restarted the remote. After: the finalizer sees stopRemote=false (tunnel.ts:1587-1599), kills only the local ssh process, and createTunnelEntry relaunches via the launch script, which reuses the running server.",
+      "visible_effect": "A dropped forward reconnects without restarting the remote server or its agents.",
+      "failure_mode": "If createTunnelEntry then fails, no entry exists and the remote stays running. This matches the intent, and disconnect still stops it. The readiness probe has a 2s overall timeout (tunnel.ts:1657), so the stale check is bounded.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Adoption of a default-home server no longer falls back to killing DEFAULT_RUNTIME_PID when no managed PID is recorded, and a later readiness probe is skipped while the adopted PID is alive",
+      "location": "packages/ssh/src/tunnel.ts:668",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:623-630",
+        "packages/ssh/src/tunnel.ts:668-700",
+        "packages/ssh/src/tunnel.ts:701-710",
+        "packages/ssh/src/tunnel.test.ts:1264-1302"
+      ],
+      "equivalent_path": "The previous PID_TO_STOP=${REMOTE_PID:-$DEFAULT_RUNTIME_PID} adoption block",
+      "before_after": "Before: a managed marker with no PID file made the script kill the external server it was adopting. After: only a recorded REMOTE_PID is killed. A runtime file naming our own managed PID is kept as ours. The second wait_ready is skipped when server_running ADOPTED_PID is true. The server_running check skips zombies (ps stat Z) and trusts kill -0 when ps gives nothing.",
+      "visible_effect": "Reconnecting no longer kills a service-owned server or starts a second server on the same home after a momentary stall.",
+      "failure_mode": "If the adopted server exits during the handover, server_running fails and the 2s reuse wait_ready falls through to a relaunch. This is bounded by that 2s probe plus wait_for_pid_exit (2s).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I read both files in full and found no defects in this part. The launch-script changes in `packages/ssh/src/tunnel.ts` match what the PR says they do. A managed server whose recorded PID matches the default runtime file is kept. The kill fallback to the default-home PID is gone. A zombie no longer counts as running. A live adopted server is not probed a second time. A stalled managed server now gets the 60s readiness wait and an exit 1 instead of a kill and relaunch. Deleting the tunnel map entry before closing a stale forward correctly stops the finalizer from stopping the remote server. Disconnect already uses the same delete-then-close order. The new tests run the real generated script against a fake server and cover each of those behaviours. The cost is a few real wall-clock waits, including a 5s sleep.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 534,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.3095568
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "737192594f47d87f28b5f5a3fda3ef792a0d7972"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3095568,
+    "usage": {
+      "input": 12,
+      "output": 10280,
+      "cacheRead": 221728,
+      "cacheWrite": 46140
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 90566,
+    "stop": "complete",
+    "notices": []
+  }
+}

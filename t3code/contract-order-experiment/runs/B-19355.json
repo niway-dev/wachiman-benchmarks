@@ -1,0 +1,144 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 918f244 of t3code-fork against its parent (a6e280d)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "a6e280d7e9d589e1ecf28e9b50c2deeaca570c3f",
+      "ref": "a6e280d"
+    },
+    "head": {
+      "sha": "918f244de25ed22862c76335b8527379a7b4f48b",
+      "ref": "918f244"
+    },
+    "title": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "description": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "line": 877,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Exhausted compare-and-set retries leave the roster in place and are never retried",
+      "body": "After 3 lost compare-and-set attempts the loop only logs `provider-session-release-roster-conflict` and returns normally. `writeReleaseRecords` therefore reports success, so `retryReleaseRecords` (line 1097-1101) never runs. The dead session's tasks stay on the provider thread and the thread keeps showing Waiting, which is the #15239 symptom this change fixes. A thread whose provider updates arrive in a steady stream could hit this. Failing the effect after the last attempt would let the existing exponential retry in `retryReleaseRecords` take over. That retry already re-reads the roster on each attempt.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "line": 1066,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Roster is read before the old process stops, so tasks it reports during close are not cleared",
+      "body": "`readReleasedBackgroundTasks` runs before `failSubscribers` and `closeScopeWithin`, and the task ids to clear are fixed at that point. Is the old runtime's event pump guaranteed to have stopped persisting provider-thread updates once the entry has left the live map? The comment at line 967 only says this for runtime requests. If the old process reports a new background task while it closes (up to 30s with a hung finalizer), that task id is not in `taskIds` and survives the release. The thread then stays Waiting. If the pump is already cut off at removal, this does not apply.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Session release now clears the dead session's background-task rosters on its provider threads (detach, idle, manual and other non-shutdown releases), for runtimes that set backgroundTasksEndWithProcess",
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:785-831",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-886",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-913",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066-1101",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2528-2533"
+      ],
+      "equivalent_path": "writeReleasedRuntimeRequestEvents, which settles live runtime requests when a session is released, runs inside writeReleaseRecords and is retried by retryReleaseRecords",
+      "before_after": "Before: the roster stayed on the provider thread after the process ended, so the thread kept showing Waiting. After: the roster is read when the entry leaves the map, then filtered by task id and written back with a compare-and-set after scope close. The new write sits in the same `Effect.all` as the existing release writes, so it is also retried on failure and runs for a replaced session. Server shutdown and runtimes that do not opt in are skipped.",
+      "visible_effect": "Threads stop showing Waiting after their provider process is gone.",
+      "failure_mode": "The row read fails: the read is caught and logged, so the roster stays. A write failure: the existing retryReleaseRecords retry applies. Three lost compare-and-set attempts: only a warning is logged, no retry runs and the roster stays (see finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "The release cleanup writes a provider-thread row back through a new compare-and-set `writeIfProviderThreadUnchanged`, using a row read earlier",
+      "location": "apps/server/src/orchestration-v2/EventSink.ts:529",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/EventSink.ts:529-560",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1059-1062",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2234",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:846-876",
+        "packages/contracts/src/orchestrationV2.ts:978"
+      ],
+      "equivalent_path": "writeIfProviderThreadOwner (EventSink.ts:475) and writeIfRunCurrent (EventSink.ts:414), the existing guarded writes that commit through commitThenPublish",
+      "before_after": "Before: no guarded write existed for this row. After: the SELECT of payload_json and the append and projection apply run in one transaction. The commit is skipped unless the stored JSON string equals the encode of the row that was read. Events are published only if committed. The writer spreads the whole row and changes only pendingBackgroundTasks and updatedAt. A concurrent change to another field is detected and the row is re-read, so it is not overwritten.",
+      "visible_effect": "A task reported by a replacement session between the read and the write is preserved, and a lost race retries (covered by the ProviderSessionManager.test.ts compare-and-set test at lines 2987-3018).",
+      "failure_mode": "The comparison is on the string produced by the same encoder that projection apply uses (ProjectionStore.ts:2204). A row stored under an older schema form would encode differently after decode, so the compare would never match. This is unlikely here: a row is only written when it already holds tasks, and tasks exist only under the current schema.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is sound. The compare-and-set write, the opt-in flag and the detach handling hold up against the call sites I read. Claude and Muse are both non-multi-thread, so a detach releases them and the detached thread is captured. Two things are worth a look, both \"consider\": three lost compare-and-set attempts only log a warning and are not retried, and the roster is read before the old process closes. The tests cover detach, idle release, the runtime that does not opt in, a replacement session reporting a task during release, and a lost compare-and-set race.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 455,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.3825057
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a6e280d7e9d589e1ecf28e9b50c2deeaca570c3f"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3825057,
+    "usage": {
+      "input": 20,
+      "output": 9207,
+      "cacheRead": 448677,
+      "cacheWrite": 61382
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 85608,
+    "stop": "complete",
+    "notices": []
+  }
+}

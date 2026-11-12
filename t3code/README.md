@@ -8,6 +8,9 @@ PR: CodeRabbit (`coderabbitai[bot]`) and [Macroscope](https://macroscope.com/) (
 Status: six merge days annotated (2026-11-06 to 2026-11-11, 791 PRs, 45 chunks). No Wachiman run
 has been made on this repo yet; the next step is replaying the cases in
 [`replay-shortlist.md`](replay-shortlist.md) into a test repository.
+Later runs: [`replays/`](replays/) (five replayed PRs) and
+[`contract-order-experiment/`](contract-order-experiment/) (7 escaped contract and ordering
+bugs, Wachiman 1.12.0 with and without a flow-tracing focus file: 0 and 1 caught).
 
 ## Results so far
 
