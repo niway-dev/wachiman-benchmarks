@@ -1,0 +1,151 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "enableSqlExpressions always returns false and ignores the feature flag",
+      "body": "Both branches return false: `enabled := !IsEnabledGlobally(...)`, and if it is true the function returns false, otherwise it returns false too. The flag is evaluated but has no effect, and the name `enabled` holds the inverse of the flag. The result is a hard-coded kill switch that reads like a flag check. If the goal is to disable SQL expressions unconditionally, drop the helper and return the error directly in `case QueryTypeSQL` with a comment saying it is disabled and why. If the flag should still gate the feature, the function should return `h.features.IsEnabledGlobally(featuremgmt.FlagSqlExpressions)`. As written, enabling `sqlExpressions` does nothing.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 131,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Disabled SQL gives different errors on the two parse paths",
+      "body": "The reader path (`ReadQuery`) returns `sqlExpressions is not implemented`. The legacy path in `pkg/expr/nodes.go:159-160` calls `UnmarshalSQLCommand` directly with no flag check. That reaches `NewSQLCommand`, where `sql.TablesList` always fails against the stub DB (`pkg/expr/sql/db.go:12-14`). The user then gets the public message `error reading SQL command` (`pkg/expr/sql_command.go:33-35`), and the server logs a Warn that the SQL is invalid. The same query is therefore reported as a feature-disabled error on one path and as a SQL syntax error on the other, even when the SQL is valid. Add the disabled check in one place both paths share (for example at the top of `NewSQLCommand`) so users and logs see one consistent reason.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql/db.go",
+      "line": 12,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Stub DB leaves most of the SQL expression code unreachable",
+      "body": "Every method returns `not implemented`. `TablesList` in `pkg/expr/sql/parser.go` therefore always fails at `RunCommands`, so `tablesFromAST` and the JSON/AST handling are unreachable. `SQLCommand.Execute` is never reached, because `NewSQLCommand` always errors. The tests in `pkg/expr/sql/parser_test.go` and `pkg/expr/sql_command_test.go` are already `t.Skip()`, so nothing in this PR exercises the stub. This is acceptable as a temporary disable. Add a comment on `DB` saying it is a placeholder that replaces go-duck and why, so a later reader does not take it for a real implementation. A named sentinel error such as `ErrNotImplemented` would also let callers tell this case apart from a real SQL error (see the reader.go finding).",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "A query of type `sql` is read through ExpressionQueryReader.ReadQuery",
+      "location": "pkg/expr/reader.go:128",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-133",
+        "pkg/expr/reader.go:194-200",
+        "pkg/expr/nodes.go:137-145"
+      ],
+      "equivalent_path": "Other query types in ReadQuery (math, reduce, etc.) build a Command from the parsed body; the `threshold` case gates a sub-feature on `h.features.IsEnabledGlobally(FlagRecoveryThreshold)` at pkg/expr/reader.go:160.",
+      "before_after": "Before: it parsed the body and built an SQLCommand, backed by go-duck. After: it returns `sqlExpressions is not implemented` before reading the body, whatever the flag value (reader.go:194-200 always returns false).",
+      "visible_effect": "Any SQL expression read through this path fails with `sqlExpressions is not implemented`. The error is returned up the `nodes.go:137-143` caller.",
+      "failure_mode": "Not silent: an explicit error is returned. The flag value is ignored, so enabling the toggle has no effect.",
+      "evidence_checked": true
+    },
+    {
+      "action": "NewSQLCommand now calls sql.TablesList backed by the stub DB, and Execute calls the stub QueryFramesInto",
+      "location": "pkg/expr/sql_command.go:30",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:30-36",
+        "pkg/expr/sql/db.go:12-22",
+        "pkg/expr/sql/parser.go:23-30",
+        "pkg/expr/nodes.go:159-166"
+      ],
+      "equivalent_path": "Same function as before, with duck.NewInMemoryDB replaced by sql.NewInMemoryDB (pkg/expr/sql/parser.go:23). The legacy path nodes.go:159-160 calls UnmarshalSQLCommand with no feature check.",
+      "before_after": "Before: TablesList parsed the SQL via DuckDB json_serialize_sql. After: RunCommands returns errors.New(\"not implemented\") (db.go:16-18), so TablesList returns an error and NewSQLCommand returns BadRequest `sql-invalid-sql` with public message `error reading SQL command`. Execute is no longer reachable.",
+      "visible_effect": "Legacy-path users who send a SQL expression get `failed to parse expression '<refId>': ... error reading SQL command`, which blames the SQL rather than the disabled feature.",
+      "failure_mode": "The failure is visible, but its message is misleading. The server logs a Warn and an Error that include the raw user SQL on each attempt (parser.go:28, sql_command.go:32).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR disables SQL expressions by removing go-duck and putting a stub DB in its place. That is consistent with the title, and nothing breaks at compile time that I can see. I found three problems, all minor. `enableSqlExpressions` returns false on every branch, so it looks like a flag check but never reads the flag. The reader path and the legacy `nodes.go` path report a disabled feature differently: one says `not implemented`, the other says `error reading SQL command`. The stub leaves the parser and `Execute` code unreachable and has no comment saying it is a placeholder. The go.mod, go.sum and go.work.sum edits are only removed or moved dependency lines. I did not build or run anything, so I could not check that the removed indirect dependencies are unused elsewhere.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.1609017
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1609017,
+    "usage": {
+      "input": 8,
+      "output": 3859,
+      "cacheRead": 90677,
+      "cacheWrite": 28307
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 39455,
+    "stop": "complete",
+    "notices": []
+  }
+}

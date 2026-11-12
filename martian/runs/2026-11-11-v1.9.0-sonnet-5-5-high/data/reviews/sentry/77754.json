@@ -1,0 +1,139 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-77754` of sentry-77754 against bb5a6837cb5b3d8d3b174e17d42ec14486ef8738 (merge-base bb5a683)",
+    "repository": {
+      "name": "sentry-77754"
+    },
+    "base": {
+      "sha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738",
+      "ref": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+    },
+    "head": {
+      "sha": "9501091c52ae94e8d916f79b35d21975b3f9cadb",
+      "ref": "pr-77754"
+    },
+    "title": "pr-77754",
+    "description": "fix(ecosystem): Breaks issue sync cycles\nPasses JSON instead of classes when queueing task\nremoves SourceType enum\nConverts from JSON to dictionaries instead\nRemoves minor change made to sync utils, adds test for assignment loop\nFix typing for optional assignment_source\nMore typing fixes\nFixes tests, adds new test for sync loop checks",
+    "author": "Gabe Villalobos"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "reviewed": [
+      "src/sentry/integrations/mixins/issues.py",
+      "src/sentry/integrations/services/assignment_source.py",
+      "src/sentry/integrations/tasks/sync_assignee_outbound.py",
+      "src/sentry/integrations/utils/sync.py",
+      "src/sentry/models/groupassignee.py",
+      "tests/sentry/integrations/services/test_assignment_source.py",
+      "tests/sentry/models/test_groupassignee.py"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/integrations/services/assignment_source.py",
+      "line": 18,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`queued` default is evaluated once at import time",
+      "body": "`queued: datetime = timezone.now()` is a dataclass default. Python evaluates it once, when the module is imported. Every `AssignmentSource` built without an explicit `queued` gets the same timestamp: the process start time. `from_integration` never passes `queued`. The value that `to_dict()` sends in the task kwargs is therefore stale, and it is identical across all assignments in a worker. Nothing reads it yet, but it is wrong for any later use such as ordering or staleness checks. Use `field(default_factory=timezone.now)` instead.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/integrations/services/test_assignment_source.py",
+      "line": 36,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "test_to_dict cannot catch the import-time `queued` default",
+      "body": "`assert result.get(\"queued\") is not None` passes even when `queued` is a stale import-time value. Add an assertion that `queued` is fresh, for example that it is no earlier than a timestamp taken just before constructing the source. Such a test would have caught the default-argument bug at assignment_source.py:18.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/models/test_groupassignee.py",
+      "line": 180,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Loop-prevention is only tested for assign via GroupAssignee.objects.assign",
+      "body": "The new code adds `assignment_source` to `deassign` too, and `sync_group_assignee_inbound` passes `AssignmentSource.from_integration(integration)` on both paths. The only test of the source check is the `assign` case in `test_assignee_sync_outbound_assign_with_matching_source_integration`. No test covers `deassign` with a matching source. No test covers `sync_group_assignee_inbound` forwarding the source. No test covers a non-matching source integration still syncing, which the code comment says should happen. A regression in the `deassign` or inbound wiring would go unnoticed.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Outbound assignee sync is skipped when the assignment source is the same integration",
+      "location": "src/sentry/integrations/mixins/issues.py:390",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/integrations/services/assignment_source.py:18",
+        "src/sentry/integrations/services/assignment_source.py:31-35",
+        "src/sentry/integrations/utils/sync.py:96-116",
+        "src/sentry/integrations/utils/sync.py:137-144",
+        "src/sentry/integrations/tasks/sync_assignee_outbound.py:53-61",
+        "src/sentry/integrations/example/integration.py:152-158",
+        "src/sentry/conf/server.py:739"
+      ],
+      "equivalent_path": "src/sentry/integrations/tasks/sync_status_outbound.py:43 calls should_sync(\"outbound_status\") with no source. Status sync has no loop guard here.",
+      "before_after": "Before, should_sync only checked the org-integration config flag. Now it also returns False when sync_source.integration_id equals org_integration.integration_id. The source is built in utils/sync.py:98 and 115, passed through assign/deassign (groupassignee.py:192 and 238), serialized into the Celery kwargs (utils/sync.py:137-144), and parsed in the task (tasks/sync_assignee_outbound.py:53-56).",
+      "visible_effect": "An inbound assignment from Jira/VSTS no longer echoes back to the same integration. Other integrations linked to the same group still receive the change.",
+      "failure_mode": "If from_dict fails, the source becomes None and the sync proceeds, so the loop guard is lost silently. The `queued` default is stale because it is evaluated at import time, though nothing reads it yet. All implementations of sync_assignee_outbound accept **kwargs, so passing assignment_source does not raise.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The loop-guard wiring is sound end to end, and every `sync_assignee_outbound` implementation accepts `**kwargs`. I found one real bug: `AssignmentSource.queued` defaults to `timezone.now()` evaluated once at import, so it is stale. Two test gaps remain: nothing asserts `queued` is fresh, and the `deassign` and inbound paths have no coverage.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 227,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.15514599999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738"
+  },
+  "execution": {
+    "costUsdEstimate": 0.15514599999999998,
+    "usage": {
+      "input": 10,
+      "output": 4948,
+      "cacheRead": 94580,
+      "cacheWrite": 24047
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 39276,
+    "stop": "complete",
+    "notices": []
+  }
+}

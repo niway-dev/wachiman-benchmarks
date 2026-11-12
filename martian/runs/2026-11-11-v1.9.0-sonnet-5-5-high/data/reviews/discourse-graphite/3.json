@@ -1,0 +1,177 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3` of discourse-graphite-3 against e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3 (merge-base e25638d)",
+    "repository": {
+      "name": "discourse-graphite-3"
+    },
+    "base": {
+      "sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+      "ref": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+    },
+    "head": {
+      "sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+      "ref": "pr-3"
+    },
+    "title": "pr-3",
+    "description": "Add BlockedEmail, to block signups based on email. Track stats of how many times each email address is blocked, and last time it was blocked. Move email validation out of User model and into EmailValidator. Signup form remembers which email addresses have failed and shows validation error on email field.",
+    "author": "Neil Lalonde"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 12,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Blocklist lookup is case-sensitive, so changing the case of an address bypasses it",
+      "body": "`BlockedEmail.where(email: email)` is an exact string match, and the unique index on `blocked_emails.email` is case-sensitive too. `User` does not normalise the email on save: `new_from_params` assigns `params[:email]` as typed (`app/models/user.rb:87`). The only downcasing is in `find_by_username_or_email` and `User.email_hash`. So if `bad@spammers.org` is blocked, `Bad@spammers.org` or `BAD@spammers.org` passes the validator and the account is created. The domain whitelist/blacklist regex is built with the ignore-case flag (`lib/validators/email_validator.rb:20`), so the new check is weaker than the check beside it. Compare with `Email.downcase`, or lower-case on write and lookup, and add a spec with a differently-cased address.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/validators/email_validator.rb",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Validator writes match statistics, and `UsersController#create` validates twice, so match_count is wrong",
+      "body": "`BlockedEmail.should_block?` updates `match_count` and `last_match_at` and saves, so every `valid?` call on a `User` with a changed email writes to the database. `UsersController#create` calls `user.valid?` unconditionally (`app/controllers/users_controller.rb:168`) and then `user.save` (line 172), which validates again. For a `do_nothing` record the count goes up by 2 per signup. For a `block` record the write from `valid?` persists, but the one inside `save` happens inside save's transaction, which I expect to be rolled back when save returns false. The count is therefore inconsistent between the two actions and silently inflated. I did not check the Rails version's transaction behaviour, hence medium confidence. Move the side effect out of the validator, for example into the controller on a rejected signup, or make the validator read-only and record the match once.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 274,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Any email error marks the address as \"invalid\", including 'already taken' and domain errors",
+      "body": "The condition `result.errors.email` is true for every server-side email error: uniqueness, whitelist/blacklist and the new blocked error. The client then shows the generic `user.email.invalid` reason (line 72) instead of the server's message. A user whose email is already taken sees \"invalid email\". The specific server error text is only in the flash message. Consider storing the server message per rejected email, or showing `errors.email[0]`, rather than a generic reason.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 17,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "`Em.A([])` in the class body is shared by every instance and never reset",
+      "body": "An array literal in `extend({...})` lives on the prototype, so all instances share it. `pushObject` therefore mutates shared state. Nothing clears it when the modal closes or reopens. It works only because the controller is a singleton. Initialise it in `init`, or reset it in `onShow`, if the modal can be reopened with a different intent.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/users_controller.rb",
+      "line": 198,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "New `errors`/`values` response fields and the client's use of them have no test",
+      "body": "The failure response of `create` gains `errors` and `values`, and the JS controller depends on both. No spec in this part covers `UsersController#create` returning them, and nothing covers the integration of the validator with `User`, for example that a blocked email makes `User#valid?` false. The existing user_spec cases only cover the domain lists. Add a controller spec and a user spec for a blocked email.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Signup email is validated against BlockedEmail, with a counter update, inside User validation",
+      "location": "lib/validators/email_validator.rb:13",
+      "status": "closed",
+      "evidence": [
+        "app/models/blocked_email.rb:11-19",
+        "app/controllers/users_controller.rb:168-172",
+        "app/models/user.rb:87",
+        "lib/validators/email_validator.rb:13-15"
+      ],
+      "equivalent_path": "The email domain whitelist/blacklist check in the same validator, formerly User#email_validator",
+      "before_after": "The domain check is read-only and case-insensitive. The new check does an exact-match lookup and writes match_count/last_match_at. UsersController#create validates twice (valid? then save).",
+      "visible_effect": "A blocked email yields a 'blocked' error in the create response and is shown in the modal. Statistics can be double-counted.",
+      "failure_mode": "Case variants bypass the block. The stat write can be rolled back or doubled depending on which validation runs it.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Client records rejected emails and re-fails emailValidation",
+      "location": "app/assets/javascripts/discourse/controllers/create_account_controller.js:274",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:69-74",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:274-276",
+        "app/controllers/users_controller.rb:195-200"
+      ],
+      "equivalent_path": "The client-side emailValidation regexp check at line 85",
+      "before_after": "Before: only format checked. After: an email the server rejected is marked failed until the page reloads.",
+      "visible_effect": "The submit button is disabled and a generic 'invalid' reason is shown for the rejected email.",
+      "failure_mode": "The server's specific message is not shown in the field. rejectedEmails is never cleared.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change adds a blocked-email list that is checked during user validation, plus client handling for rejected emails. There are two real problems. The lookup is case-sensitive and `User` does not normalise email case, so a differently-cased address bypasses a block. The validator also writes match statistics, and `UsersController#create` validates twice, so `match_count` is inflated or rolled back depending on the action. I did not confirm the Rails version's transaction behaviour for the second point. The client marks every email error as \\\"invalid\\\" and shares its rejected-email array across instances. The new response fields and the validator's integration with `User` have no tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 178,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.16527350000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.16527350000000002,
+    "usage": {
+      "input": 8,
+      "output": 6389,
+      "cacheRead": 68195,
+      "cacheWrite": 23637
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 51143,
+    "stop": "complete",
+    "notices": []
+  }
+}

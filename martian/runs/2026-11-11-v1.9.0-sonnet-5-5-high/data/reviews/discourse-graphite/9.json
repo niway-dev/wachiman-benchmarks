@@ -1,0 +1,160 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-9` of discourse-graphite-9 against 728845d008f06828630a632e5c7d67e11bf15deb (merge-base 728845d)",
+    "repository": {
+      "name": "discourse-graphite-9"
+    },
+    "base": {
+      "sha": "728845d008f06828630a632e5c7d67e11bf15deb",
+      "ref": "728845d008f06828630a632e5c7d67e11bf15deb"
+    },
+    "head": {
+      "sha": "ecfa17b5a79dfdc91e7a4d50b42ae78a35d0a293",
+      "ref": "pr-9"
+    },
+    "title": "pr-9",
+    "description": "FEATURE: Localization fallbacks (server-side)",
+    "author": "Kane York"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "reviewed": [
+      "app/controllers/application_controller.rb",
+      "config/cloud/cloud66/files/production.rb",
+      "config/environments/production.rb",
+      "config/environments/profile.rb",
+      "config/initializers/i18n.rb",
+      "config/initializers/pluralization.rb",
+      "lib/freedom_patches/translate_accelerator.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 21,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Fallback locales are only loaded in controller requests; jobs, mailers and with_locale blocks get no fallback",
+      "body": "`ensure_loaded!` is called only from `ApplicationController#set_locale` (application_controller.rb:159). Other paths set the locale without it: `I18n.with_locale(user.effective_locale)` in app/services/post_alerter.rb:138, `I18n.locale = SiteSetting.default_locale` in app/jobs/base.rb:151, and `I18n.with_locale` in lib/post_destroyer.rb:102. The accelerator's `translate` loads only `config.locale` (translate_accelerator.rb:68). In those paths the fallback chain (site default, `:en`) can name a locale whose yml was never loaded in the process. This is most likely in a Sidekiq process, which serves no controller requests. A key missing in the user's locale then gives 'translation missing' instead of the fallback text. This is the case fallbacks are meant to cover, for example in notification emails. Because `translate` caches by `key+locale+backend` (line 72), the missing-string result is also cached. A later request with the fallback loaded still gets the stale string. Load the fallback chain inside the accelerated `translate`/`load_locale` path (for example, load every `I18n.fallbacks[config.locale]` locale there) instead of only in the controller filter.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/freedom_patches/translate_accelerator.rb",
+      "line": 72,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "LRU cache key ignores the fallback chain",
+      "body": "The cache key is `key + config.locale + backend.object_id`. With fallbacks, the result now also depends on `SiteSetting.default_locale`, which `FallbackLocaleList#[]` reads (i18n.rb:17), and on which fallback locales are loaded. If an admin changes the default locale, or a lookup is cached before the fallback locale is loaded, the cache keeps serving the old result until `reload!` runs. Include the fallback chain in the key, or clear `@cache` when `default_locale` changes.",
+      "anchor": "outside"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 12,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No tests for the fallback behaviour",
+      "body": "The change adds fallback ordering (user locale, site locale, en), `ensure_loaded!`, and enabling fallbacks in the development and test environments. It adds no spec. spec/controllers/application_controller_spec.rb already has a `set_locale` describe block, so a spec for a key missing in the user locale resolving to the site locale and then to en would fit there. A spec for `I18n.ensure_loaded!` would also be useful.",
+      "anchor": "diff"
+    },
+    {
+      "path": "config/initializers/i18n.rb",
+      "line": 1,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "low",
+      "title": "Initializer ordering depends on an implicit filename sort",
+      "body": "The comment says `# order: after 02-freedom_patches.rb`, and the file is named `i18n.rb`. It only runs after the freedom patches because Rails loads initializers alphabetically and digits sort before letters. The comment explains this poorly. A `NN-` prefix, such as `03-i18n.rb`, would make the ordering explicit and consistent with the other numbered initializers.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Enable I18n fallbacks (user locale, site default locale, en) in all environments via a custom FallbackLocaleList, replacing config.i18n.fallbacks = true in production and profile",
+      "location": "config/initializers/i18n.rb:12",
+      "status": "closed",
+      "evidence": [
+        "config/initializers/i18n.rb:12-24",
+        "app/controllers/application_controller.rb:152-160",
+        "lib/freedom_patches/translate_accelerator.rb:46-77",
+        "app/services/post_alerter.rb:138",
+        "app/jobs/base.rb:151"
+      ],
+      "equivalent_path": "Rails' `config.i18n.fallbacks = true` in production.rb, profile.rb and the cloud66 production.rb. It used I18n::Locale::Fallbacks with defaults [default_locale].",
+      "before_after": "Before, fallbacks applied only in production and profile, and only fell back to I18n.default_locale. After, they apply in every environment, with a chain of locale, SiteSetting.default_locale and :en, computed per lookup.",
+      "visible_effect": "Missing strings in a user's locale show the site-locale or English text instead of 'translation missing'.",
+      "failure_mode": "The fallback locales' yml is loaded only in ApplicationController#set_locale. Jobs, mailers and with_locale blocks never load it. A fallback lookup there can return 'translation missing', which the LRU cache then keeps.",
+      "evidence_checked": true
+    },
+    {
+      "action": "I18n.ensure_loaded!(locale) added to the translate accelerator",
+      "location": "lib/freedom_patches/translate_accelerator.rb:62",
+      "status": "closed",
+      "evidence": [
+        "lib/freedom_patches/translate_accelerator.rb:39-65"
+      ],
+      "equivalent_path": "I18n.load_locale, called lazily from `translate` for config.locale only",
+      "before_after": "Before, only config.locale was loaded on demand. After, the controller also loads each fallback locale. load_locale is mutex-guarded and returns early if the locale is already loaded, so repeated calls are cheap.",
+      "visible_effect": "Fallback strings are available on web requests.",
+      "failure_mode": "The `@loaded_locales ||= []` initialisation sits outside LOAD_MUTEX. That is harmless because reload! and load_locale also initialise it.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change moves fallbacks into a custom initializer with a user-locale, site-locale, en chain, and loads those locales on web requests. Fallback locales are not loaded outside controller requests, so jobs, mailers and `with_locale` blocks may get 'translation missing'. The LRU translation cache key also ignores the fallback chain. No tests were added. I did not run anything.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 46,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.1153586
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "728845d008f06828630a632e5c7d67e11bf15deb"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1153586,
+    "usage": {
+      "input": 8,
+      "output": 5497,
+      "cacheRead": 46366,
+      "cacheWrite": 13934
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 44114,
+    "stop": "complete",
+    "notices": []
+  }
+}
