@@ -1,0 +1,160 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 3fdcef0 of t3code-fork against its parent (48745ff)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "48745ffba50d8c00e430fc3d06244b4317690227",
+      "ref": "48745ff"
+    },
+    "head": {
+      "sha": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+      "ref": "3fdcef0"
+    },
+    "title": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "description": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "author": "Yash Singh"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2670,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Pull waits on a status fetch with no bound, and the fetch may not even hold a lock yet",
+      "body": "`Fiber.await(pending)` has no timeout, and the pull's 30s `timeoutMs` only starts at the later `executeGitWithStableDiagnostics` call. A pending status fetch can be queued behind `statusFetchProcesses` (4 permits, line 925) and has not spawned git yet. If all 4 slots hold stalled fetches, each runs up to `STATUS_UPSTREAM_FETCH_TIMEOUT` (5 min, line 85) plus the 1s force-kill, so the queued fetch waits about 5 min for a slot and then up to another 5 min to run. The user who clicked Pull sees a spinner for up to ~10 minutes before the pull's own 30s limit starts. A queued fetch that has not spawned owns no ref locks, so waiting for it does nothing useful. Bound the wait, for example with `Effect.timeoutOption`. Alternatively skip the wait when the fetch has not acquired a permit and fall through to the lock-retry path that already exists below.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2694,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "`remote` is re-read and shadowed inside the lock-retry branch",
+      "body": "The outer `remote` (line 2664) is already the value of `branch.${refName}.remote`. The retry branch destructures a second `remote` from the same `readConfigValue` call, which shadows it and costs an extra git subprocess. Reuse the outer binding. The key construction `${gitCommonDir}\\0${remoteName}` is also now duplicated in `fetchRemoteForStatus` (line 1278), the pull (line 2667) and `statusRemoteRefreshFailureKey` (line 1518), so a small shared helper would keep them in sync.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 1280,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Failure back-off is now tracked in two places",
+      "body": "The `Cache.makeWith` TTL (line 1551) still caches failures, and `fetchRemoteForStatus` now also gates on `retryAt` (line 1280). During a cooldown the early `return` is a success, so the cache stores `true` for 15s. After that the real gate is the `retryAt` map. The two mechanisms are only consistent because of the order in which they happen to run, and the tests cover it only via the TestClock. Consider making the `retryAt` map the single source of truth. Let the cache TTL be a plain interval, or drop the cache's failure branch.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Status poll waits for a shared background `git fetch` fiber (forked into the service scope) instead of running the fetch inline with a 5s timeout",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1258",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1281-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1049-1066",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557",
+        ".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484-491"
+      ],
+      "equivalent_path": "Previous `fetchRemoteForStatus` ran `executeGit` inline with `STATUS_UPSTREAM_REFRESH_TIMEOUT` (5s), which killed git mid-fetch.",
+      "before_after": "Before: a 5s timeout killed the fetch, which could leave ref locks behind. After: the waiter times out at 5s (line 1315) and the fetch continues in the background. It is bounded by a 5 min timeout plus 1s force-kill (lines 1291-1292) and by 4 worker permits (line 925). Fetches for the same key are deduplicated via `statusFetches`.",
+      "visible_effect": "Status reads return the last fetched refs after 5s instead of failing the fetch. Failures are logged and backed off.",
+      "failure_mode": "A hung fetch holds a slot up to ~5m1s. A queued fetch is not bounded by anything the waiter sees, but the waiter's own wait is still 5s. A failure after the waiter returned is recorded in `statusRemoteRefreshFailures` and gates the next poll through `retryAt`. The `executeRaw` timeout (line 1055) interrupts the scoped execution, and the spawner's `forceKillAfter` escalates to SIGKILL (NodeChildProcessSpawner.ts:484-491).",
+      "evidence_checked": true
+    },
+    {
+      "action": "`pullCurrentBranch` awaits any pending status-fetch fiber for the branch's remote, then runs a pull with a fallback retry against the configured upstream only",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2664",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2741",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:3303-3307",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:551-596"
+      ],
+      "equivalent_path": "Previously `pullCurrentBranch` called `statusDetails` (which could start a status fetch) and ran `git pull --ff-only` with a 30s timeout and no retry.",
+      "before_after": "Now it reads local status only. `Fiber.await(pending)` has no bound. The pull runs with `LC_ALL=C`, and a ref-lock failure triggers a retry of `git pull --ff-only -- <remote> <mergeRef>` when HEAD and the branch are unchanged.",
+      "visible_effect": "A pull can stall behind a long-running status fetch. Failures now report `fetchFailureDetail` (fixed text for lock, auth or network failures) instead of the generic 'git pull failed'.",
+      "failure_mode": "The wait before the pull is unbounded relative to the pull's 30s timeout. See the finding at line 2670.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New `forceKillAfterMs` option is passed from `ExecuteGitInput` through `executeGit` to `ChildProcess.make({forceKillAfter})`",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:969",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:53",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1292",
+        ".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:478-493"
+      ],
+      "equivalent_path": "Other `execute` callers do not set it, so `forceKillAfter` is `undefined` for them.",
+      "before_after": "The spawner reads `options?.forceKillAfter`. When undefined it waits at most `processGroupGraceMillis` after SIGTERM and never escalates (NodeChildProcessSpawner.ts:484-485). When set, it escalates to SIGKILL after that duration.",
+      "visible_effect": "Only the status fetch sets it (1_000 ms). The other call sites keep their behaviour.",
+      "failure_mode": "A number is passed where the spawner expects a `Duration`. `Duration.toMillis(options.forceKillAfter)` (line 487) accepts a number as millis, so 1_000 means 1s.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "This change turns the status fetch into a deduplicated background fiber with a 5-minute bound and a 4-slot pool, and adds a lock-failure retry to pull. I found one real issue. `pullCurrentBranch` awaits a pending status fetch with no timeout (`GitVcsDriverCore.ts:2670`). That wait can be as long as the queue behind stalled fetches, up to roughly 10 minutes, and it sits outside the pull's own 30s limit. There are also two cleanup points: a shadowed and re-read `remote` in the retry branch, and failure back-off tracked in both the cache TTL and the `retryAt` map. The tests are thorough and cover the new paths. I read the added code but did not run it.\\n\\nThe `forceKillAfterMs` option checks out against the spawner. When it is unset the spawner never escalates, which matches the other callers, and when set it escalates to SIGKILL.\"}",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 686,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.37643360000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "48745ffba50d8c00e430fc3d06244b4317690227"
+  },
+  "execution": {
+    "costUsdEstimate": 0.37643360000000003,
+    "usage": {
+      "input": 14,
+      "output": 9699,
+      "cacheRead": 319916,
+      "cacheWrite": 61856
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 174033,
+    "stop": "complete",
+    "notices": []
+  }
+}

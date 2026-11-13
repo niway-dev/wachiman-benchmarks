@@ -1,0 +1,150 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 36f91c4 of t3code-fork against its parent (7371925)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+      "ref": "7371925"
+    },
+    "head": {
+      "sha": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+      "ref": "36f91c4"
+    },
+    "title": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "description": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/ssh/src/tunnel.test.ts",
+      "packages/ssh/src/tunnel.ts"
+    ],
+    "reviewed": [
+      "packages/ssh/src/tunnel.ts",
+      "packages/ssh/src/tunnel.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/ssh/src/tunnel.ts",
+      "line": 720,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A live but unrelated PID in the pid file now blocks every reconnect",
+      "body": "The script now treats any `REMOTE_PID` that passes `server_running` (`kill -0` and not a zombie, lines 625-630) as our own busy server. If `wait_ready` fails, it exits 1 and leaves `pid`/`port`/`managed` in place (lines 720-722). Picture this: the remote host reboots, or the server crashes and gets reaped by init, and later another process takes that PID. `resolve_default_runtime_port` also only does `process.kill(pid, 0)` (line 650). So the stale runtime file still matches `REMOTE_PID`, the check at line 671 sends the run down this branch, and every connection attempt waits 60s and then prints \"the server was left running. Retry the connection\". A retry ends the same way, and the client never recovers on its own. Before this change, the 2s probe failing made the script relaunch. The only ways out now are a runner update or a disconnect. Both end up sending SIGTERM to the unrelated process (lines 715, 780-781). If that process ignores SIGTERM, the stop script keeps the files (lines 787-789) and the user stays stuck. Suggestion: before trusting the PID, check that it is our server, e.g. `ps -o args= -p \"$REMOTE_PID\"` contains `$RUNNER_FILE` or `serve`. When it doesn't match, fall through to the relaunch branch.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/ssh/src/tunnel.ts",
+      "line": 1676,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "An interrupt between delete and close leaks the stale SSH forward",
+      "body": "`tunnels.delete(key)` now runs before `closeTunnelEntry(entry)`, and nothing makes the pair uninterruptible. If the `ensureEnvironment` fiber is interrupted after the delete but before `Scope.close` (line 1392), the entry's scope is never closed. That scope is a standalone `Scope.make` (line 1558), and the manager finalizer only closes entries still in `tunnels` (lines 1401-1408), so the `ssh -N` process stays alive until the app exits. `disconnectEnvironment` does the same delete-then-close inside `Effect.uninterruptible` (lines 1782-1785). Wrapping this pair the same way closes the gap.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Replace a stale local SSH forward without running the remote stop",
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1558",
+        "packages/ssh/src/tunnel.ts:1584-1599",
+        "packages/ssh/src/tunnel.ts:1383-1408",
+        "packages/ssh/src/tunnel.ts:1642-1693",
+        "packages/ssh/src/tunnel.ts:1780-1791"
+      ],
+      "equivalent_path": "disconnectEnvironment deletes the entry, then closes it (tunnel.ts:1782-1785)",
+      "before_after": "The entry finalizer runs stopRemoteServer only when tunnels.get(key) === entry (tunnel.ts:1587-1597). Deleting first makes the stale-forward close kill only the local ssh process. createTunnelEntry then reruns the launch script, which reuses the running server.",
+      "visible_effect": "On reconnect, the remote server and its agents keep running. The client gets a new forward to the same remote port.",
+      "failure_mode": "If interrupted between delete and close, the entry scope (tunnel.ts:1558) is never closed, and the manager finalizer (tunnel.ts:1401-1408) can no longer see the entry, so the ssh forward leaks. Unlike disconnect, this pair is not wrapped in uninterruptible.",
+      "evidence_checked": true
+    },
+    {
+      "action": "An existing managed server that does not answer now gets the 60s readiness budget, then the script exits 1 without replacing it",
+      "location": "packages/ssh/src/tunnel.ts:720",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:51-66",
+        "packages/ssh/src/tunnel.ts:606-614",
+        "packages/ssh/src/tunnel.ts:671-723",
+        "packages/ssh/src/tunnel.ts:873-875",
+        "packages/ssh/src/tunnel.ts:914-919"
+      ],
+      "equivalent_path": "The fresh-launch readiness wait (tunnel.ts:744) uses the same T3_READY_TIMEOUT_MS",
+      "before_after": "Before: a 2s reuse probe, then kill and relaunch. After: up to 60s of wait_ready, then the error and exit, with ownership files kept.",
+      "visible_effect": "The connection fails with 'Remote T3 server is still running but did not become ready' after about 60s.",
+      "failure_mode": "Outer bound: the ssh launch command timeout is REMOTE_LAUNCH_TIMEOUT_MS = 90s for the node runner and 900s for the archive runner (tunnel.ts:55, 65, 917-919). Worst-case inner sum: runtime-file resolve, a 2s reuse probe (line 676), 60s at line 720. That is about 62s, which fits under 90s. Each probe has a 1s per-call timeout (tunnel.ts:52, 875). A PID that is alive but not ours makes this fail permanently (see finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Treat a runtime file that names our own managed PID as our own server",
+      "location": "packages/ssh/src/tunnel.ts:671",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:446-458",
+        "packages/ssh/src/tunnel.ts:558",
+        "packages/ssh/src/tunnel.ts:636-656",
+        "packages/ssh/src/tunnel.ts:739-743"
+      ],
+      "equivalent_path": "The adoption branch at tunnel.ts:674-699",
+      "before_after": "REMOTE_PID comes from `$!` of nohup env run-t3.sh. The runner execs node or the t3 binary (tunnel.ts:458, 558), so the PID equals the server's process.pid that it writes to the runtime file. The port file is rewritten from the runtime file, then the managed branch at 711 checks liveness.",
+      "visible_effect": "A reconnect keeps the managed server and no longer kills it as an external server.",
+      "failure_mode": "resolve_default_runtime_port only checks kill -0 (tunnel.ts:650). server_running at 711 catches zombies but not a reused PID.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR stops reconnects from killing the remote server. A stale forward is now closed without running the remote stop. The launch script recognises its own managed server through the default runtime file, skips re-probing a server it just adopted, ignores zombies, and when an existing managed server doesn't answer within 60s it fails instead of replacing it. The new shell-level tests run the real script against a fake server and cover these paths well. The main problem: any live PID that matches the pid/runtime files now counts as our busy server. That includes a PID reused after a reboot or crash, and in that case every reconnect fails after 60s and never recovers on its own. A smaller issue: the delete-then-close at line 1676 is not wrapped in uninterruptible the way disconnect's is.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 534,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.6488894000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "737192594f47d87f28b5f5a3fda3ef792a0d7972"
+  },
+  "execution": {
+    "costUsdEstimate": 0.6488894000000001,
+    "usage": {
+      "input": 14,
+      "output": 10497,
+      "cacheRead": 257987,
+      "cacheWrite": 48412
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 127789,
+    "stop": "complete",
+    "notices": []
+  }
+}

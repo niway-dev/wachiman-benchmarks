@@ -1,0 +1,157 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 6835a27 of t3code-fork against its parent (630f50e)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "630f50e47644283ebe5b753f696aa7eeff2c3eff",
+      "ref": "630f50e"
+    },
+    "head": {
+      "sha": "6835a2728792660fb9e4c23438a7d12089dee935",
+      "ref": "6835a27"
+    },
+    "title": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "description": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "author": "Yash Singh"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2670,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Pull waits with no bound on a status fetch that can run (and queue) for minutes",
+      "body": "`yield* Fiber.await(pending)` has no timeout of its own. The pending fiber can be queued on `statusFetchProcesses` (4 permits, line 1302) for up to the 5-minute fetch limit of the fetches ahead of it (line 1291), and then run for up to another 5 minutes plus the 1s force-kill. In the worst case, when the remote hangs and four other repositories' fetches hold all the permits, a user-initiated pull blocks for about 10 minutes before its own 30s-bounded `git pull` even starts. The UI shows nothing in the meantime. Before this change the status fetch was cut off after 5s, so a pull could never wait longer than that. Bound this wait (for example, `Fiber.await` with `Effect.timeoutOption`, then proceed or fail with a clear message), or only wait when the fetch has actually started running rather than while it is queued behind other fetches.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2694,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Remote is read again and shadows the earlier `remote`",
+      "body": "`remote` is already read at line 2664 in the same function scope. The `Effect.all` in the lock-failure branch destructures a new `remote` from a second `readConfigValue` call, which shadows the first and costs an extra git spawn. Reuse the earlier value and drop it from the `Effect.all`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 1302,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "A hung remote now holds one of four fetch slots for 5 minutes (was 5s)",
+      "body": "The raised 5-minute fetch limit means four repositories whose remotes hang can occupy every `statusFetchProcesses` slot for 5 minutes. During that time every other repository's status fetch is queued, and the waiters time out after 5s and use stale refs. The change is intentional, because it avoids killing a healthy writer, and the test at GitVcsDriverCore.test.ts:709 covers the limit. A shorter limit, or a per-remote limit, would keep one slow remote from starving unrelated repositories.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Status refresh now forks a detached, deduplicated background fetch (5-minute safety limit, 4 worker slots) and the caller waits at most 5s for it",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1258",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:53-54"
+      ],
+      "equivalent_path": "Previous fetchRemoteForStatus ran executeGit inline with a 5s timeout, so the process was killed when the poll deadline hit; failures were recorded through the cache's tapError.",
+      "before_after": "Before: the 5s timeout killed the fetch and recorded a failure. After: the waiter's 5s timeout only stops waiting (Fiber.join is interrupted, not the fiber), the fetch continues up to 5 minutes, failures are recorded inside the fiber (line 1300), and a retryAt check (line 1280) enforces the backoff.",
+      "visible_effect": "Status reads return with the last-fetched refs after at most 5s. Ahead/behind counts update on a later poll once the fetch finishes.",
+      "failure_mode": "The fetch fails: the fiber records the failure and logs it, and the waiter sees the GitCommandError if it is still joined. The cache entry is then success for 15s, and the retryAt check suppresses retries until the cooldown ends. The service scope closes: the fiber is interrupted and the child is force-killed after 1s. A hung remote holds a slot for 5 minutes.",
+      "evidence_checked": true
+    },
+    {
+      "action": "pullCurrentBranch waits for an in-flight status fetch of the same remote before running its own pull",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2664",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1302",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1291"
+      ],
+      "equivalent_path": "Previously pull called statusDetails, which itself ran the 5s-bounded fetch inline. It now uses readStatusDetailsLocal and does not fetch.",
+      "before_after": "Before: the pull could race a status fetch for ref locks, which could make it fail. After: the pull awaits the pending fetch fiber, if any, keyed by common dir and branch remote, then runs `git pull --ff-only`. If that fails with a ref-lock error, it retries once against the configured upstream only, and only when the branch and HEAD have not moved.",
+      "visible_effect": "The pull button can sit in progress for the duration of the status fetch. In the worst case that is a queued 5-minute fetch plus a running 5-minute fetch (line 2670).",
+      "failure_mode": "The wait has no bound of its own, so a hung remote delays the pull by up to about 10 minutes before the 30s pull timeout applies. If the user interrupts the pull, Fiber.await is interrupted and the fetch fiber is not affected.",
+      "evidence_checked": true
+    },
+    {
+      "action": "What bounds the whole wait: the status waiter, the fetch fiber, and the pull's wait",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1314",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1288-1316",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2670",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:925"
+      ],
+      "equivalent_path": "Old path: a single 5s executeGit timeout covered the whole operation.",
+      "before_after": "Status waiter: Fiber.join raced with timeoutOption(5s), so it is bounded at 5s. Fetch fiber: a 5-minute timeout plus 1s forceKillAfter covers execution only. The semaphore wait on `statusFetchProcesses` sits outside that timeout, so the fiber's lifetime from fork is up to queue time plus 5 minutes. Pull wait: the Fiber.await at line 2670 covers the whole fiber lifetime and has no timeout.",
+      "visible_effect": "The status read is bounded at 5s. The pull is not bounded by anything except the fetch fiber's own lifetime.",
+      "failure_mode": "With four hung fetches ahead, a queued fetch plus its own timeout is about 10 minutes, during which a pull blocks.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change moves the status upstream fetch into a deduplicated background fiber with a 5-minute limit, and makes pull wait for it and retry once on a ref-lock failure. The logic is largely sound and well tested. The main problem is that pullCurrentBranch's `Fiber.await` on a pending status fetch has no timeout, and that fiber can sit queued on the 4-slot semaphore before its own 5-minute timeout starts. A pull can therefore block for about 10 minutes on a hung remote. There is also a redundant, shadowed `remote` read in the pull's lock-retry branch. A hung remote now holds a fetch slot for 5 minutes instead of 5 seconds, which is a tradeoff for the maintainers.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 686,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 14,
+      "costUsd": 0.36886130000000006
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "630f50e47644283ebe5b753f696aa7eeff2c3eff"
+  },
+  "execution": {
+    "costUsdEstimate": 0.36886130000000006,
+    "usage": {
+      "input": 12,
+      "output": 10086,
+      "cacheRead": 271653,
+      "cacheWrite": 60203
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 14,
+    "durationMs": 89409,
+    "stop": "complete",
+    "notices": []
+  }
+}

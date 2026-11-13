@@ -1,0 +1,169 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 8ddd9f7 of t3code-fork against its parent (fcbe457)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "fcbe45796aea99e9e2a9ce19dd9409fbd7e720e4",
+      "ref": "fcbe457"
+    },
+    "head": {
+      "sha": "8ddd9f7efcdfb6e32b614595242b5986942d37b0",
+      "ref": "8ddd9f7"
+    },
+    "title": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "description": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "author": "Ishaan Kothari"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "reviewed": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/desktop/src/app/DesktopApp.ts",
+      "line": 154,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "The 5s budget does not cover the mutex wait at the start of stop(), so quit can still hang",
+      "body": "The comment on lines 148-149 says the timeout guarantees the quit path makes progress. It only bounds the close of the active run. `stop()` in apps/desktop/src/backend/DesktopBackendManager.ts first runs `mutex.withPermits(1)` (line 1051), then `spec.onShutdown`, then `Fiber.interrupt(restartFiber)` (line 1081). Only after that does it reach `closeRun(..., options)` (line 1087), which applies the timeout (line 368). None of those earlier steps is inside the timeout.\n\n`start` holds the same mutex (line 692) while it runs `spec.configResolve` (line 711). For a WSL instance that is `resolveWslStartConfig`. It calls `wslEnv.prepareRuntime`, which has a 2-minute `RUNTIME_INSTALL_TIMEOUT` (apps/desktop/src/wsl/DesktopWslEnvironment.ts:25, :865). The dev-only `ensureNodePty` build has a 5-minute `BUILD_TIMEOUT` (:24, :825). I did not confirm that the `prepareRuntime` call at DesktopBackendConfiguration.ts:363 sits inside the `resolveWslStartConfig` path that `configResolve` uses.\n\nIf the user quits while a WSL backend is still resolving its config, `stop({timeout})` waits on the mutex for up to minutes. `markComplete` (DesktopApp.ts:336) is not reached, and `DesktopLifecycle.ts:93` `awaitComplete` blocks the quit. The test hangs the process teardown, not the mutex, so it does not cover this.\n\nConsider putting the whole `stop` body under the timeout when one is passed. Alternatively, wrap `Effect.timeoutOption(Duration.seconds(5))` around `instance.stop(...)` here instead of relying on the inner option.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/desktop/src/app/DesktopApp.ts",
+      "line": 146,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Duplicated 'stop all pool instances with 5s timeout' logic in DesktopUpdates",
+      "body": "`stopAllPoolInstances` is the same `pool.list` plus `Effect.forEach(..., instance.stop({ timeout: Duration.seconds(5) }), { concurrency: \"unbounded\" })` that apps/desktop/src/updates/DesktopUpdates.ts:596-601 already does for the quitAndInstall path. That copy carries a near-identical comment. Two copies of the budget will drift. Reuse the helper there, or move it next to the pool so neither updates nor the backend test has to import `DesktopApp.ts`. The new test in DesktopBackendManager.test.ts imports `../app/DesktopApp.ts` only to reach this export.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/desktop/src/backend/DesktopBackendManager.test.ts",
+      "line": 1568,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test does not cover markComplete or the pre-close mutex/onShutdown steps",
+      "body": "The test registers only `stopAllPoolInstances()` as a finalizer. It does not exercise the `Effect.ensuring(shutdown.markComplete)` wiring in `scopedProgram` (DesktopApp.ts:336), which is what unblocks `awaitComplete` and the quit. It also does not cover a backend whose `start` is holding the mutex, which is the gap in `stop()` described on DesktopApp.ts:154. The bound is proven only for the case where the run scope's finalizer hangs.\n\nThe assertion at line 1568 relies on both `Effect.timeoutOption` sleeps being registered on the TestClock before `adjust`. The test ensures this only indirectly, by waiting for the finalizers to start. That ordering holds because the forked close fiber starts after the parent registers the sleep. It is worth a comment or an explicit sync point.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Quit finalizer stops all pool backends with a 5s bound (stopAllPoolInstances)",
+      "location": "apps/desktop/src/app/DesktopApp.ts:146",
+      "status": "closed",
+      "evidence": [
+        "apps/desktop/src/app/DesktopApp.ts:146-158",
+        "apps/desktop/src/app/DesktopApp.ts:330-337",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:350-371",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:691-692",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1048-1090",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:67-68",
+        "apps/desktop/src/app/DesktopLifecycle.ts:84-94",
+        "apps/desktop/src/updates/DesktopUpdates.ts:596-601"
+      ],
+      "equivalent_path": "apps/desktop/src/updates/DesktopUpdates.ts:596-601 (quitAndInstall path: same forEach with a 5s timeout, unbounded concurrency); before this change the quit finalizer called instance.stop() with no timeout",
+      "before_after": "Before: stop() with no timeout awaited Scope.close(run.scope) and the program fiber without limit. After: closeRun forks the close in parentScope and awaits it with timeoutOption(5s). When it times out it returns false, stop() returns early, cleanup is skipped, and markComplete still fires through Effect.ensuring. Same pattern as DesktopUpdates.",
+      "visible_effect": "Quit with a hung backend completes after at most about 5s for the close step. Electron then calls app.quit after awaitComplete (DesktopLifecycle.ts:93, :131-138).",
+      "failure_mode": "The wait before closeRun is unbounded: the mutex (held by start during configResolve, e.g. WSL prepareRuntime up to 2 min), onShutdown and the restartFiber interrupt. After a timeout the run stays in state.active and the child may be left running, since the process exits before a forceKill. The backend's SIGTERM grace is 2s (DesktopBackendManager.ts:67), the output drain is up to 5s (:68, :617), and run-fiber close awaits drain, so 5s can cut off the drain. That is harmless at quit.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Timeout value Duration.seconds(5) passed to instance.stop across the module boundary",
+      "location": "apps/desktop/src/app/DesktopApp.ts:154",
+      "status": "closed",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:350-371",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1083-1090",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1157",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:67-68",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:486",
+        "apps/desktop/src/wsl/DesktopWslEnvironment.ts:18"
+      ],
+      "equivalent_path": "Callee reads it at apps/desktop/src/backend/DesktopBackendManager.ts:360-368 (closeRun). If it is undefined, closeRun takes the unbounded close path (line 362). Two call sites pass it (DesktopApp.ts:154, DesktopUpdates.ts:599). The other callers, such as the layer finalizer at DesktopBackendManager.ts:1157, do not.",
+      "before_after": "Other timers on the same operation: forceKillAfter 2s (DesktopBackendManager.ts:67, :486), output drain timeout 5s (:68, :617), WSL PROCESS_TERMINATE_GRACE 1s (DesktopWslEnvironment.ts:18). The 5s outer bound leaves room for the 2s kill grace but not for grace plus the 5s drain (7s), so a slow drain can trip the timeout. Only the run-scope close and fiber await are bounded; mutex/onShutdown/restartFiber interrupt precede it unbounded.",
+      "visible_effect": "If the timeout trips, the run is not cleaned up (needsCleanup/removeControlSource/discardSession skipped at lines 1088-1132) because stop returns early. The unbounded layer finalizer stop() (line 1157) later re-closes it.",
+      "failure_mode": "Silent: no log is emitted on timeout. closeRun returns false and stop returns void, so a hung backend at quit leaves no diagnostic.",
+      "evidence_checked": true
+    },
+    {
+      "action": "What bounds the whole quit wait",
+      "location": "apps/desktop/src/app/DesktopApp.ts:152",
+      "status": "open",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:691-711",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1051",
+        "apps/desktop/src/wsl/DesktopWslEnvironment.ts:24-25",
+        "apps/desktop/src/backend/DesktopBackendConfiguration.ts:363"
+      ],
+      "equivalent_path": "Effect.forEach over instances with unbounded concurrency; the whole wait is the max of the per-instance stops, not the sum. Each stop = unbounded (mutex + onShutdown + interrupt restart fiber) + at most 5s (close).",
+      "before_after": "The worst case is the mutex wait, which is not covered by the 5s. start holds the mutex through configResolve, which for WSL can run prepareRuntime (2 min cap) and, in dev, a node-pty build (5 min cap), plus a modal showErrorBox in onPreflightFailed.",
+      "visible_effect": "The user sees the app not quitting for up to minutes if they quit during WSL setup; the markComplete finalizer is not reached until stop returns.",
+      "failure_mode": "The quit is delayed rather than lost; see the finding at DesktopApp.ts:154. The race on the TestClock in the new test is fine.",
+      "open_question": "not found: confirmation that DesktopBackendConfiguration.ts:363 prepareRuntime runs inside resolveWslStartConfig (line 522). It is the only configResolve for the WSL instance (DesktopWslBackend.ts:165).",
+      "candidates": [
+        "apps/desktop/src/backend/DesktopBackendConfiguration.ts",
+        "apps/desktop/src/wsl/DesktopWslBackend.ts"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Extracting the quit-time stop into `stopAllPoolInstances` with a 5s per-instance timeout matches the existing DesktopUpdates pattern and the new test exercises the scope-finalizer path well. The bound is incomplete: `stop()` takes the instance mutex before `closeRun`, outside the timeout, and `start` holds that mutex through `configResolve` (WSL runtime install up to 2 min). Quitting during WSL setup can still hang. The logic also duplicates DesktopUpdates.ts, and the test covers neither the mutex wait nor the `markComplete` wiring.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 107,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 30,
+      "costUsd": 0.5099568
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fcbe45796aea99e9e2a9ce19dd9409fbd7e720e4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5099568,
+    "usage": {
+      "input": 38,
+      "output": 14355,
+      "cacheRead": 935788,
+      "cacheWrite": 68188
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 30,
+    "durationMs": 127759,
+    "stop": "complete",
+    "notices": []
+  }
+}

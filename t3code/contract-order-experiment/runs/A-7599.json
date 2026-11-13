@@ -1,0 +1,137 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 8ddd9f7 of t3code-fork against its parent (fcbe457)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "fcbe45796aea99e9e2a9ce19dd9409fbd7e720e4",
+      "ref": "fcbe457"
+    },
+    "head": {
+      "sha": "8ddd9f7efcdfb6e32b614595242b5986942d37b0",
+      "ref": "8ddd9f7"
+    },
+    "title": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "description": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "author": "Ishaan Kothari"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "reviewed": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/desktop/src/app/DesktopApp.ts",
+      "line": 154,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "The 5s timeout covers only the run-scope close, not the rest of stop()",
+      "body": "`instance.stop({ timeout })` passes the timeout only to `closeRun` (apps/desktop/src/backend/DesktopBackendManager.ts:1087, 366-369). Earlier steps in `stop` have no bound:\n- `mutex.withPermits(1)` at line 1051.\n- `spec.onShutdown` at line 1077.\n- `Fiber.interrupt(restartFiber)` at line 1081.\n\n`start` holds the same mutex across `spec.configResolve`, `fileSystem.exists`, and `spec.onPreflightFailed` (lines 691-800). If one of those hangs, for example a WSL config resolve while the VM boots, the quit finalizer waits on the mutex with no limit. `markComplete` never runs and quit hangs, which is the symptom this PR is meant to remove. The new test only hangs the process-scope finalizer, so it does not cover this. If you want the \"guarantee the quit path makes progress\" claim in the comment at line 148 to hold, wrap each `instance.stop(...)` in `Effect.timeoutOption(...)`. Alternatively, say in that comment that only the process teardown is bounded.\n\nAfter the timeout, each instance's own layer finalizer (`Effect.addFinalizer(() => stop())` at DesktopBackendManager.ts:1157) calls `stop()` again with no timeout. That does not hold up quit, because `markComplete` has already fired, but the second teardown is unbounded.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/desktop/src/backend/DesktopBackendManager.test.ts",
+      "line": 26,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "low",
+      "title": "A new quit-path test lives in the backend manager test file and imports DesktopApp",
+      "body": "The test exercises `DesktopApp.stopAllPoolInstances`, but it sits in `DesktopBackendManager.test.ts` and pulls `../app/DesktopApp.ts` into the backend test module. That is the wrong direction for the dependency. A test next to `DesktopApp` (for example `app/DesktopAppErrors.test.ts` or a new `DesktopApp.test.ts`) would be a better home. This is not a defect: `DesktopAppErrors.test.ts` already imports `DesktopApp.ts` without mocking electron, so the import is safe.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Quit finalizer now stops every pool instance with a 5s timeout through the new `stopAllPoolInstances`, followed by `markComplete`",
+      "location": "apps/desktop/src/app/DesktopApp.ts:146",
+      "status": "closed",
+      "evidence": [
+        "apps/desktop/src/app/DesktopApp.ts:146-158",
+        "apps/desktop/src/app/DesktopApp.ts:330-337",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:350-371",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1048-1090",
+        "apps/desktop/src/updates/DesktopUpdates.ts:596-601",
+        "apps/desktop/src/app/DesktopLifecycle.ts:92-93",
+        "apps/desktop/src/app/DesktopShutdown.ts:26-30"
+      ],
+      "equivalent_path": "The pre-quit-and-install path in DesktopUpdates already calls `instance.stop({ timeout: Duration.seconds(5) })` on every pool instance concurrently, so this change copies it.",
+      "before_after": "Before, the finalizer called `instance.stop()` with no timeout, so a hung backend teardown blocked `markComplete`, and `awaitComplete` in DesktopLifecycle blocked quit. Now `closeRun` forks the scope close into the parent scope and waits at most 5s (DesktopBackendManager.ts:366-369). The finalizer returns, `Effect.ensuring(markComplete)` fires, and quit proceeds. The forked close keeps running in the background.",
+      "visible_effect": "The app quits within about 5s plus the unbounded pre-close steps, even when a backend process teardown hangs.",
+      "failure_mode": "If the timeout elapses, `closeRun` returns false. `stop` then skips state cleanup (removeControlSource, discardSession) at lines 1088-1090, which is fine at quit. Steps before the timeout (mutex acquisition, onShutdown, restart-fiber interrupt) remain unbounded. See the finding at line 154.",
+      "evidence_checked": true
+    },
+    {
+      "action": "What bounds the whole quit wait",
+      "location": "apps/desktop/src/backend/DesktopBackendManager.ts:1051",
+      "status": "open",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:691-800",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1051-1082"
+      ],
+      "before_after": "`Effect.forEach` runs the stops concurrently with a 5s timeout per instance, so the wall-clock bound for the run-scope close is 5s total, not 5s per instance. The mutex acquisition, `onShutdown`, and `Fiber.interrupt(restartFiber)` come before the timeout and have no bound of their own. The mutex is held by `start` during config resolve, an fs exists check, and `onPreflightFailed`.",
+      "visible_effect": "In the worst case, a hang in one of those pre-close steps still blocks quit, with no timeout.",
+      "failure_mode": "Quit hangs because `markComplete` is never reached.",
+      "open_question": "Can `spec.configResolve`, `fileSystem.exists` or `onPreflightFailed` hang long enough in practice (WSL cold start) to hold the mutex during quit?",
+      "candidates": [
+        "apps/desktop/src/wsl/DesktopWslBackend.ts",
+        "apps/desktop/src/backend/DesktopBackendPool.ts"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is small and correct for what it targets. `stopAllPoolInstances` passes a 5s timeout to every pool instance's `stop`, runs them concurrently, and `markComplete` still fires through `Effect.ensuring`. This matches the existing pre-quit-and-install code in DesktopUpdates. The new test is deterministic: it uses queues and `TestClock`, and it runs the helper as a scope finalizer, as the quit path does. I have one consider-level finding: the timeout bounds only the run-scope close inside `stop()`, so a hang while acquiring the mutex or in `onShutdown` would still block quit. The test also sits in the backend manager file while testing a DesktopApp function. I have no risk facts or judgement calls to report.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 107,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 19,
+      "costUsd": 0.3300526
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fcbe45796aea99e9e2a9ce19dd9409fbd7e720e4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3300526,
+    "usage": {
+      "input": 24,
+      "output": 6899,
+      "cacheRead": 431306,
+      "cacheWrite": 54471
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 19,
+    "durationMs": 66110,
+    "stop": "complete",
+    "notices": []
+  }
+}

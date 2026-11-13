@@ -1,0 +1,181 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 3fdcef0 of t3code-fork against its parent (48745ff)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "48745ffba50d8c00e430fc3d06244b4317690227",
+      "ref": "48745ff"
+    },
+    "head": {
+      "sha": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+      "ref": "3fdcef0"
+    },
+    "title": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "description": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "author": "Yash Singh"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2670,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Pull can wait minutes on a background fetch, past its own 30s timeout",
+      "body": "`Fiber.await(pending)` has no limit of its own. The pending fiber's only limit is `STATUS_UPSTREAM_FETCH_TIMEOUT` (5 minutes, line 85) plus `forceKillAfterMs: 1_000`. If the fiber is still queued for one of the 4 global `statusFetchProcesses` permits (line 925), the pull also waits for whatever fetches hold those permits, which can be up to another 5 minutes each, for unrelated repositories. The pull's `timeoutMs: 30_000` (line 2682) only starts counting after this wait. The test at GitVcsDriverCore.test.ts:593-594 confirms the pull is still waiting after 30 seconds. So a user who clicks Pull on a slow or stalled remote sees a spinner for up to about 5 minutes (longer when queued), where before they got a fast lock error. Options: bound the wait (for example `Effect.timeoutOption` around the await, then let the lock fallback handle it), or interrupt the pending fiber if it has not started its subprocess yet.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2693,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Any index.lock failure also triggers the narrowed retry pull and a misleading message",
+      "body": "`isRefLockFailure` (line 588-595) matches any `fatal: Unable to create '<...>.lock':` line. That includes `.git/index.lock`, which `git pull --ff-only` hits during the merge step when another Git process holds the index. In that case the code runs a second full `git pull -- remote mergeRef`, which fails the same way. The error detail then comes from `fetchFailureDetail` (line 580-581) and says another operation 'may be blocking the fetch', even though the fetch succeeded and the checkout update is what failed. One fix is to restrict the retry trigger to ref locks (`refs/...lock` or the `cannot lock ref`/`fetching ref` forms).",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2669,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Waiting for the current status fetch does not stop a new one from starting before the pull",
+      "body": "After `Fiber.await(pending)` returns, `statusFetches` no longer holds the key. Another client's `statusDetails`/`statusDetailsRemote` poll can then start a new background fetch for the same remote (line 1281-1313) before `git pull` is spawned at line 2687. That fetch takes the same upstream ref lock. The narrowed retry only helps when the contended lock is on an unrelated branch, so the pull can still fail with the lock error this change is meant to avoid. The comment at 2668-2669 suggests the wait guarantees exclusivity, but it only covers the fetch that already exists.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2695,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "branch.<name>.remote is read twice",
+      "body": "`readConfigValue(cwd, `branch.${refName}.remote`)` already ran at line 2664 before the first pull. The retry path reads it again inside the `Effect.all`, which spawns one more Git subprocess. The value from line 2664 can be reused.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Status refresh forks a deduplicated background fetch and waits at most 5s for it",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1281",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1559-1572"
+      ],
+      "equivalent_path": "Before: refreshStatusRemoteCacheEntry ran executeGit with a 5s timeout directly inside Cache.get.",
+      "before_after": "Cache.get (line 1565) still deduplicates concurrent callers. The new statusFetches map deduplicates across a status wait that timed out. Success and failure bookkeeping moved into the forked fiber (lines 1294-1301). The retryAt guard (line 1280) replaces cache-level backoff when the waiter returned before the fetch finished.",
+      "visible_effect": "Status reads return within about 5s using the last fetched refs (line 1314-1321). The fetch keeps running for up to 5 minutes.",
+      "failure_mode": "When the waiter has already returned, failure is recorded through recordStatusRemoteRefreshFailure (line 1300) and a warning is logged. Later polls skip until retryAt. The cache entry for that call is a success with a 15s TTL (line 1553).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Timers on the status fetch: 5s wait, 5min lifetime, 1s force kill, 15s TTL, 30s+ failure cooldown",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1291",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:83-85",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:966-970",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671",
+        ".repos/effect-smol/packages/effect/src/process/ChildProcess.ts:269"
+      ],
+      "equivalent_path": "pullCurrentBranch timeout 30_000 (line 2682)",
+      "before_after": "The outer 5s wait (line 1315) does not bound the inner 5min executeGit timeout (line 85/1291). That is intentional: the fetch outlives its waiters. forceKillAfter goes to ChildProcess.make (line 969) as a Duration.Input number, which is milliseconds.",
+      "visible_effect": "The pull awaits the pending fetch with no limit of its own, beyond its 30s timeout.",
+      "failure_mode": "A pull behind a hung fetch waits up to 5min + 1s, plus any time spent waiting for a semaphore permit.",
+      "evidence_checked": true
+    },
+    {
+      "action": "forceKillAfterMs option passed from ExecuteGitInput to ChildProcess.make",
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:53",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:969",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109",
+        ".repos/effect-smol/packages/effect/src/process/ChildProcess.ts:269"
+      ],
+      "equivalent_path": "Other execute callers leave it undefined, so the spawner's default applies.",
+      "before_after": "Only fetchRemoteForStatus (line 1292) and the new test pass it. executeGit forwards it only when it is defined (lines 1107-1109).",
+      "failure_mode": "When undefined, ChildProcess uses its platform default escalation.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Pull retries a ref-lock failure with only the configured upstream refspec",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2693",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:580-596",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2693-2741"
+      ],
+      "equivalent_path": "Line 3944 retries the whole run on isRefLockFailure.",
+      "before_after": "The retry only runs when there is exactly one merge ref and the branch and HEAD have not moved, so the checkout cannot be pulled after another operation moved it.",
+      "visible_effect": "The pull succeeds past an unrelated branch lock. Otherwise the error detail comes from fetchFailureDetail.",
+      "failure_mode": "isRefLockFailure also matches index.lock, which causes a needless second pull and a fetch-oriented message.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change lets status fetches keep running after their 5s wait, deduplicates them, and enforces backoff through retryAt. Pull now waits for an in-flight fetch and retries a ref-lock failure with only the upstream refspec. I found no blocker. The main concern: the pull's wait for the background fetch has no limit of its own. It can run up to about 5 minutes (longer when queued behind the 4-slot semaphore), past the pull's own 30s timeout. Smaller points: the lock retry also fires on index.lock, the wait does not stop a new status fetch from starting before the pull, and branch.<name>.remote is read twice.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 686,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.6542412
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "48745ffba50d8c00e430fc3d06244b4317690227"
+  },
+  "execution": {
+    "costUsdEstimate": 0.6542412,
+    "usage": {
+      "input": 14,
+      "output": 9497,
+      "cacheRead": 283146,
+      "cacheWrite": 50952
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 112261,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 3fdcef0 of t3code-fork against its parent (48745ff)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "48745ffba50d8c00e430fc3d06244b4317690227",
+      "ref": "48745ff"
+    },
+    "head": {
+      "sha": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+      "ref": "3fdcef0"
+    },
+    "title": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "description": "fix(server): recover pulls from unrelated ref locks (#22107)",
+    "author": "Yash Singh"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "apps/server/src/vcs/GitVcsDriverCore.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2670,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Pull waits unbounded on a status fetch, so a hung fetch now blocks a user pull for minutes",
+      "body": "`Fiber.await(pending)` has no timeout. The pull's own 30s `timeoutMs` (line 2682) applies only to `git pull` and starts after this await. The awaited fiber can run for `STATUS_UPSTREAM_FETCH_TIMEOUT` (5 min, line 85). It can also be queued behind `statusFetchProcesses` (4 permits, line 925), and the 5-minute limit only starts once the permit is held (`withPermits` wraps `executeGit`, lines 1288-1302). So a Pull click on a repo whose background fetch is stalled on a dead network shows no progress for about 5 minutes. With the four slots held by stalled fetches it can be about 10 minutes. Before this change the pull ran immediately and failed at 30s. Bound the wait, for example `Fiber.await(pending).pipe(Effect.timeoutOption(...))`, and carry on to the pull, which already has the ref-lock fallback.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2694,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Redundant `readConfigValue` for the remote, and `remote` is shadowed",
+      "body": "`branch.${refName}.remote` is already read at line 2664 as `remote`. The retry block reads it again and destructures a new `remote` that shadows the outer one (line 2694). That is an extra git subprocess, and the value could change between the two reads. Reuse the outer `remote`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "line": 2684,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Pull now runs with LC_ALL=C and a different error detail for every failure",
+      "body": "`executeGitWithStableDiagnostics` forces `LC_ALL=C` on the whole `git pull`, not only on the fetch. Pull failures that were previously always reported as \"git pull failed\" now surface `fetchFailureDetail` text (auth, network, and lock messages). Is forcing the C locale on the whole pull intended, given hooks or credential helpers run by pull may change output? Also, are the new detail strings acceptable for pull errors, since the lock message says \"blocking the fetch\"?",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Status poll fetch is now a detached, deduplicated background fiber with a 5-minute limit; the waiter only waits 5s",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1258",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1049-1066"
+      ],
+      "equivalent_path": "Previous fetchRemoteForStatus ran executeGit with a 5s timeout inside the cache loader and recorded failures in refreshStatusRemoteCacheEntry.",
+      "before_after": "Before, the poll deadline killed the fetch (5s). Now the fetch is forked into the service scope, uninterruptible from the waiter. `Fiber.join` is raced with a 5s `timeoutOption`, and failure and cooldown bookkeeping moved into the fiber and is also checked up front via `retryAt`.",
+      "visible_effect": "Status reads return after at most about 5s using the last fetched refs. The fetch continues and updates refs later.",
+      "failure_mode": "A hung fetch holds one of 4 worker slots for up to 5 min plus 1s force-kill. A cooldown-gated call returns success, so the cache holds it for the 15s success TTL, which is consistent with `retryAt`. Interruption of the service scope interrupts the fibers.",
+      "evidence_checked": true
+    },
+    {
+      "action": "pullCurrentBranch waits for the in-flight status fetch on the same common dir and remote, then retries a lock-failed pull with only the upstream refspec",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2664",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2741",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:85",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1302"
+      ],
+      "equivalent_path": "Previously `statusDetails(cwd)` (which refreshed upstream) ran before and after the pull, and a plain `git pull --ff-only` was run once.",
+      "before_after": "Now `readStatusDetailsLocal` is used (no fetch from pull). It waits on `statusFetches`, runs the pull, and on a ref-lock failure retries once if HEAD and branch are unchanged.",
+      "visible_effect": "Pull avoids colliding with the app's own background fetch and survives unrelated ref locks.",
+      "failure_mode": "The `Fiber.await` is unbounded by the 30s pull timeout, so a stalled fetch delays the pull by up to about 5-10 min (finding at line 2670).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change moves the status fetch into a deduplicated background fiber that survives poll deadlines and client disconnects. It adds a 5-minute safety limit with a 1s force-kill, and pull now waits for that fetch and retries a lock-failed pull against the upstream ref only. The logic is sound, and the tests cover deadline, cancellation, backoff and slot release. One real problem: `pullCurrentBranch` awaits the pending status fetch with no bound. A stalled fetch can now delay a user's pull by about 5 to 10 minutes, where before it failed after 30s. There are also two minor cleanups: a duplicate remote config read that shadows a variable, and an unexpected `LC_ALL=C` and error-detail change for all pull failures.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 686,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 15,
+      "costUsd": 0.38303639999999994
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "48745ffba50d8c00e430fc3d06244b4317690227"
+  },
+  "execution": {
+    "costUsdEstimate": 0.38303639999999994,
+    "usage": {
+      "input": 16,
+      "output": 12370,
+      "cacheRead": 355244,
+      "cacheWrite": 55945
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 15,
+    "durationMs": 98085,
+    "stop": "complete",
+    "notices": []
+  }
+}

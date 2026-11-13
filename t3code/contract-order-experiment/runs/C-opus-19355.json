@@ -1,0 +1,161 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 519d64f of t3code-fork against its parent (adb0420)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+      "ref": "adb0420"
+    },
+    "head": {
+      "sha": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+      "ref": "519d64f"
+    },
+    "title": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "description": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Opus 5.5 via Claude Code 2.1.321",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/EventSink.ts",
+      "line": 546,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Compare-and-set needs decode then encode to give back the exact stored JSON",
+      "body": "`expected` comes from `decodeProviderThreadPayload(row.payload_json)` (ProjectionStore.ts:3924), and here it is re-encoded and compared byte for byte with the stored `payload_json`. That works for rows written by the current code, which stores `encodeProviderThreadPayload(event.payload)` (ProjectionStore.ts:2204, 2233). A row last written by an older schema version may not survive the round trip unchanged: a field with a decoding default, a renamed or reordered key, or a stripped excess key would all break it. For such a row every attempt in `writeReleasedBackgroundWorkEvents` (ProviderSessionManager.ts:846-883) fails. The only trace is the `release-roster-conflict` warning, and the thread keeps showing Waiting, the bug this PR fixes. Is the provider-thread JSON schema guaranteed to round-trip canonically for old rows? If not, comparing against `parse(row)` re-encoded, or against the `pendingBackgroundTasks` field only, would avoid permanent mismatches.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Release reads the background rosters of the released session's provider threads",
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066",
+      "status": "open",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1059-1099",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:821-827",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:967-971"
+      ],
+      "equivalent_path": "Runtime-request cleanup reads its cutoff in removeLiveEntry while holding the request permit",
+      "before_after": "The rosters are read after removeLiveEntry and before the subscribers end and the scope closes, and they are written after closeScopeWithin, together with the session and request records.",
+      "visible_effect": "The provider-thread.updated event is published through commitThenPublish, so the thread drops out of Waiting.",
+      "failure_mode": "A failed read is caught and logged, and an empty list is returned (ProviderSessionManager.ts:821-827). That roster is not cleared and is never retried.",
+      "open_question": "Can the event pump still persist provider-thread.updated for this runtime between the roster read and the scope close? If it can, a task started in that window is never cleared.",
+      "candidates": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "writeIfProviderThreadUnchanged compares the stored payload_json with the re-encoded expected row",
+      "location": "apps/server/src/orchestration-v2/EventSink.ts:536",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2204",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2233",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3924",
+        "apps/server/src/orchestration-v2/EventSink.ts:538-559",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:846-883"
+      ],
+      "equivalent_path": "applyStoredEvents writes payload_json = encodeProviderThreadPayload(event.payload)",
+      "before_after": "The comparison and the append happen inside one commitThenPublish transaction, and events are published only when committed.",
+      "visible_effect": "The roster disappears once the write commits.",
+      "failure_mode": "On a mismatch it returns committed:false. The caller tries 3 times and then logs a warning, so the roster stays.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The backgroundTasksEndWithProcess option is read by the session manager",
+      "location": "packages/provider-core/src/server/ProviderAdapter.ts:575",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:791-796",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9069",
+        "packages/provider-muse/src/server/adapter.ts:2111"
+      ],
+      "visible_effect": "Only Claude and Muse set it. When it is unset (OpenCode and others), release leaves the rosters as they are.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Release records are retried after a failed write and now include the roster clear",
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:910",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:919-952",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:853-855"
+      ],
+      "equivalent_path": "retryReleaseRecords re-runs writeReleaseRecords",
+      "before_after": "Every attempt filters by task id against the row as it is read now, so removing the same tasks again changes nothing.",
+      "failure_mode": "When the comparison keeps failing, the roster helper logs and returns without an error, so a conflict never triggers the outer retry.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I reviewed all 7 files in this part. The change does what the title says. When a Claude or Muse session is released by detach, idle timeout or manual close, its provider threads' background-task rosters are cleared, so the thread stops showing Waiting. Server shutdown is skipped, as is any runtime that doesn't opt in (OpenCode). The write is a compare-and-set against the stored `payload_json`, and it is retried up to 3 times.\n\nThe ordering looks right. The rosters are read after the entry leaves the live map and before the scope closes. Tasks that a replacement session reports later are kept, because they're filtered by task id and guarded by the compare-and-set. The roster write also goes through `retryReleaseRecords` without trouble, because removing the same task ids twice does nothing the second time.\n\nTwo weak spots, both low/medium confidence:\n- **Older rows may never clear.** The compare-and-set only matches if re-encoding the decoded row gives back exactly the stored JSON. For a row written by an older schema version that may never happen, and the roster would then quietly stay put after a warning log.\n- **Tasks started late are missed.** The rosters are read before the scope closes. A task the dying process reports in that gap isn't cleared, and whether the event pump still writes provider-thread updates at that point is unconfirmed.\n\nThe tests cover these paths: detach release, idle release, opting out, a replacement reporting a task mid-release, and a write that lands between the read and the compare-and-set.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 455,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.47154319999999994
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "adb04202b25c1c45255e76be9f03f0b346b9c5c4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.47154319999999994,
+    "usage": {
+      "input": 12,
+      "output": 6140,
+      "cacheRead": 191036,
+      "cacheWrite": 38811
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 80851,
+    "stop": "complete",
+    "notices": []
+  }
+}

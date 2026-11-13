@@ -1,0 +1,162 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 71ecd77 of t3code-fork against its parent (56bffce)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "56bffce4e70b37eb8efe98fb030121e1a1bb1dc3",
+      "ref": "56bffce"
+    },
+    "head": {
+      "sha": "71ecd77fd4a5e80316c6978183dc8fcd4c099ae9",
+      "ref": "71ecd77"
+    },
+    "title": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "description": "fix(ssh): reconnecting keeps the remote server and its agents running (#19432)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/ssh/src/tunnel.test.ts",
+      "packages/ssh/src/tunnel.ts"
+    ],
+    "reviewed": [
+      "packages/ssh/src/tunnel.ts",
+      "packages/ssh/src/tunnel.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/ssh/src/tunnel.ts",
+      "line": 720,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A live-but-unready recorded PID now fails every reconnect and never self-heals",
+      "body": "The old branch killed the recorded server and relaunched when it was not ready. The new one only prints \"Retry the connection\" and `exit 1`. The ownership files (`pid`, `port`, `managed`) are left in place, so the retry hits this same branch.\n\nThat is right for a busy server. It is not right when the recorded PID is alive but is not our server. Example: the remote host rebooted or the server crashed, and the pid file still names a PID that an unrelated process now holds. This is easy in containers, where PIDs are small. Then `server_running` is true (line 711), `wait_ready` never succeeds, and each retry costs the full 60 s (`REMOTE_READY_TIMEOUT_MS`, tunnel.ts:54) before failing.\n\nOnly `disconnectEnvironment` clears the files, through the stop script (tunnel.ts:780-792). Even that script would `kill` the unrelated PID. The error text implies a retry can succeed, which in this case it cannot.\n\nSuggestion: say in the message that a disconnect is needed to reset a server that stays unready. Or verify the PID belongs to the server, for example by comparing the PID with the one in the runtime file or checking the command line, before treating it as ours.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/ssh/src/tunnel.test.ts",
+      "line": 1143,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "Busy-server test depends on real 5 s wall-clock timing",
+      "body": "The test stops the server and lets a background `sleep 5; kill -CONT` resume it. It passes only because 5 s falls between the old 2×2 s probe budget and the new 60 s one. That is fine for proving the regression, but under load the margin on the 'used to replace it' side is thin and the test costs about 5 s of real time. A 1500 ms budget with a shorter resume, as the neighbouring test does, would be cheaper. This is a note, not a defect.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Launch script no longer stops/replaces a managed server whose PID matches the default runtime file; reuses it and rewrites the port file",
+      "location": "packages/ssh/src/tunnel.ts:671",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:657-700",
+        "packages/ssh/src/tunnel.ts:711-728",
+        "packages/ssh/src/tunnel.test.ts:1093-1129"
+      ],
+      "equivalent_path": "The old adoption branch at tunnel.ts:674-694 treated any default-runtime server as external, probed it, and killed the managed PID.",
+      "before_after": "Before: the managed server's own runtime file made the managed server look external and it was killed on reconnect. After: when `managed` and `DEFAULT_RUNTIME_PID == REMOTE_PID`, the port comes from the runtime file and is written to `$PORT_FILE`. The flow then reaches the managed branch at line 711, which checks `server_running`. A zombie goes to the else branch and is relaunched. A changed runner is still killed and replaced.",
+      "visible_effect": "Reconnect returns serverKind 'managed' with the same port. Only a different default-home server causes an 'external' takeover.",
+      "failure_mode": "A stale runtime file naming a recycled PID is not distinguishable from our own server, but the PID check in resolve_default_runtime_port plus the readiness check at 720 limits it. See the finding on line 720.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Whole-wait bound for the readiness probe of an already running managed server",
+      "location": "packages/ssh/src/tunnel.ts:720",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:54-55",
+        "packages/ssh/src/tunnel.ts:66",
+        "packages/ssh/src/tunnel.ts:914-919",
+        "packages/ssh/src/tunnel.ts:1725-1728"
+      ],
+      "equivalent_path": "Previously `T3_REUSE_READY_TIMEOUT_MS` (2 s) then kill and relaunch.",
+      "before_after": "Now `wait_ready` uses `T3_READY_TIMEOUT_MS` (60 s). The worst path is a failed adoption probe (2 s), then this 60 s wait, then `exit 1`. About 62 s plus node startup in the Node runner mode, inside the 90 s SSH timeout (REMOTE_LAUNCH_TIMEOUT_MS). Archive mode has 900 s. The launch path that follows a failed external probe is 2 s + 2 s + 60 s and does not combine with this branch.",
+      "visible_effect": "The user waits up to about a minute at the connect screen, then gets an error that says to retry. The target lock is held for that time.",
+      "failure_mode": "A permanently unresponsive but live PID repeats the minute-long failure on each retry. See the finding.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Manager deletes the stale tunnel entry before closing it, so the scope finalizer skips the remote stop",
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1383-1399",
+        "packages/ssh/src/tunnel.ts:1584-1632",
+        "packages/ssh/src/tunnel.ts:1725-1728",
+        "packages/ssh/src/tunnel.test.ts:499-550"
+      ],
+      "equivalent_path": "disconnectEnvironment (tunnel.ts:1780-1791) also deletes the entry before close, but then runs stopRemoteServer explicitly.",
+      "before_after": "Before: the entry was still in `tunnels`, so `stopRemote` was true in the finalizer (tunnel.ts:1587) and the remote server was stopped on every stale-forward replacement. After: `tunnels.get(key) !== tunnelEntry`, so only the SSH process is killed (tunnel.ts:1591-1598), and `createTunnelEntry` registers the new entry. It runs under `withTargetLock`.",
+      "visible_effect": "A stale local forward is replaced without killing the remote server. The new launch script then reuses it.",
+      "failure_mode": "If `createTunnelEntry` fails after the delete, no entry exists and the remote server stays running. The launch script's next call finds it through its pid file.",
+      "evidence_checked": true
+    },
+    {
+      "action": "server_running treats zombie PIDs as not running",
+      "location": "packages/ssh/src/tunnel.ts:625",
+      "status": "closed",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:615-630",
+        "packages/ssh/src/tunnel.ts:679-681",
+        "packages/ssh/src/tunnel.ts:704-711"
+      ],
+      "equivalent_path": "Plain `kill -0`, still used at tunnel.ts:679, 618 and in the stop script at 780-787.",
+      "before_after": "Managed-branch and adopted-server checks now use `ps -o stat=`. The adopt-kill path (679) and `wait_for_pid_exit` (618) still use `kill -0`, so a zombie costs a 2 s wait there.",
+      "visible_effect": "A crashed unreaped server is relaunched instead of being reported live.",
+      "failure_mode": "Where `ps` is missing or does not support `-p`/`-o stat=` (some BusyBox builds), the output is empty and behaviour falls back to `kill -0`, as the comment says.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change does what the PR says: reconnect no longer stops a live managed server, and a stale SSH forward is replaced without the remote stop. The launch-script logic and the new `ensureTunnelEntry` delete hold up on a read-through. I found one design concern. A live PID that never becomes ready now makes the script exit 1 on every retry (60 s each) and never relaunch. This matters when a recycled PID or hung process holds the recorded PID; only an explicit disconnect resets it. The new tests cover the main orderings, including the zombie and handover cases. I did not run any code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 534,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.3618729
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "56bffce4e70b37eb8efe98fb030121e1a1bb1dc3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3618729,
+    "usage": {
+      "input": 14,
+      "output": 12385,
+      "cacheRead": 285469,
+      "cacheWrite": 52362
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 106855,
+    "stop": "complete",
+    "notices": []
+  }
+}

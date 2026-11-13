@@ -1,0 +1,120 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit c4b0c5b of t3code-fork against its parent (0bc5706)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "0bc570682a8d31b698d3c467caf2025ff7914e51",
+      "ref": "0bc5706"
+    },
+    "head": {
+      "sha": "c4b0c5bd3948516eff60e3a7b72eabf386d8df8f",
+      "ref": "c4b0c5b"
+    },
+    "title": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "description": "fix(desktop): bound backend shutdown wait during quit (#7599)",
+    "author": "Ishaan Kothari"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "reviewed": [
+      "apps/desktop/src/app/DesktopApp.ts",
+      "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/desktop/src/app/DesktopApp.ts",
+      "line": 154,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "5s timeout bounds only the scope close, not the rest of stop(); the comment overclaims",
+      "body": "The comment at lines 148-149 says the timeout guarantees the quit path makes progress \"even if a backend hangs during teardown\". `instance.stop({ timeout })` applies the timeout only inside `closeRun` (`apps/desktop/src/backend/DesktopBackendManager.ts:350-371`, called at line 1087). Three steps in `stop()` run before that and have no limit.\n\n- Line 1051 waits on `mutex.withPermits(1)`. `start` holds the same mutex for its whole body (lines 691-985). That body includes `spec.configResolve`, the filesystem check, and `spec.onPreflightFailed` (lines 784-786). For the primary, `onPreflightFailed` shows a blocking error dialog (`DesktopBackendPool.ts:244-248`).\n- Line 1077 calls `spec.onShutdown()`. It is wrapped in `Effect.ignore`, which swallows errors but does not bound time.\n- Line 1081 does `Fiber.interrupt(restartFiber)`, which waits for the fiber to finish.\n\nSo if the user quits while a `start` is still in the resolve or preflight phase (for example a slow WSL cold boot), the finalizer can wait on the mutex indefinitely. `shutdown.markComplete` then never runs, which is the failure this change is meant to prevent. The exposure is narrower than a hung teardown but real.\n\nIf you want a hard guarantee, wrap the whole per-instance `stop` in `Effect.timeoutOption(Duration.seconds(5))` in `stopAllPoolInstances`. Otherwise soften the comment to say the timeout bounds only process-scope teardown.\n\n`DesktopUpdates.ts:599` uses the same `stop({ timeout })` call and has the same gap. Note also that after a timed-out close, `stop()` returns at line 1088 without clearing `active`. The instance's own `Effect.addFinalizer(() => stop())` at line 1157 later calls `stop()` with no timeout. I did not check whether that second `Scope.close` returns immediately on a scope that is already closing.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/desktop/src/backend/DesktopBackendManager.test.ts",
+      "line": 1509,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test covers only the hung-process-teardown case, and relies on timer-registration ordering",
+      "body": "The test proves the 5s timeout bounds a hung process-scope finalizer. It does not cover the other unbounded waits in `stop()`: a `start` holding the mutex, or a hung `onShutdown`. Those are the cases that could still stall the quit finalizer (see the finding on `DesktopApp.ts:154`). It also never checks that `shutdown.markComplete` runs, because it tests `stopAllPoolInstances` in isolation and not the `Effect.ensuring` wiring at `DesktopApp.ts:336`.\n\nSeparately, the test calls `TestClock.adjust(5s)` as soon as both teardown-started signals arrive. It assumes each instance's `timeoutOption` sleep is registered before the `adjust`. That is likely true, because the registering fiber continues synchronously after `forkIn` while the child is scheduled. It is not asserted anywhere. If the order flips, the test hangs instead of failing cleanly.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Quit finalizer now stops all pool backends with a 5s per-instance timeout (extracted to stopAllPoolInstances) and still marks shutdown complete via Effect.ensuring",
+      "location": "apps/desktop/src/app/DesktopApp.ts:146",
+      "status": "closed",
+      "evidence": [
+        "apps/desktop/src/app/DesktopApp.ts:146-158",
+        "apps/desktop/src/app/DesktopApp.ts:330-337",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:350-371",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1048-1090",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:691-693",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:784-786",
+        "apps/desktop/src/backend/DesktopBackendPool.ts:244-248",
+        "apps/desktop/src/updates/DesktopUpdates.ts:596-601"
+      ],
+      "equivalent_path": "apps/desktop/src/updates/DesktopUpdates.ts:596-601 (quitAndInstall path) already used instance.stop({ timeout: 5s }) concurrently across pool.list; the old quit finalizer called instance.stop() with no timeout.",
+      "before_after": "Before: stop() unbounded, so a hung backend teardown blocked shutdown.markComplete. After: closeRun forks Scope.close(run.scope) into parentScope and awaits it with timeoutOption(5s) (DesktopBackendManager.ts:366-369). On timeout stop() returns early and skips the cleanup of active/telemetry (lines 1088-1090). The close continues in the background. The 2s SIGTERM grace (line 67) is under the 5s budget.",
+      "visible_effect": "App quit completes within about 5s of the process-scope close even when a backend does not exit. A backend that outlives the budget may be hard-killed by the OS at app exit.",
+      "failure_mode": "Steps before closeRun in stop() (mutex at 1051, onShutdown at 1077, restartFiber interrupt at 1081) are outside the timeout. A quit during an in-flight start (which holds the mutex across preflight and a modal dialog) could still block markComplete indefinitely.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Small, correct refactor: it extracts the quit finalizer into an exported `stopAllPoolInstances` and gives each backend stop a 5s budget, matching the existing `DesktopUpdates` quit path. The new test exercises the timeout through a scope finalizer. One caveat is that the timeout covers only the process-scope close inside `stop()`. The mutex wait, `onShutdown` and the restart-fiber interrupt come before it, so the \\\"guarantee the quit makes progress\\\" comment overclaims. The test also leaves those paths and the `markComplete` wiring untested.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 107,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.30189940000000004
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "0bc570682a8d31b698d3c467caf2025ff7914e51"
+  },
+  "execution": {
+    "costUsdEstimate": 0.30189940000000004,
+    "usage": {
+      "input": 24,
+      "output": 8891,
+      "cacheRead": 388254,
+      "cacheWrite": 43529
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 77002,
+    "stop": "complete",
+    "notices": []
+  }
+}

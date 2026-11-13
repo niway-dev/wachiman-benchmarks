@@ -1,0 +1,150 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 519d64f of t3code-fork against its parent (adb0420)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+      "ref": "adb0420"
+    },
+    "head": {
+      "sha": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+      "ref": "519d64f"
+    },
+    "title": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "description": "fix(server): settled and idle-released threads no longer stay Waiting (#19355)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/server/src/orchestration-v2/EventSink.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "packages/provider-core/src/server/ProviderAdapter.ts",
+      "packages/provider-muse/src/server/adapter.ts",
+      "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/EventSink.ts",
+      "line": 546,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Whole-row JSON string compare can conflict permanently if the stored payload doesn't round-trip",
+      "body": "`writeIfProviderThreadUnchanged` compares the stored `payload_json` text with `encodeProviderThreadPayload(expected)`, where `expected` was decoded from that row. `OrchestrationV2ProviderThread` (packages/contracts/src/orchestrationV2.ts:978-990) fills decoding defaults for `pendingBackgroundTasks`, `contextUsage`, `nativeMetadata` and `goal`. A row written without those keys (written before the fields existed, or by a writer that omitted them) decodes with the defaults and re-encodes to a different string than the stored one. The compare then fails on every attempt, so `writeReleasedBackgroundWorkEvents` (ProviderSessionManager.ts:846-883) exhausts its 3 attempts, logs a warning, and leaves the roster in place, which is the Waiting state this change is meant to fix. A row that has a non-empty roster was most likely written recently by the live session, so this is unlikely in practice. Still, the CAS depends on decode→encode being byte-stable. Consider comparing a canonical decoded form, or add a test that seeds a row with the optional keys omitted.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "On session release (detach-triggered, idle, close), clear pending background tasks from the released session's provider threads",
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:785-828",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-886",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-953",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2454-2533",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270"
+      ],
+      "equivalent_path": "writeReleasedSessionEvents / writeReleasedRuntimeRequestEvents (same release-records path) settle the session status and runtime requests the same way after the scope closes",
+      "before_after": "Before: the roster stayed after the process died, so the thread stayed Waiting. After: the roster is read right after the live entry is removed (before scope close), then removed from the stored rosters inside writeReleaseRecords, with retry via retryReleaseRecords. Clearing is idempotent: a second run finds no matching task ids and returns.",
+      "visible_effect": "Settled and idle-released Claude and Muse threads stop showing Waiting. Other runtimes are untouched because the flag is opt-in.",
+      "failure_mode": "A read failure is caught, logged, and treated as no tasks. A roster write failure fails writeReleaseRecords and triggers the existing retry loop. CAS conflicts retry 3 times, then log and give up, leaving the roster. Server shutdown deliberately skips this because startup recovery handles it.",
+      "evidence_checked": true
+    },
+    {
+      "action": "New EventSink.writeIfProviderThreadUnchanged compare-and-set on the stored provider-thread payload_json",
+      "location": "apps/server/src/orchestration-v2/EventSink.ts:529",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/EventSink.ts:536-559",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2233",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3921-3924",
+        "packages/contracts/src/orchestrationV2.ts:957-993"
+      ],
+      "equivalent_path": "writeIfProviderThreadOwner (EventSink.ts:473-527) and writeIfRunCurrent (EventSink.ts:413-471): same commitThenPublish shape with a guard SELECT inside the transaction",
+      "before_after": "Siblings compare structured columns (activeAttemptId, lastRunOrdinal, status). The new one compares the full payload_json string written by the same encoder in ProjectionStore.ts:2204. Like the siblings, it normalizes, appends, applies stored events, and publishes only when committed. It skips effect-outbox enqueue and the guardUserInputCancellations option, which is fine for a provider-thread event.",
+      "visible_effect": "A concurrent replacement-session update is never overwritten by the cleanup. The cleanup re-reads and retries.",
+      "failure_mode": "If the stored row does not round-trip through decode→encode, the compare always fails and the cleanup gives up after 3 attempts with a warning (see finding). A missing row is also reported as not committed.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The roster of threads to clear is derived from attachedThreadIds plus the detached thread",
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:800",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2454-2470",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270",
+        "packages/provider-muse/src/server/adapter.ts:99",
+        "packages/provider-core/src/server/ProviderAdapter.ts:568-575"
+      ],
+      "equivalent_path": "mcpCredentialIdByThread revocation in releaseEntry also covers threads that detached earlier without re-attaching, which attachedThreadIds does not",
+      "before_after": "Threads that detached earlier from a still-live multi-thread session are no longer in attachedThreadIds, so their tasks would not be cleared on the later release. Only Claude and Muse opt in, and both declare supportsMultipleProviderThreadsPerSession: false, so there is at most one attached thread and this gap cannot occur today.",
+      "visible_effect": "None today.",
+      "failure_mode": "A future multi-thread runtime that sets backgroundTasksEndWithProcess would leave detached threads' rosters behind. The flag's doc comment doesn't mention this limit.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is sound. On release of a Claude or Muse session (detach, idle, close; not server shutdown), it reads the session's background-task rosters before a replacement can open, then removes only those task ids via a compare-and-set write with 3 retries. Both opted-in runtimes are single-thread, so using attachedThreadIds plus the detached thread covers them. The one point worth a look is that the compare is a byte-for-byte match of decoded-then-re-encoded JSON, which would conflict permanently on a row that doesn't round-trip; I rate that unlikely and low-confidence. The new tests cover detach, idle, opt-out, replacement and race cases. I found no other defects.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 455,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 18,
+      "costUsd": 0.4444081
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "adb04202b25c1c45255e76be9f03f0b346b9c5c4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4444081,
+    "usage": {
+      "input": 26,
+      "output": 10169,
+      "cacheRead": 681661,
+      "cacheWrite": 68625
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 18,
+    "durationMs": 98370,
+    "stop": "complete",
+    "notices": []
+  }
+}
