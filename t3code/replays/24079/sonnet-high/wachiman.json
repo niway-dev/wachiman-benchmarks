@@ -1,0 +1,139 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit a561750 of t3bench-24079 against its parent (cf5db8a)",
+    "repository": {
+      "name": "t3bench-24079"
+    },
+    "base": {
+      "sha": "cf5db8a1befa5c9488c93bf1d24407494db64578",
+      "ref": "cf5db8a"
+    },
+    "head": {
+      "sha": "a56175023d8c897480ae170b36129e99593cee3a",
+      "ref": "replay/pr-24079/head"
+    },
+    "title": "replay head for pingdotgg/t3code#24079",
+    "description": "replay head for pingdotgg/t3code#24079",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/relay/AgentAwarenessRelay.test.ts",
+      "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "packages/client-runtime/src/state/models.ts",
+      "packages/client-runtime/src/state/threadShell.ts",
+      "packages/shared/src/agentAwareness.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "packages/client-runtime/src/state/models.ts",
+      "packages/client-runtime/src/state/threadShell.ts",
+      "packages/shared/src/agentAwareness.ts",
+      "apps/server/src/relay/AgentAwarenessRelay.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "line": 546,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Subagent request map is not updated while publishing is disabled or the relay is unlinked, so a parent can later publish a stale \"waiting\" state",
+      "body": "`trackSubagentRequest` runs only after `publishThreadUnsafe` has passed the `publishAgentActivity` check (466-474) and the `relayConfig` check (475-483). Both of those return early. While publishing is off or the relay is unlinked, a child's request can clear, or the child can be archived or deleted, and `subagentRequests` never hears about it. The entry keeps its old `approval` or `user_input` value. After publishing is re-enabled, `resetPublishedConnection` clears `publishedStateByThreadRef`, and the parent is republished from `pendingSubagentRequestFor(subagentRequests, threadId)` at line 568. That read still sees the stale entry, so the parent shows \"Approval needed\" or \"Waiting for input\" on the relay. Only a later event on that same child can fix it. A child whose run has ended may never emit another event, and the early return at 548-555 means `publishActiveThreadsUnsafe` does not clear the entry either. Nothing logs or surfaces this, and the user sees a wrong state. Fix: call `trackSubagentRequest` right after `threads.getThreadShell` and before the enabled and config gates. This needs the shell read to move up with it. Parent enqueues triggered while disabled return early in the same way, so nothing extra is published.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/relay/AgentAwarenessRelay.test.ts",
+      "line": 327,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Relay test covers only one direct child going waiting and then clearing",
+      "body": "The new test covers a direct child of the top-level thread, with the request appearing and then clearing. The code adds other branches that nothing exercises: a nested subagent resolved through `findTopLevelThreadId`, two children where `approval` has to win over `user_input` in `pendingSubagentRequestFor`, a child that is archived or deleted while waiting, and a cycle or missing parent in the lineage. The approval-over-input choice and the top-level resolution are the logic most likely to regress. A focused case or two on those would be worth adding.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Child subagent publish now republishes its top-level thread with the child's pending request folded into the parent's phase",
+      "location": "apps/server/src/relay/AgentAwarenessRelay.ts:546",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/relay/AgentAwarenessRelay.ts:465-483",
+        "apps/server/src/relay/AgentAwarenessRelay.ts:545-569",
+        "apps/server/src/relay/AgentAwarenessRelay.ts:660-695",
+        "apps/server/src/relay/AgentAwarenessRelay.ts:697-718",
+        "packages/shared/src/agentAwareness.ts:137-160",
+        "packages/client-runtime/src/state/threadShell.ts:35-44"
+      ],
+      "equivalent_path": "The client-side path in packages/client-runtime/src/state/threadShell.ts (pendingSubagentRequestsByThread) computes the same parent-level request from the shell list. The relay now shares its classification through subagentPendingRequest.",
+      "before_after": "Before: subagent publishes returned early (548-555) or never touched the parent, and the parent phase came only from its own run and request. After: the child's shell is tracked in subagentRequests, the top-level parent is enqueued on the worker, and projectThreadAwarenessV2 ranks the child's request above the parent's run status (agentAwareness.ts:156-159), but below the parent's own pending request.",
+      "visible_effect": "The parent's relay row and notification card show \"Approval needed\" or \"Waiting for input\" while a live delegated subagent is blocked, including when the parent's own turn is completed. The row returns to the parent's normal phase when the child's request clears.",
+      "failure_mode": "If getThreadShell fails in findTopLevelThreadId, the child's publish fails and goes to schedulePublishRetry, and the map entry is not set, so the retry redoes the tracking. While publishing is disabled or unlinked, tracking is skipped entirely and stale entries can survive (reported as a finding at line 546).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Startup catch-up includes any thread whose subagentPendingRequest is non-null, whatever its project or state",
+      "location": "apps/server/src/relay/AgentAwarenessRelay.ts:368",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/relay/AgentAwarenessRelay.ts:358-386",
+        "apps/server/src/relay/AgentAwarenessRelay.ts:678-695",
+        "apps/server/src/relay/AgentAwarenessRelay.test.ts:163-171"
+      ],
+      "equivalent_path": "The existing startup filter in resolveAgentAwarenessRelayActiveThreadIds, which projects each thread through projectThreadAwarenessV2. A subagent always projects null there, so it was never selected before.",
+      "before_after": "Before: waiting subagents were dropped from the startup snapshot, so a parent with a pending child request was not republished after restart. After: the child id is included, its publish tracks the request and enqueues the parent. The parent is published only if its own projection is non-terminal or its child request holds it in a waiting phase.",
+      "visible_effect": "After a server restart, the parent card regains its waiting state for a live subagent request.",
+      "failure_mode": "None found: an archived child is mapped to null by trackSubagentRequest, so it does not hold the parent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is correct for the common paths: it moves the subagent-request classification into shared code, tracks child requests in the relay, republishes the top-level parent, and the new tests match the code. One real defect: `trackSubagentRequest` runs only after the publishing-enabled and relay-config gates, so while publishing is disabled or the relay is unlinked the in-memory map can go stale. After the relay is re-enabled, the parent can then publish a wrong \\\"waiting\\\" state with nothing to correct it. I also suggest a few extra test cases for nested subagents, mixed requests and archived children. I did not run any code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 234,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.2888904
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cf5db8a1befa5c9488c93bf1d24407494db64578"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2888904,
+    "usage": {
+      "input": 10,
+      "output": 7635,
+      "cacheRead": 165204,
+      "cacheWrite": 49000
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 72216,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,267 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit a908368 of t3bench-33758 against its parent (ddcbb24)",
+    "repository": {
+      "name": "t3bench-33758"
+    },
+    "base": {
+      "sha": "ddcbb2450d816cf3b72a0563b1b2d5199cdb5a1f",
+      "ref": "ddcbb24"
+    },
+    "head": {
+      "sha": "a90836868c1eeb385ebc745eaf7abf7e6d68b597",
+      "ref": "replay/pr-33758/head"
+    },
+    "title": "replay head for pingdotgg/t3code#33758",
+    "description": "replay head for pingdotgg/t3code#33758",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.12.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts",
+      "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
+      "docs/user/composer.md",
+      "packages/provider-opencode/src/server/v2/adapter.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
+      "packages/provider-opencode/src/server/v2/adapter.ts",
+      "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts",
+      "docs/user/composer.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 2642,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Goal reads in reconcile run under the 15s reconcile budget and the lock, before any real reconcile work",
+      "body": "`reconnect` runs `lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT))` (line 2752, 15s). The new loop at 2642-2649 reads the goal of every loaded thread one after another, each with its own `INVENTORY_TIMEOUT` (5s). Nothing bounds the loop as a whole except the outer 15s. With three or more loaded sessions on a server that is slow or hung right after a restart, the loop alone uses the whole budget. The reconcile then times out before it reaches the part that ends lost executions, and `reconnect` retries. After `RECONNECT_ATTEMPTS` failures the session is failed through `failAll`. The event loop is also blocked on the same lock for that time. `threads` includes every registered session, not just the ones with an active turn. The loop also runs before the early return at 2658, so an idle adapter pays one RPC per thread on every reconnect.\n\nFix: read goals only for threads that need it (`state.active !== undefined`, which is what `endExecution` uses). Run the reads concurrently, or after the turn-ending work, with one overall bound.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 3457,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "`/goal` show is not gated on OpenCode >= 2.2.5, unlike the other goal call sites",
+      "body": "`resumeThread` (3621) and `reconcile` (2642) only call `opencode.goal` when `connection.version >= 2.2.5`. The `show` branch in `submit` calls `readGoal` unconditionally. The V2 adapter supports older OpenCode 2.x: the minimum is 1.14.19 in OpenCode status checks and the testkit default is 2.0.18. On those versions `rpc.call` for `opencode.goal` is not expected to exist, so a bare `/goal` fails the turn through the `tapError` at 3776 with a raw provider error.\n\nThe Orchestrator and `ProviderTurnStartService` also treat `opencode` as a native goal driver for every version (Orchestrator.ts:1174, ProviderTurnStartService.ts:845-848). On an older server, `/goal <text>` is sent as plain text, because `goal` is not in `command.list`. It still stops the active run, as a goal command does (Orchestrator.ts:6114-6141). Its handoff history is also deferred to a later turn, as a goal turn's is. The docs say 2.2.5+, but the code does not enforce it.\n\nFix: check the version in `submit` for the show branch. Ideally also make `goalDriverFor` and the turn-start check depend on whether the instance supports goals.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 2469,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A goal payload that fails to decode is dropped silently while turn completion depends on the last decoded goal",
+      "body": "`rpc.opencode.goal.changed` events that fail `decodeGoal` return with no log (2469-2470). `NativeGoal` accepts only `active|paused|complete` and requires `objective` to be non-empty. Whether a turn is held open depends on `state.providerThread.goal?.status === \"active\"` (2332, 2343). If OpenCode sends a terminal status this schema does not list, or a shape change, the last decoded `active` stays. The turn is then held after its next successful execution with nothing to release it, until the user presses Stop. There is no log either. Log the decode failure at least, as `Effect.ignore({ log: true })` does at the other call sites. Consider treating an unreadable goal as not active.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 3459,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "`/goal` show updates the thread's goal outside the adapter lock",
+      "body": "`readGoal(state)` in the show branch (3459) runs without `lock.withPermit`. The `resumeThread` call site wraps it in the lock (3623), and `handleEvent` runs under the lock (2765). `updateGoal` rebuilds `state.providerThread` from a spread and then yields on `DateTime.now` before assigning. An event handled in that window, such as a model update at 2477-2479, can be overwritten. Wrap it like the resume path. The `finishTurn` call two lines later already takes the lock.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 3480,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "How does an OpenCode goal turn end for `/goal resume` and for Stop?",
+      "body": "After `session.command`, `pause` and `clear` finish the turn at once. `set` and `resume` rely on an execution starting and the goal later leaving `active`. If `/goal resume` is sent with no paused goal, or on a completed goal, and OpenCode starts no execution and emits no `goal.changed`, the turn never ends. Is that case handled by OpenCode? The tests cover show, pause, clear and set, but not resume.\n\nThe docs (composer.md:314-315) also say 'Stopping their goal pauses it'. The adapter does nothing to the goal on interrupt (`interruptTurn`, 3897-3938). It relies on OpenCode pausing the goal and emitting `goal.changed`. If it does not, `goal.status` stays `active` locally. Every later turn on that thread would then be held after its first successful execution (2332). Can you confirm both behaviours against OpenCode 2.2.5?",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "line": 3621,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "The literal \"2.2.5\" is repeated at two call sites",
+      "body": "The goal version gate is written inline at 2642 and 3621, and would have to be repeated at 3457 once that call is gated. Name it once, for example `GOAL_MIN_VERSION` next to the other timeouts and constants at ~550, with a helper such as `supportsGoal()`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts",
+      "line": 5047,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No test for the reconcile goal read, `/goal resume`, the pre-2.2.5 path, or an undecodable goal event",
+      "body": "The new tests cover resume-time reads, the held turn for set, and show/pause/clear. They do not cover the 2.2.5 gate on the negative side (a version below 2.2.5 must not issue `rpc.call`). The `show` case runs against the default 2.0.18 and asserts that `rpc.call` is sent, so it locks in the ungated behaviour. They also do not cover the reconcile loop at adapter.ts:2642, which holds the lock and uses the shared 15s budget. They do not cover `/goal resume`, or `goal.changed` with a payload that fails to decode. Extend the existing table rows for these rather than adding new `it` blocks.",
+      "anchor": "diff"
+    },
+    {
+      "path": "docs/user/composer.md",
+      "line": 314,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "low",
+      "title": "Goals section: 'their goal' is ambiguous, and the OpenCode Stop-pauses claim has no support in the code",
+      "body": "'Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping their goal pauses it.' is hard to parse. It reads as if Stop pauses a goal for both providers, but only Codex's behaviour is implemented here (see the question at adapter.ts:3480). Line 307 is also a single unwrapped line, unlike the surrounding prose. Consider separate bullets for Codex and OpenCode, and state the OpenCode Stop behaviour only once it is confirmed.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "On session resume, read the OpenCode goal and mirror it into the provider thread",
+      "location": "packages/provider-opencode/src/server/v2/adapter.ts:3621",
+      "status": "closed",
+      "evidence": [
+        "packages/provider-opencode/src/server/v2/adapter.ts:3618-3625",
+        "packages/provider-opencode/src/server/v2/adapter.ts:881-889",
+        "packages/provider-opencode/src/server/v2/adapter.ts:554"
+      ],
+      "equivalent_path": "Codex and Claude carry the goal on provider_thread.updated. Within this adapter, the resume path is the same one that calls `stopLeftoverRequests`.",
+      "before_after": "Before: the goal was never populated for OpenCode. After: for a thread not already loaded, on version >= 2.2.5, `lock.withPermit(readGoal)` runs with a 5s timeout, and the error is ignored and logged. It runs before `writeRules` and `session.move`.",
+      "visible_effect": "The Goal chip and progress line show an existing goal after a restart or reload.",
+      "failure_mode": "A timeout or RPC error is logged and the goal stays unset, so the UI shows no goal until the next `goal.changed` event. The call is bounded by a single 5s timeout, and the lock is taken before the timeout starts.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Read every loaded thread's goal in `reconcile` after an event-stream reconnect",
+      "location": "packages/provider-opencode/src/server/v2/adapter.ts:2642",
+      "status": "closed",
+      "evidence": [
+        "packages/provider-opencode/src/server/v2/adapter.ts:2642-2649",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2752",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2755",
+        "packages/provider-opencode/src/server/v2/adapter.ts:550-554",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2658-2666"
+      ],
+      "equivalent_path": "The existing reconcile steps are `backfill` and `endExecution` for running turns. They run under the same lock and the same 15s timeout.",
+      "before_after": "Before: reconcile returned early when nothing was running. After: one sequential RPC per registered thread (5s timeout each) runs first, before the early return.",
+      "visible_effect": "The goal is refreshed after a reconnect. In the bad case the reconnect fails.",
+      "failure_mode": "The whole operation is bounded only by the outer `RECONCILE_TIMEOUT` (15s), not by the sum of the per-call 5s timeouts. With 3 or more threads and a hung server, the loop alone times out the reconcile. `reconnect` then retries, and after the retries the session is failed. The lock is held throughout, so events stop being processed.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Hold a completed execution open while the goal is active, until `goal.changed` leaves active",
+      "location": "packages/provider-opencode/src/server/v2/adapter.ts:2330",
+      "status": "open",
+      "evidence": [
+        "packages/provider-opencode/src/server/v2/adapter.ts:2325-2345",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2468-2474",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2201-2203",
+        "packages/provider-opencode/src/server/v2/adapter.ts:3924-3928"
+      ],
+      "equivalent_path": "The existing steer hold uses the same `turn.heldEnd` and `endIfSettled`. A new `session.execution.started` clears `heldEnd` (2202, 2423). A steer settling calls `endIfSettled` (3839, 3854, 3877).",
+      "before_after": "Before: only `turn.steers.size > 0` held the end. After: `state.providerThread.goal?.status === \"active\"` also holds it. `rpc.opencode.goal.changed` now calls `endIfSettled` (2472). Stop produces `interrupted` and is never held. Reconcile also routes through `endExecution`.",
+      "visible_effect": "The run stays running across the goal's executions and completes once the goal is paused or complete.",
+      "failure_mode": "The turn is held for as long as the mirrored status says `active`. Nothing times it out: a lost, undecodable (2469-2470) or never-sent goal event, or a status OpenCode does not pause on Stop, leaves it held until the user presses Stop. The state is the in-memory `state.providerThread.goal`, which is set by resume, reconcile and events.",
+      "open_question": "Does OpenCode 2.2.5 always emit `goal.changed` out of `active` (including on Stop, max rounds, and unknown statuses), and does an `active` goal always start a continuation execution?",
+      "candidates": [
+        "the OpenCode server's goal module (not in this repository)"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Handle bare `/goal` (show) in `submit`: read the goal over RPC and complete the turn",
+      "location": "packages/provider-opencode/src/server/v2/adapter.ts:3457",
+      "status": "closed",
+      "evidence": [
+        "packages/provider-opencode/src/server/v2/adapter.ts:3456-3461",
+        "packages/provider-opencode/src/server/v2/adapter.ts:3776-3786",
+        "packages/provider-opencode/src/server/v2/adapter.ts:3621-3625",
+        "packages/provider-opencode/src/server/OpenCodeRuntime.ts:44"
+      ],
+      "equivalent_path": "The resume path calls `readGoal` only when the version is >= 2.2.5 and under the lock, ignoring errors. The show branch does neither.",
+      "before_after": "Before: `/goal` was sent to OpenCode as a command or prompt. After: `sending()` is checked, `readGoal` is called, then `finishTurn(completed)` under the lock. A `readGoal` failure goes through the `tapError` at 3776 and fails the turn.",
+      "visible_effect": "The goal chip refreshes and the turn completes without starting a model execution.",
+      "failure_mode": "On OpenCode < 2.2.5 the RPC is unsupported, so the turn fails with a provider error. A transport timeout has no 5s bound here, and the turn waits on the RPC client's own limit.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Finish the turn immediately after `/goal pause` and `/goal clear` are sent as `session.command`",
+      "location": "packages/provider-opencode/src/server/v2/adapter.ts:3479",
+      "status": "closed",
+      "evidence": [
+        "packages/provider-opencode/src/server/v2/adapter.ts:3476-3484",
+        "packages/provider-opencode/src/server/v2/adapter.ts:2468-2474",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6106-6143"
+      ],
+      "equivalent_path": "The Orchestrator stops a live run first when the goal command ends active goal work (Orchestrator.ts:6114-6141), so the pause or clear turn is queued behind an interrupted run. Codex has its own `runGoalCommand`.",
+      "before_after": "Before: the command's return ended the submit, and the turn waited for an execution end. After: pause and clear call `finishTurn(completed)` under the lock. `set` and `resume` still wait for executions.",
+      "visible_effect": "Pause and clear complete promptly, with the goal updated by the `goal.changed` event.",
+      "failure_mode": "If `goal.changed` arrives after the command reply, the turn is already complete and the event is applied to a thread with no active turn. The state update still happens through `updateGoal`, since `route` only calls `endIfSettled` when active. `session.command` failure goes through the normal failed-turn path.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Treat `opencode` as a native `/goal` driver in the Orchestrator and the turn-start service",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:1174",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:1166-1195",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6106-6143",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService.ts:844-849",
+        "packages/provider-opencode/src/server/OpenCodeRuntime.ts:44"
+      ],
+      "equivalent_path": "This is the same predicate as for `codex` and `claudeAgent`. It is also checked at ProviderTurnStartService.ts:845-848.",
+      "before_after": "Before: `/goal` was ordinary text for OpenCode. After: it stops active runs, queues, and is sent verbatim with handoff history deferred, for any OpenCode version, because the check is on driver only.",
+      "visible_effect": "Goal commands on OpenCode < 2.2.5 get goal-command queueing and handoff deferral, but run as a plain prompt or an RPC failure.",
+      "failure_mode": "`ensureGoalCommandSupported` still rejects only Claude's pause/resume. OpenCode `pause` and `resume` pass on all versions.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change adds native `/goal` support for OpenCode: it reads the goal over RPC, mirrors `goal.changed` events, and holds a turn open while the goal is active. The tests exercise the happy paths. Two defects stand out. The goal reads added to `reconcile` are sequential and sit under the lock and the 15s reconcile budget, so a slow server can fail reconnects. A bare `/goal` skips the 2.2.5 version gate that the resume and reconcile paths apply, and the Orchestrator and turn-start service treat OpenCode as a goal driver for every version. Smaller points: an undecodable goal event is dropped without a log while turn completion depends on the last decoded state, `/goal show` updates the thread outside the lock, whether Stop and `/goal resume` end a turn is unconfirmed, the version literal is duplicated, and the docs wording is ambiguous.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 255,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 29,
+      "costUsd": 0.5261042
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "ddcbb2450d816cf3b72a0563b1b2d5199cdb5a1f"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5261042,
+    "usage": {
+      "input": 26,
+      "output": 18843,
+      "cacheRead": 635782,
+      "cacheWrite": 68511
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 29,
+    "durationMs": 179601,
+    "stop": "complete",
+    "notices": []
+  }
+}
