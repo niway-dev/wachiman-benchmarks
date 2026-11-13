@@ -7,15 +7,19 @@ not only the same file; "partial" and "noted, not reported" are defined in
 for a run paid by the owner's Claude subscription, not a bill. Every count comes from the reports
 linked in the last column; nothing here was re-judged.
 
-Engines, both "1.12.0":
+Engines:
 
 - **E1** = [wachiman `c3e46d5`](https://github.com/niway-dev/wachiman/commit/c3e46d598ca5842b0a6abb7230dd2188f6eee87d) (origin/main on 2026-11-12), with a local, uncommitted change: `TIMEOUT_MS` in `src/connectors/local-git.ts` raised from 60 s to 300 s. Arm C and C-Opus add a second local patch, [`engine-arm-c.diff`](contract-order-experiment/engine-arm-c.diff).
 - **E2** = [wachiman `fd99401`](https://github.com/niway-dev/wachiman/commit/fd9940100be9287807480cec93ccba07b887131b) (main on 2026-11-11; the reports record no local change), with the 60 s snapshot timeout. The timeout later got a fix: [wachiman PR 195](https://github.com/niway-dev/wachiman/pull/195), merged as [`7b1b6c9`](https://github.com/niway-dev/wachiman/commit/7b1b6c9e5007496b263823b163e48be32553c34d).
+
+- **E3** = [wachiman `aef4422`](https://github.com/niway-dev/wachiman/commit/aef442293e0c5c56366078dd236c001f3c2b4e68) (1.14.0, origin/main on 2026-11-13), with the same local `TIMEOUT_MS` change as E1.
 
 ## Runs
 
 | Date | Engine | Reviewer | Variant | Set | Caught of valid | Partial | Noted, not reported | Est. cost | Run files |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-13 | E3 | Sonnet 5.5, high | **run 2**, product defaults (control for the judge) | escaped, the 13 cases added 2026-11-13 | **1 of 13** ([#21046](https://github.com/pingdotgg/t3code/pull/21046)) | 1 (#17145) | 3 (#14892, #25239, #16926) | $6.15 | [`runs/baseline-run2/`](judge-experiment/runs/baseline-run2/) |
+| 2026-11-13 | E3 | Sonnet 5.5, high | **run 1**, product defaults | escaped, the 13 cases added 2026-11-13 | **1 of 13** ([#21046](https://github.com/pingdotgg/t3code/pull/21046)) | 1 (#17145) | 3 (#14892, #25239, #16926) | $6.65 | [`runs/baseline/`](judge-experiment/runs/baseline/) |
 | 2026-11-12 | E1 + arm C patch | Opus 5.5, high | **C-Opus**: the arm C boundary questions in the batch prompt, same command | escaped, 4 runs (3 valid + 1 invalid case; not run on 2 valid cases for the thread's $8 cap) | **1 of 5** ([#19432](https://github.com/pingdotgg/t3code/pull/19432); it ran on 3 of the 5 valid cases) | 0 | unknown | $2.29 | [`runs/C-opus-*.json`](contract-order-experiment/runs/) |
 | 2026-11-12 | E1 + arm C patch | Sonnet 5.5, high | **C**: boundary questions in the batch prompt, asked of every batch | escaped, 7 runs | **0 of 5** | 0 | at least 2 ([#22107](https://github.com/pingdotgg/t3code/pull/22107), #33632); the others unknown | $4.11 | [`runs/C-*.json`](contract-order-experiment/runs/) |
 | 2026-11-12 | E1 | Sonnet 5.5, high | **B**: focus file `.github/wachiman.md` asking for flow tracing | escaped, 7 runs | **1 of 5** (#19432) | 0 (the partial of A on [#33632](https://github.com/pingdotgg/t3code/pull/33632) was lost) | at least 2 ([#18505](https://github.com/pingdotgg/t3code/pull/18505), [#33632](https://github.com/pingdotgg/t3code/pull/33632): it cited the lines of the bug and reported nothing); the others unknown | $3.73 | [`runs/B-*.json`](contract-order-experiment/runs/) |
@@ -34,6 +38,21 @@ The date of the repeat runs is not in their report. The first-run date comes fro
 [#30556](https://github.com/pingdotgg/t3code/pull/30556) reports (23:34 UTC and 23:19 local on 2026-11-11); the [#30579](https://github.com/pingdotgg/t3code/pull/30579) and [#32830](https://github.com/pingdotgg/t3code/pull/32830) reports give none.
 The reviewer on the replays is `claude-opus-5-5`, effort high, as recorded in each
 `wachiman.json` (`provider`).
+
+## Second pass over run 1: the hazard judge (2026-11-13)
+
+A second model call that reads run 1's contract notes and the code, and must either build the failing scenario or cite the line that makes it safe. Not a product variant: **the owner decided not to change the product** ([decision](judge-experiment/README.md#decision-owner-2026-11-13)). Full report: [`judge-experiment/README.md`](judge-experiment/README.md).
+
+| Judge | Extra bugs on the 13 new cases | With run 1's own catch | Alarms per review | Wrong alarms | Cost per review | Run files |
+| --- | --- | --- | --- | --- | --- | --- |
+| Opus 5.5, high | 2 (#14892, #29838) | 3 of 13 | 0.62 | 0 of 8 | $1.15 | [`runs/v2-phase3/`](judge-experiment/runs/v2-phase3/) |
+| Opus 5.5, medium | 1 (#29838) | 2 of 13 | 0.23 | 0 of 3 | $0.53 | same |
+| Sonnet 5.5, high | 2 (#25239, #29838) | 3 of 13 | 0.46 | 0 of 6 | $0.42 | same |
+| Sonnet 5.5, medium | 0 | 1 of 13 | 0.00 | 0 of 0 | $0.09 | same |
+| Haiku 5.5, high | 2 (#25239, #29838) | 3 of 13 | 1.23 | 0 of 16 | $0.20 | same |
+| control: run 2 | 0 | 1 of 13 | 0.85 | 4 of 11 | $0.47 | [`runs/baseline-run2/`](judge-experiment/runs/baseline-run2/) |
+
+On the first 7 escaped cases every judge caught only [#19432](https://github.com/pingdotgg/t3code/pull/19432), and on [#22107](https://github.com/pingdotgg/t3code/pull/22107) every judge read the spawner and still called it safe. One run per cell. Total spent on the experiment: $86.10 (API-price estimate on the subscription).
 
 ## Replay first runs, by case
 

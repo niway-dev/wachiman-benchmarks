@@ -30,7 +30,7 @@ It does not measure:
 
 | Set | Cases | Valid | What a case is | Reference |
 | --- | --- | --- | --- | --- |
-| `escaped` | 7 | 5 | A bug that reached `main` with no bot comment at the PR that introduced it. The reviewed commit is that PR's squash commit on `main`. | the fix PR's diff |
+| `escaped` | 20 | 18 | A bug that reached `main` with no bot comment at the PR that introduced it. The reviewed commit is that PR's squash commit on `main`. | the fix PR's diff |
 | `replay` | 5 PRs, 21 rows (15 on the 4 PRs that ran, 6 not yet run) | 21 | A defect that CodeRabbit or Macroscope raised and that was reachable at the replay head. One row per defect, several rows per PR. The replay head is the earliest commit a bot reviewed, rebuilt as one commit in [t3code-bench-wachi](https://github.com/niway-dev/t3code-bench-wachi). | the bot thread, with our verdict |
 
 - **escaped, valid 5 of 7.** [#7599](https://github.com/pingdotgg/t3code/pull/7599) and
@@ -38,6 +38,7 @@ It does not measure:
   does not add the defect. Each row names the PR the reports say really introduced it
   ([19291](https://github.com/pingdotgg/t3code/pull/19291), [14892](https://github.com/pingdotgg/t3code/pull/14892))
   as a candidate replacement, not verified.
+- **escaped, 13 cases added 2026-11-13.** Chosen from [`catalogue.md`](catalogue.md) for the hazard judge experiment, with the admission rule checked per case, and held out from its prompt. They include [#14892](https://github.com/pingdotgg/t3code/pull/14892), the verified replacement for #21315's golden; the other candidate, [#19291](https://github.com/pingdotgg/t3code/pull/19291), was rejected (46 files). Per-case notes: [`judge-experiment/cases-new-notes.md`](judge-experiment/cases-new-notes.md).
 - **replay.** [#33758](https://github.com/pingdotgg/t3code/pull/33758) has never been reviewed: three snapshot timeouts, since fixed by
   [wachiman PR 195](https://github.com/niway-dev/wachiman/pull/195). Its 6 rows say "not yet run".
   The replay set is the bots' best cases, so it tests recall of defects the bots also found.
@@ -158,6 +159,7 @@ Write `unknown` for any value no report gives; do not infer it. `n/a` means the 
 | [`history.md`](history.md) | One row per measured run set, newest first |
 | [`scripts/run-set.sh`](scripts/run-set.sh) | Runs local Wachiman over one set, one case at a time; `--dry-run` prints the commands |
 | [`contract-order-experiment/`](contract-order-experiment/README.md) | The escaped set: 25 runs in four arms (A, B, C, C-Opus), the focus file, the question block, the engine patch, the golden check |
+| [`judge-experiment/`](judge-experiment/README.md) | 13 new escaped cases, two plain baseline runs on them, and a second-pass "hazard judge" on five models; the owner's decision (no product change) |
 | [`replays/`](replays/README.md) | The replay set: setup, [`RESULTS.md`](replays/RESULTS.md), [`manifest.tsv`](replays/manifest.tsv), and per PR a `report.md`, `bot-threads.md`, `wachiman.json` |
 | [`replays/30579/experiments/`](replays/30579/experiments/README.md) | Three runs on one replay, for variance |
 | [`replay-shortlist.md`](replay-shortlist.md) | The ten candidate cases with their goldens and base/head checks |
