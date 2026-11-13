@@ -1,0 +1,139 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit d0f7a50 of t3code-fork against its parent (077fd62)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "077fd62222a94b2264ad4525aa4e25bdb29d5029",
+      "ref": "077fd62"
+    },
+    "head": {
+      "sha": "d0f7a509cc9143bf7511800d2f28b7d87e6ef1ec",
+      "ref": "d0f7a50"
+    },
+    "title": "feat(models): the model picker checks for new models when it opens (#33511)",
+    "description": "feat(models): the model picker checks for new models when it opens (#33511)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
+      "apps/server/src/environment/ServerEnvironment.ts",
+      "apps/server/src/provider/CodexInstallation.test.ts",
+      "apps/server/src/provider/ModelManifest.test.ts",
+      "apps/server/src/provider/ModelManifest.ts",
+      "apps/server/src/provider/ProviderRegistry.test.ts",
+      "apps/server/src/provider/ProviderRegistry.ts",
+      "apps/server/src/provider/providerCompatibility.test.ts",
+      "apps/server/src/provider/providerMaintenanceRunner.test.ts",
+      "apps/server/src/provider/testUtils/providerRegistryMock.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/components/chat/ProviderModelPicker.tsx",
+      "packages/client-runtime/src/state/server.ts",
+      "packages/contracts/src/environment.ts",
+      "packages/contracts/src/rpc.ts"
+    ],
+    "reviewed": [
+      "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
+      "apps/server/src/environment/ServerEnvironment.ts",
+      "apps/server/src/provider/ModelManifest.ts",
+      "apps/server/src/provider/ProviderRegistry.ts",
+      "apps/server/src/provider/testUtils/providerRegistryMock.ts",
+      "apps/server/src/ws.ts",
+      "apps/web/src/components/chat/ProviderModelPicker.tsx",
+      "packages/client-runtime/src/state/server.ts",
+      "packages/contracts/src/environment.ts",
+      "packages/contracts/src/rpc.ts",
+      "apps/server/src/provider/CodexInstallation.test.ts",
+      "apps/server/src/provider/ModelManifest.test.ts",
+      "apps/server/src/provider/providerCompatibility.test.ts",
+      "apps/server/src/provider/providerMaintenanceRunner.test.ts",
+      "apps/server/src/provider/ProviderRegistry.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [],
+  "contracts": [
+    {
+      "action": "Opening the web model picker (or mounting the mobile thread-settings main page) sends server.refreshProviders with modelCatalogOnly:true",
+      "location": "apps/web/src/components/chat/ProviderModelPicker.tsx:131-146",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/ws.ts:2494-2530",
+        "apps/server/src/provider/ProviderRegistry.ts:1086-1110",
+        "apps/server/src/provider/ModelManifest.ts:227-266",
+        "packages/client-runtime/src/state/server.ts:1410-1447",
+        "apps/web/src/components/chat/ProviderModelPicker.tsx:131-146",
+        "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx:916-928"
+      ],
+      "equivalent_path": "The existing explicit refresh (serverRefreshProviders with refreshModels / refresh()) in apps/server/src/ws.ts:2494-2530, which force-fetches the manifest, invalidates model caches and re-probes every provider.",
+      "before_after": "The new branch returns before invalidateModelCaches, usageLimitSources.refresh, the secrets reload and the provider-list refresh. It calls only providerRegistry.refreshModelCatalog, which fetches the manifest if it is over 5 minutes old and probes providers only when manifest.updatedAt differs from the last full pass. The client gates the call on the modelCatalogRefresh capability, so older servers never get it. The singleFlight key includes modelCatalogOnly, so it does not collapse into a full refresh.",
+      "visible_effect": "The handler returns { providers: [] }. The client's onSuccess only reads result.providers when both instanceId and cwd are set, which the callers never pass, so the empty list is not recorded. New models appear through the existing config stream when providers are re-probed.",
+      "failure_mode": "Fetch errors are swallowed inside ModelManifest.refresh, and the registry wraps the rest in catchCause(recoverRefreshFailure). The command uses reportFailure:false, so a failure is silent, and the picker simply shows the old list. A later open retries after the 5-minute retry window.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Probe-or-not decision tracked by probedManifestUpdatedAt, with a two-pass loop",
+      "location": "apps/server/src/provider/ProviderRegistry.ts:1086-1093",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/provider/ProviderRegistry.ts:633-678",
+        "apps/server/src/provider/ProviderRegistry.ts:1086-1093",
+        "apps/server/src/provider/ModelManifest.ts:244-251",
+        "apps/server/src/provider/ModelManifest.ts:273-274"
+      ],
+      "equivalent_path": "refreshAll() at apps/server/src/provider/ProviderRegistry.ts:636-678, which joins an in-flight pass through the shared Deferred.",
+      "before_after": "refreshAll now reads the manifest's updatedAt before the pass starts and records it only after the pass succeeds. A pass that was already in flight when the manifest was fetched therefore records the older updatedAt, and the loop runs one more pass. Other manifest fetches (forceRefresh in invalidateModelCaches and refreshAfterUpdate, and background refreshes) do not update the ref, so the next picker open does one redundant full probe.",
+      "visible_effect": "At most 2 full passes per call. Fresh manifests cause one probe; an unchanged manifest causes none.",
+      "failure_mode": "Bounded by the loop count. If a pass fails, the ref is not advanced and the exit is caught by recoverRefreshFailure, so the next open retries. The wait on a user action is the fetch (FETCH_TIMEOUT_MS, under the semaphore) plus the provider probes. Both run server-side behind an RPC the UI does not block on, but singleFlight coalesces later opens onto the pending call.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found nothing to flag in this part. The new `modelCatalogOnly` path in `ws.ts` returns early and skips the full refresh, and `refreshOnDemand` applies the 5-minute window while sharing the existing fetch semaphore and retry backoff. The registry probes providers again only when the manifest's `updatedAt` has changed since the last full pass, and the two-pass loop covers a pass that was already in flight. The `modelCatalogRefresh` capability gates the client call, so older servers never get it. Every `ModelManifest` service mock now has `refreshOnDemand`, and the new `ModelManifest` test's 4-minute and 5-minute timings check out against both the 5-minute window and the 5-minute retry backoff.\n\nTwo small points, neither worth a finding:\n- The second `registry.refreshModelCatalog` call in the `ProviderRegistry` test doesn't test anything the first call doesn't.\n- Manifest fetches triggered by other paths (`forceRefresh`, background refresh) don't update `probedManifestUpdatedAt`, so the next picker open does one extra full probe.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 15,
+      "lines": 168,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.2951429
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "077fd62222a94b2264ad4525aa4e25bdb29d5029"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2951429,
+    "usage": {
+      "input": 14,
+      "output": 8283,
+      "cacheRead": 247889,
+      "cacheWrite": 46874
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 82847,
+    "stop": "complete",
+    "notices": []
+  }
+}

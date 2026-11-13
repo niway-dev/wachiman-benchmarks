@@ -1,0 +1,167 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-19355.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+  "base_commit": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+  "wall_ms": 313485,
+  "cost_usd": 0.21396784000000002,
+  "duration_ms": 312990,
+  "num_turns": 53,
+  "usage": {
+    "input_tokens": 64,
+    "cache_creation_input_tokens": 118750,
+    "cache_read_input_tokens": 2600468,
+    "output_tokens": 59469,
+    "output_tokens_details": {
+      "thinking_tokens": 45934
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 118750,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 9703,
+        "cache_read_input_tokens": 122040,
+        "cache_creation_input_tokens": 2128,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2128
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5262,
+      "outputTokens": 59486,
+      "cacheReadInputTokens": 2600468,
+      "cacheCreationInputTokens": 118750,
+      "webSearchRequests": 0,
+      "costUSD": 0.21396784000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 45934,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 118750,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086-1098",
+      "summary": "The roster is cleared even when scope close timed out, so the process may still be alive with its tasks running. Clearing is not gated on the process actually ending.",
+      "scenario": "1) A Claude session is released by detach or idle while its CLI is wedged. 2) releaseEntry reads the roster (1066) and removes the live entry (1000). 3) closeScopeWithin waits RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 s (ProviderSessionManager.ts:56), then returns None without failing (1026-1045). 4) releaseEntry does not check closeExit before writeReleaseRecords (1098), so the roster is cleared (910, 853-875) while the CLI and its background tasks may still run. Nothing in this path reports those tasks again.",
+      "consequence": "The thread shows idle or not Waiting while work may still run. The new flag comment (ProviderAdapter.ts:619-626) says tasks end when the session closes, which this path does not guarantee. The new test 'keeps background tasks a replacement reports during release' (diff lines 353-392) hangs scope close and asserts the cleared roster, so the behaviour is deliberate but the premise is not checked.",
+      "missing": "",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:56",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1014-1047",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1098",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:853-913",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2017-2073",
+        "/tmp/t3code-judge/diffs/519d64f6cec0.diff:353-392",
+        "packages/provider-core/src/server/ProviderAdapter.ts:619-626"
+      ],
+      "covered_by": null
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "safe_line": "apps/server/src/orchestration-v2/EventSink.ts:546",
+      "summary": "A concurrent replacement write between the cleanup's read and its commit is not overwritten. The CAS compares the stored payload to the expected payload and retries on mismatch. A missing row is also not committed.",
+      "scenario": "1) Cleanup reads row R0 via getThreadRecords. 2) A replacement writes R1 with ProjectionStore's ON CONFLICT DO UPDATE payload_json (ProjectionStore.ts:2203-2247). 3) Cleanup's CAS SELECT returns R1, which differs from encode(R0), so committed=false (EventSink.ts:546-550). 4) The retry loop (ProviderSessionManager.ts:846-875) re-reads R1 and writes from it. A missing row gives undefined !== string, so it is also not committed.",
+      "consequence": "No lost update in the tested interleaving. The only failure mode is the round-trip case already raised in finding 0, which is covered there.",
+      "missing": "Assumes SELECT and append share one transaction (EventSink.ts:271-272 wraps the body in sql.withTransaction). The SQL client source is not in the checkout, so isolation on the single connection is assumed, as it is for the sibling writers.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/EventSink.ts:257-279",
+        "apps/server/src/orchestration-v2/EventSink.ts:529-559",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2247",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:846-875",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:4797-4811"
+      ],
+      "covered_by": 0
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "safe_line": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524",
+      "summary": "Exclusive runtimes cannot hold a thread that detached earlier from a still-live session. Attaching a second thread is refused, and the detach that empties the attached set releases the session with the detached thread included.",
+      "scenario": "1) Claude session S is attached to T1 only. 2) T1 detaches: attachedThreadIds becomes empty and supportsMultipleProviderThreads is false, so releaseEntry runs with detachedThreadId=T1 (2524-2533). 3) T1 is in the roster set (1066-801), so its tasks are cleared. Alternative: a second thread T2 attaching to S while T1 is attached is refused (2176-2182). The only other attachedThreadIds removal, removeThreadAttachment (1358-1384), runs only as the attach rollback (1476-1478) for a fresh attach, which the exclusive check does not allow onto a live session.",
+      "consequence": "No stranded roster for Claude or Muse today. The note's failure mode needs a future multi-thread runtime that sets the flag, which is not reachable in this commit.",
+      "missing": "",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2176-2182",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1358-1384",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1476-1478",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1071",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270",
+        "packages/provider-core/src/server/ProviderAdapter.ts:619-626"
+      ],
+      "covered_by": null
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066 and 2017-2073",
+      "summary": "Tasks the process reported just before release but not yet persisted at read time are never cleared. A late write then re-adds them.",
+      "scenario": "1) The Claude adapter reports task B and emits roster [A,B] (ClaudeAdapterV2.ts:3998-4011). 2) The pump offers it to the run subscriber queue (ProviderSessionManager.ts:2073). The consumer has not persisted it. 3) Release runs removeLiveEntry (1000) and readReleasedBackgroundTasks (1066). The read sees [A] or [], so B is not in the cleanup set. 4) Cleanup clears A only or nothing. 5) The consumer persists [A,B] via writeIfRunCurrent (RunExecutionService.ts:1271-1276), which has no roster compare, so B lands after cleanup.",
+      "consequence": "A dead task B stays on the thread and it stays Waiting, which is the #15239 symptom this change targets. Only read-time tasks are cleared. Any snapshot persisted after the read survives.",
+      "missing": "",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1000",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2017-2073",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:561-573",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:575-592",
+        "apps/server/src/orchestration-v2/RunExecutionService.ts:1245-1278",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:3986-4011"
+      ],
+      "covered_by": null
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9065-9067",
+      "summary": "The flag claims Claude background shells end with the CLI. The checkout's own comment says Bash-launched background jobs sit outside the CLI's process-group kill, so their survival depends on CLI behaviour I cannot read.",
+      "scenario": "Claude starts a Bash background server (run_in_background). It appears in the roster as background_task. The thread is settled, the session releases, and the roster is cleared (this commit). If the CLI does not reap that shell on exit, the server keeps running while the thread is no longer Waiting.",
+      "consequence": "If the CLI leaves the shell running, a thread shows not Waiting while the shell still runs, and T3 can no longer observe it. If the CLI reaps shells on exit, this is fine.",
+      "missing": "Claude CLI / Agent SDK behaviour on exit for Bash-tool background shells. The SDK is not vendored in the checkout (no node_modules/@anthropic-ai/claude-agent-sdk found).",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:238-244",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9065-9067",
+        "packages/provider-core/src/server/ProviderAdapter.ts:619-626"
+      ],
+      "covered_by": null
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086-1098\",\"summary\":\"The roster is cleared even when scope close timed out, so the process may still be alive with its tasks running. Clearing is not gated on the process actually ending.\",\"scenario\":\"1) A Claude session is released by detach or idle while its CLI is wedged. 2) releaseEntry reads the roster (1066) and removes the live entry (1000). 3) closeScopeWithin waits RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 s (ProviderSessionManager.ts:56), then returns None without failing (1026-1045). 4) releaseEntry does not check closeExit before writeReleaseRecords (1098), so the roster is cleared (910, 853-875) while the CLI and its background tasks may still run. Nothing in this path reports those tasks again.\",\"consequence\":\"The thread shows idle or not Waiting while work may still run. The new flag comment (ProviderAdapter.ts:619-626) says tasks end when the session closes, which this path does not guarantee. The new test 'keeps background tasks a replacement reports during release' (diff lines 353-392) hangs scope close and asserts the cleared roster, so the behaviour is deliberate but the premise is not checked.\",\"missing\":\"\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:56\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1014-1047\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1098\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:853-913\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2017-2073\",\"/tmp/t3code-judge/diffs/519d64f6cec0.diff:353-392\",\"packages/provider-core/src/server/ProviderAdapter.ts:619-626\"],\"covered_by\":null},{\"note_index\":1,\"verdict\":\"safe\",\"safe_line\":\"apps/server/src/orchestration-v2/EventSink.ts:546\",\"summary\":\"A concurrent replacement write between the cleanup's read and its commit is not overwritten. The CAS compares the stored payload to the expected payload and retries on mismatch. A missing row is also not committed.\",\"scenario\":\"1) Cleanup reads row R0 via getThreadRecords. 2) A replacement writes R1 with ProjectionStore's ON CONFLICT DO UPDATE payload_json (ProjectionStore.ts:2203-2247). 3) Cleanup's CAS SELECT returns R1, which differs from encode(R0), so committed=false (EventSink.ts:546-550). 4) The retry loop (ProviderSessionManager.ts:846-875) re-reads R1 and writes from it. A missing row gives undefined !== string, so it is also not committed.\",\"consequence\":\"No lost update in the tested interleaving. The only failure mode is the round-trip case already raised in finding 0, which is covered there.\",\"missing\":\"Assumes SELECT and append share one transaction (EventSink.ts:271-272 wraps the body in sql.withTransaction). The SQL client source is not in the checkout, so isolation on the single connection is assumed, as it is for the sibling writers.\",\"evidence\":[\"apps/server/src/orchestration-v2/EventSink.ts:257-279\",\"apps/server/src/orchestration-v2/EventSink.ts:529-559\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2247\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:846-875\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:4797-4811\"],\"covered_by\":0},{\"note_index\":2,\"verdict\":\"safe\",\"safe_line\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524\",\"summary\":\"Exclusive runtimes cannot hold a thread that detached earlier from a still-live session. Attaching a second thread is refused, and the detach that empties the attached set releases the session with the detached thread included.\",\"scenario\":\"1) Claude session S is attached to T1 only. 2) T1 detaches: attachedThreadIds becomes empty and supportsMultipleProviderThreads is false, so releaseEntry runs with detachedThreadId=T1 (2524-2533). 3) T1 is in the roster set (1066-801), so its tasks are cleared. Alternative: a second thread T2 attaching to S while T1 is attached is refused (2176-2182). The only other attachedThreadIds removal, removeThreadAttachment (1358-1384), runs only as the attach rollback (1476-1478) for a fresh attach, which the exclusive check does not allow onto a live session.\",\"consequence\":\"No stranded roster for Claude or Muse today. The note's failure mode needs a future multi-thread runtime that sets the flag, which is not reachable in this commit.\",\"missing\":\"\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2176-2182\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1358-1384\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1476-1478\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1071\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270\",\"packages/provider-core/src/server/ProviderAdapter.ts:619-626\"],\"covered_by\":null},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066 and 2017-2073\",\"summary\":\"Tasks the process reported just before release but not yet persisted at read time are never cleared. A late write then re-adds them.\",\"scenario\":\"1) The Claude adapter reports task B and emits roster [A,B] (ClaudeAdapterV2.ts:3998-4011). 2) The pump offers it to the run subscriber queue (ProviderSessionManager.ts:2073). The consumer has not persisted it. 3) Release runs removeLiveEntry (1000) and readReleasedBackgroundTasks (1066). The read sees [A] or [], so B is not in the cleanup set. 4) Cleanup clears A only or nothing. 5) The consumer persists [A,B] via writeIfRunCurrent (RunExecutionService.ts:1271-1276), which has no roster compare, so B lands after cleanup.\",\"consequence\":\"A dead task B stays on the thread and it stays Waiting, which is the #15239 symptom this change targets. Only read-time tasks are cleared. Any snapshot persisted after the read survives.\",\"missing\":\"\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1000\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2017-2073\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:561-573\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:575-592\",\"apps/server/src/orchestration-v2/RunExecutionService.ts:1245-1278\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:3986-4011\"],\"covered_by\":null},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9065-9067\",\"summary\":\"The flag claims Claude background shells end with the CLI. The checkout's own comment says Bash-launched background jobs sit outside the CLI's process-group kill, so their survival depends on CLI behaviour I cannot read.\",\"scenario\":\"Claude starts a Bash background server (run_in_background). It appears in the roster as background_task. The thread is settled, the session releases, and the roster is cleared (this commit). If the CLI does not reap that shell on exit, the server keeps running while the thread is no longer Waiting.\",\"consequence\":\"If the CLI leaves the shell running, a thread shows not Waiting while the shell still runs, and T3 can no longer observe it. If the CLI reaps shells on exit, this is fine.\",\"missing\":\"Claude CLI / Agent SDK behaviour on exit for Bash-tool background shells. The SDK is not vendored in the checkout (no node_modules/@anthropic-ai/claude-agent-sdk found).\",\"evidence\":[\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:238-244\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9065-9067\",\"packages/provider-core/src/server/ProviderAdapter.ts:619-626\"],\"covered_by\":null}]}"
+}

@@ -1,0 +1,152 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-18505.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "d514a8c6176ace9057dc8c7619f0b5f0d81d1bd0",
+  "base_commit": "37e2acda5118d13c144efb009d4911ff8f65d6ed",
+  "wall_ms": 296312,
+  "cost_usd": 0.26128242,
+  "duration_ms": 295697,
+  "num_turns": 42,
+  "usage": {
+    "input_tokens": 50,
+    "cache_creation_input_tokens": 148616,
+    "cache_read_input_tokens": 2368292,
+    "output_tokens": 60987,
+    "output_tokens_details": {
+      "thinking_tokens": 48388
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 148616,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 7428,
+        "cache_read_input_tokens": 146039,
+        "cache_creation_input_tokens": 2577,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2577
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 7400,
+      "outputTokens": 61007,
+      "cacheReadInputTokens": 2368292,
+      "cacheCreationInputTokens": 148616,
+      "webSearchRequests": 0,
+      "costUSD": 0.26128242,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 48388,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 148616,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/server/src/serverSettings.ts:916 (materializeChanges catch) with serverSettings.ts:1232-1233 (streamChanges)",
+      "summary": "When materialization fails for a changes-stream subscriber, the stream emits the marker-form settings. The Antigravity apiKey then reaches the provider registry as the literal string \"••••••\", and the registry rebuilds that provider instance with it as the key.",
+      "scenario": "1) Antigravity instance has a saved apiKey K; K is in the store under provider-config-*. 2) A settings write publishes `next` (marker form) to changesPubSub (serverSettings.ts:637-638). 3) A store get for any schema-declared secret fails while the subscriber runs materializeSettingsSecrets (serverSettings.ts:869-905 reads all secrets in one pass, so one failure fails all). 4) materializeChanges' catch returns `Effect.as(settings)` (serverSettings.ts:916), so the subscriber gets apiKey \"••••••\". 5) ProviderHostLive.ts:39 feeds streamChanges to the registry. ProviderInstanceRegistry.ts:160-161 compares configs with Equal.equals and :306-314 marks the instance replaced. 6) The Antigravity instance is rebuilt with \"••••••\" as its API key and auth fails until the next settings publish that materializes successfully.",
+      "consequence": "Antigravity API-key auth fails with a bogus key after a transient secret-store read error. The key is not lost. Before this commit, the Antigravity key was plaintext and never went through this marker path. Client-facing RPCs are not affected: ws.ts:1690, 2403, 2415 and 3047 all redact before sending. I could not determine how often the store read fails in practice.",
+      "evidence": [
+        "apps/server/src/serverSettings.ts:637-638 (emitChange publishes the persisted settings)",
+        "apps/server/src/serverSettings.ts:869-905 (materializeSettingsSecrets reads every secret)",
+        "apps/server/src/serverSettings.ts:906-920 (materializeChanges catch returns the unmaterialized settings)",
+        "apps/server/src/serverSettings.ts:1232-1233 (streamChanges = materializeChanges(...))",
+        "apps/server/src/provider/ProviderHostLive.ts:36-41 (settings.changes = serverSettings.streamChanges)",
+        "apps/server/src/provider/ProviderInstanceRegistry.ts:153-161 (entryEqual = Equal.equals on config)",
+        "apps/server/src/provider/ProviderInstanceRegistry.ts:306-314 (config difference => replacedIds)",
+        "apps/server/src/settingsSecrets.ts:56-79 (mapFields writes SECRET_REDACTED into the value)",
+        "apps/server/src/serverSettings.ts:154-158 and 1232-1233 (client redaction on the RPC paths: ws.ts:1690, 2403, 2415, 3047)"
+      ],
+      "missing": "Frequency of store read failures in practice (runtime behaviour, not in the checkout)."
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/serverSettings.ts:840-854 (migration rewrite) with apps/server/src/settingsSecrets.ts:74",
+      "summary": "The load migration writes the \"••••••\" marker for Antigravity apiKey into settings.json. A build from before this commit reads that marker as the literal API key.",
+      "scenario": "1) Upgrade to this commit. The first load moves apiKey K into the store and rewrites settings.json with config.apiKey = \"••••••\" (serverSettings.ts:840-854 and settingsSecrets.ts:74). 2) Downgrade to the previous build and start it on the same data directory. The old code has no marker handling for provider config (old Antigravity apiKey had no secret flag, diff lines 1509-1517), so it passes \"••••••\" as the key. The old server also does not know the store entry.",
+      "consequence": "After a downgrade the Antigravity key is the marker string, and API-key auth fails. The key is not lost from the store, but a user who downgrades cannot use it without re-entering the key. This only happens after a downgrade.",
+      "evidence": [
+        "apps/server/src/serverSettings.ts:840-854 (rewrite only when something moved)",
+        "apps/server/src/settingsSecrets.ts:56-79 (SECRET_REDACTED written into the file value)",
+        "/tmp/t3code-judge/diffs/d514a8c6176a.diff:1509-1517 (old apiKey had no secret annotation, so the old server kept it plaintext)",
+        "/tmp/t3code-judge/diffs/d514a8c6176a.diff:1459-1462 (old load path wrote only on migration)"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424 (settings branch) with apps/web/src/components/ui/draft-input.tsx:19-20 and apps/web/src/hooks/useCommitOnBlur.ts:32",
+      "summary": "A saved Antigravity API key can no longer be cleared from the settings form. The note says this is unchanged, but before this commit the key was not a secret field, so clearing worked.",
+      "scenario": "1) An Antigravity instance has a saved apiKey. Its card uses variant=\"settings\" (ProviderInstanceCard.tsx:1154). 2) The apiKey field is now secret (ProviderSettingsForm.tsx:136 via isSecretSetting), so it renders SecretInput with value=\"\" and configured=true (ProviderSettingsForm.tsx:415-424). 3) The user selects all, deletes, and blurs or presses Enter. DraftInput compares next \"\" to value \"\" and does not commit (useCommitOnBlur.ts:32, draft-input.tsx:19-20). The key is unchanged. 4) Before this commit, apiKey had no secret flag (diff lines 1509-1517), so the field was a DraftInput holding the saved value. Clearing committed \"\", and nextProviderConfigWithFieldValue with clearWhenEmpty=\"omit\" removed the key (ProviderSettingsForm.tsx:285-286). 5) Whitespace-only input commits, because nextProviderConfigWithFieldValue trims (ProviderSettingsForm.tsx:284-286). SecretInput.tsx:32 only guards next === \"\", so typing spaces clears the key. That is a workaround, not a clear action.",
+      "consequence": "A user cannot remove a stored Antigravity API key from the settings UI by emptying the field. The only supported removal is deleting the instance, and the key stays in the store until then. Clearing a saved secret also depends on typing whitespace. The card-branch hazard is finding [0] and is separate from this.",
+      "evidence": [
+        "apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424 (settings branch: value=\"\", configured, onCommit)",
+        "apps/web/src/components/settings/ProviderSettingsForm.tsx:136 (isSecretSetting => secret)",
+        "apps/web/src/components/settings/ProviderSettingsForm.tsx:284-291 (trim and omit on empty)",
+        "apps/web/src/components/settings/SecretInput.tsx:31-33 (guard only on next === \"\")",
+        "apps/web/src/components/ui/draft-input.tsx:18-21",
+        "apps/web/src/hooks/useCommitOnBlur.ts:29-35 (commit only when next !== value)",
+        "apps/web/src/components/settings/ProviderInstanceCard.tsx:1150-1156 (variant=\"settings\")",
+        "/tmp/t3code-judge/diffs/d514a8c6176a.diff:1297-1298 (old guard applied only to field.secret, which Antigravity apiKey lacked)",
+        "/tmp/t3code-judge/diffs/d514a8c6176a.diff:1509-1517 (old apiKey annotation with no secret)"
+      ]
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "summary": "settingsSecret set before withDecodingDefault (Antigravity apiKey, GitCafe token) survives into the outer schema's context, so isSecretSetting finds it, and a later annotateKey merges rather than overwrites it.",
+      "safe_line": "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4239",
+      "scenario": "Antigravity apiKey: TrimmedString.pipe(secretSetting, withDecodingDefault(...), annotateKey({...})). withDecodingDefault builds optional(...).pipe(decodeTo(self, ...)) (Schema.ts:5905-5916), which calls SchemaAST.decodeTo(from.ast, to.ast) (Schema.ts:5480-5484). appendTransformation calls replaceEncoding(to, ...), which calls copy(to, {encoding}), and copy uses Object.assign so `context` is kept (SchemaAST.ts:4239). The outer context still has settingsSecret. annotateKey merges with the existing context annotations (SchemaAST.ts:4402-4411), so settingsSecret survives the later providerSettingsForm annotation. isSecretSetting reads schema.ast.context.annotations (Schema.ts:15958-15960; settings.ts:587-590). The open question is answered: decodeTo keeps the to-schema's context. Bitbucket's settingsSecret goes straight through annotateKey (bitbucket definition.ts:25-29, 42, 54). GitHub tokens and usage managementKey use secretSetting after withDecodingDefault, which annotates the outer node directly (settings.ts:824; github definition.ts:46-49).",
+      "evidence": [
+        "packages/contracts/src/settings.ts:583-590 (secretSetting / isSecretSetting)",
+        "packages/contracts/src/settings.ts:767-772 (Antigravity apiKey order)",
+        "packages/contracts/src/settings.ts:824 (managementKey)",
+        "packages/source-control-gitcafe/src/client/definition.ts:28-37",
+        "packages/source-control-bitbucket/src/client/definition.ts:25-29,42,54",
+        "packages/source-control-github/src/client/definition.ts:46-49",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:5480-5484 (decodeTo wrapper)",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:5905-5916 (withDecodingDefault)",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:15958-15960 (resolveAnnotationsKey)",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4237-4243 (copy keeps context)",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4366-4375 (appendTransformation keeps to)",
+        "/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4402-4411 (annotateKey merge)"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/server/src/serverSettings.ts:916 (materializeChanges catch) with serverSettings.ts:1232-1233 (streamChanges)\",\"summary\":\"When materialization fails for a changes-stream subscriber, the stream emits the marker-form settings. The Antigravity apiKey then reaches the provider registry as the literal string \\\"••••••\\\", and the registry rebuilds that provider instance with it as the key.\",\"scenario\":\"1) Antigravity instance has a saved apiKey K; K is in the store under provider-config-*. 2) A settings write publishes `next` (marker form) to changesPubSub (serverSettings.ts:637-638). 3) A store get for any schema-declared secret fails while the subscriber runs materializeSettingsSecrets (serverSettings.ts:869-905 reads all secrets in one pass, so one failure fails all). 4) materializeChanges' catch returns `Effect.as(settings)` (serverSettings.ts:916), so the subscriber gets apiKey \\\"••••••\\\". 5) ProviderHostLive.ts:39 feeds streamChanges to the registry. ProviderInstanceRegistry.ts:160-161 compares configs with Equal.equals and :306-314 marks the instance replaced. 6) The Antigravity instance is rebuilt with \\\"••••••\\\" as its API key and auth fails until the next settings publish that materializes successfully.\",\"consequence\":\"Antigravity API-key auth fails with a bogus key after a transient secret-store read error. The key is not lost. Before this commit, the Antigravity key was plaintext and never went through this marker path. Client-facing RPCs are not affected: ws.ts:1690, 2403, 2415 and 3047 all redact before sending. I could not determine how often the store read fails in practice.\",\"evidence\":[\"apps/server/src/serverSettings.ts:637-638 (emitChange publishes the persisted settings)\",\"apps/server/src/serverSettings.ts:869-905 (materializeSettingsSecrets reads every secret)\",\"apps/server/src/serverSettings.ts:906-920 (materializeChanges catch returns the unmaterialized settings)\",\"apps/server/src/serverSettings.ts:1232-1233 (streamChanges = materializeChanges(...))\",\"apps/server/src/provider/ProviderHostLive.ts:36-41 (settings.changes = serverSettings.streamChanges)\",\"apps/server/src/provider/ProviderInstanceRegistry.ts:153-161 (entryEqual = Equal.equals on config)\",\"apps/server/src/provider/ProviderInstanceRegistry.ts:306-314 (config difference => replacedIds)\",\"apps/server/src/settingsSecrets.ts:56-79 (mapFields writes SECRET_REDACTED into the value)\",\"apps/server/src/serverSettings.ts:154-158 and 1232-1233 (client redaction on the RPC paths: ws.ts:1690, 2403, 2415, 3047)\"],\"missing\":\"Frequency of store read failures in practice (runtime behaviour, not in the checkout).\"},{\"note_index\":1,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/serverSettings.ts:840-854 (migration rewrite) with apps/server/src/settingsSecrets.ts:74\",\"summary\":\"The load migration writes the \\\"••••••\\\" marker for Antigravity apiKey into settings.json. A build from before this commit reads that marker as the literal API key.\",\"scenario\":\"1) Upgrade to this commit. The first load moves apiKey K into the store and rewrites settings.json with config.apiKey = \\\"••••••\\\" (serverSettings.ts:840-854 and settingsSecrets.ts:74). 2) Downgrade to the previous build and start it on the same data directory. The old code has no marker handling for provider config (old Antigravity apiKey had no secret flag, diff lines 1509-1517), so it passes \\\"••••••\\\" as the key. The old server also does not know the store entry.\",\"consequence\":\"After a downgrade the Antigravity key is the marker string, and API-key auth fails. The key is not lost from the store, but a user who downgrades cannot use it without re-entering the key. This only happens after a downgrade.\",\"evidence\":[\"apps/server/src/serverSettings.ts:840-854 (rewrite only when something moved)\",\"apps/server/src/settingsSecrets.ts:56-79 (SECRET_REDACTED written into the file value)\",\"/tmp/t3code-judge/diffs/d514a8c6176a.diff:1509-1517 (old apiKey had no secret annotation, so the old server kept it plaintext)\",\"/tmp/t3code-judge/diffs/d514a8c6176a.diff:1459-1462 (old load path wrote only on migration)\"]},{\"note_index\":2,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424 (settings branch) with apps/web/src/components/ui/draft-input.tsx:19-20 and apps/web/src/hooks/useCommitOnBlur.ts:32\",\"summary\":\"A saved Antigravity API key can no longer be cleared from the settings form. The note says this is unchanged, but before this commit the key was not a secret field, so clearing worked.\",\"scenario\":\"1) An Antigravity instance has a saved apiKey. Its card uses variant=\\\"settings\\\" (ProviderInstanceCard.tsx:1154). 2) The apiKey field is now secret (ProviderSettingsForm.tsx:136 via isSecretSetting), so it renders SecretInput with value=\\\"\\\" and configured=true (ProviderSettingsForm.tsx:415-424). 3) The user selects all, deletes, and blurs or presses Enter. DraftInput compares next \\\"\\\" to value \\\"\\\" and does not commit (useCommitOnBlur.ts:32, draft-input.tsx:19-20). The key is unchanged. 4) Before this commit, apiKey had no secret flag (diff lines 1509-1517), so the field was a DraftInput holding the saved value. Clearing committed \\\"\\\", and nextProviderConfigWithFieldValue with clearWhenEmpty=\\\"omit\\\" removed the key (ProviderSettingsForm.tsx:285-286). 5) Whitespace-only input commits, because nextProviderConfigWithFieldValue trims (ProviderSettingsForm.tsx:284-286). SecretInput.tsx:32 only guards next === \\\"\\\", so typing spaces clears the key. That is a workaround, not a clear action.\",\"consequence\":\"A user cannot remove a stored Antigravity API key from the settings UI by emptying the field. The only supported removal is deleting the instance, and the key stays in the store until then. Clearing a saved secret also depends on typing whitespace. The card-branch hazard is finding [0] and is separate from this.\",\"evidence\":[\"apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424 (settings branch: value=\\\"\\\", configured, onCommit)\",\"apps/web/src/components/settings/ProviderSettingsForm.tsx:136 (isSecretSetting => secret)\",\"apps/web/src/components/settings/ProviderSettingsForm.tsx:284-291 (trim and omit on empty)\",\"apps/web/src/components/settings/SecretInput.tsx:31-33 (guard only on next === \\\"\\\")\",\"apps/web/src/components/ui/draft-input.tsx:18-21\",\"apps/web/src/hooks/useCommitOnBlur.ts:29-35 (commit only when next !== value)\",\"apps/web/src/components/settings/ProviderInstanceCard.tsx:1150-1156 (variant=\\\"settings\\\")\",\"/tmp/t3code-judge/diffs/d514a8c6176a.diff:1297-1298 (old guard applied only to field.secret, which Antigravity apiKey lacked)\",\"/tmp/t3code-judge/diffs/d514a8c6176a.diff:1509-1517 (old apiKey annotation with no secret)\"]},{\"note_index\":3,\"verdict\":\"safe\",\"summary\":\"settingsSecret set before withDecodingDefault (Antigravity apiKey, GitCafe token) survives into the outer schema's context, so isSecretSetting finds it, and a later annotateKey merges rather than overwrites it.\",\"safe_line\":\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4239\",\"scenario\":\"Antigravity apiKey: TrimmedString.pipe(secretSetting, withDecodingDefault(...), annotateKey({...})). withDecodingDefault builds optional(...).pipe(decodeTo(self, ...)) (Schema.ts:5905-5916), which calls SchemaAST.decodeTo(from.ast, to.ast) (Schema.ts:5480-5484). appendTransformation calls replaceEncoding(to, ...), which calls copy(to, {encoding}), and copy uses Object.assign so `context` is kept (SchemaAST.ts:4239). The outer context still has settingsSecret. annotateKey merges with the existing context annotations (SchemaAST.ts:4402-4411), so settingsSecret survives the later providerSettingsForm annotation. isSecretSetting reads schema.ast.context.annotations (Schema.ts:15958-15960; settings.ts:587-590). The open question is answered: decodeTo keeps the to-schema's context. Bitbucket's settingsSecret goes straight through annotateKey (bitbucket definition.ts:25-29, 42, 54). GitHub tokens and usage managementKey use secretSetting after withDecodingDefault, which annotates the outer node directly (settings.ts:824; github definition.ts:46-49).\",\"evidence\":[\"packages/contracts/src/settings.ts:583-590 (secretSetting / isSecretSetting)\",\"packages/contracts/src/settings.ts:767-772 (Antigravity apiKey order)\",\"packages/contracts/src/settings.ts:824 (managementKey)\",\"packages/source-control-gitcafe/src/client/definition.ts:28-37\",\"packages/source-control-bitbucket/src/client/definition.ts:25-29,42,54\",\"packages/source-control-github/src/client/definition.ts:46-49\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:5480-5484 (decodeTo wrapper)\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:5905-5916 (withDecodingDefault)\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/Schema.ts:15958-15960 (resolveAnnotationsKey)\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4237-4243 (copy keeps context)\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4366-4375 (appendTransformation keeps to)\",\"/tmp/t3code-judge/wt-d514a8c6176a/.repos/effect-smol/packages/effect/src/SchemaAST.ts:4402-4411 (annotateKey merge)\"]}]}"
+}

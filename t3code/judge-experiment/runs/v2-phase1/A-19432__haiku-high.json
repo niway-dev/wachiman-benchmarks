@@ -1,0 +1,156 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-19432.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+  "base_commit": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+  "wall_ms": 264028,
+  "cost_usd": 0.11593772000000001,
+  "duration_ms": 262844,
+  "num_turns": 30,
+  "usage": {
+    "input_tokens": 36,
+    "cache_creation_input_tokens": 108450,
+    "cache_read_input_tokens": 1086158,
+    "output_tokens": 54919,
+    "output_tokens_details": {
+      "thinking_tokens": 44881
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 108450,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3207,
+        "cache_read_input_tokens": 106350,
+        "cache_creation_input_tokens": 7518,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 7518
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4588,
+      "outputTokens": 54943,
+      "cacheReadInputTokens": 1086158,
+      "cacheCreationInputTokens": 108450,
+      "webSearchRequests": 0,
+      "costUSD": 0.11593772000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 44881,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 108450,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "packages/ssh/src/tunnel.ts:711-723 (reuse path) and packages/ssh/src/tunnel.ts:780-790 (stop script)",
+      "summary": "A managed server whose event loop is blocked for good (sync infinite loop or deadlock, not a short stall) now makes both reconnect and disconnect fail. The note says 'until the user disconnects', but disconnect cannot stop it either.",
+      "scenario": "1) Managed server P is alive, PID file names P, event loop blocked permanently. 2) Reconnect: runtime file names P, so the first branch (tunnel.ts:671-673) keeps P; the elif at tunnel.ts:711 passes server_running; wait_ready 60s (tunnel.ts:720) fails; script prints 'Retry the connection; the server was left running' and exits 1 (tunnel.ts:721-722). command.ts:266-275 turns that into SshCommandError, so no tunnel. 3) Disconnect: stopRemoteServer runs REMOTE_STOP_SCRIPT, which sends SIGTERM (tunnel.ts:781), waits 2s, P is still alive, so it exits 1 'did not stop within 2 seconds. Its ownership files were kept.' (tunnel.ts:787-789). disconnectEnvironment (tunnel.ts:1787-1791) fails. Before this change the reuse probe failed after 2s, the script sent SIGTERM and relaunched on a new port, so the user got a working connection (diff removed lines 613-618). The server runs under runMain and ProviderSessionManager, which install JS SIGTERM listeners (serviceLauncher.ts:11-14, binCli.ts:94-99, ProviderSessionManager.ts:412-413); with a blocked loop those handlers never run, so SIGTERM does not kill it. Caveat: node_modules is not vendored, so I could not read runMain's handler itself; the repo comment at serviceLauncher.ts:11-14 is the only evidence for it.",
+      "consequence": "A hung managed server that the old code replaced on reconnect now blocks every reconnect (60s each) and every disconnect until someone kills it on the remote host by hand. The error text tells the user to retry, which will not help.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:606-614",
+        "packages/ssh/src/tunnel.ts:341-349",
+        "packages/ssh/src/tunnel.ts:780-790",
+        "packages/ssh/src/tunnel.ts:1780-1791",
+        "packages/ssh/src/command.ts:266-275",
+        "apps/server/src/serviceLauncher.ts:11-14",
+        "apps/server/src/binCli.ts:94-99",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:412-413",
+        "diff: removed lines 613-618 (old kill-and-relaunch on failed reuse probe)"
+      ],
+      "safe_line": "",
+      "covered_by": null,
+      "missing": ""
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Deleting the map entry before closing a stale forward does stop the finalizer from calling the remote stop. The stale close and the relaunch run under the same target lock, so no other path can set or read a new entry in between.",
+      "safe_line": "packages/ssh/src/tunnel.ts:1587",
+      "scenario": "Tried: stale entry E in tunnels[key]. ensureTunnelEntry (under withTargetLock, tunnel.ts:1725) deletes tunnels[key] at tunnel.ts:1676, then closeTunnelEntry calls Scope.close(E.scope). E.scope is the same entryScope the finalizer was added to (tunnel.ts:1246-1255, 1572). The finalizer at tunnel.ts:1587 computes stopRemote = tunnels.get(key) === E, which is false, so it kills only the local ssh process and returns at tunnel.ts:1597-1598. The remote stop is skipped. Then createTunnelEntry sets the new entry (tunnel.ts:1579); that runs only after Scope.close returns, since Scope.close awaits its finalizers. Tried a concurrent disconnectEnvironment: it takes the same key lock (tunnel.ts:1771) and cannot interleave. Tried a failed relaunch: no entry is left, and disconnectEnvironment still runs stopRemoteServer when entry is null (tunnel.ts:1787-1791). The one remaining risk is that the relaunched server is hung, which is note 0's hazard, not this one.",
+      "consequence": "None for this path. The stale forward is replaced and the remote server is kept.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1587-1599",
+        "packages/ssh/src/tunnel.ts:1646-1677",
+        "packages/ssh/src/tunnel.ts:1725-1728",
+        "packages/ssh/src/tunnel.ts:1246-1255",
+        "packages/ssh/src/tunnel.ts:1572",
+        "packages/ssh/src/tunnel.ts:1579",
+        "packages/ssh/src/tunnel.ts:1771-1791"
+      ],
+      "covered_by": null,
+      "missing": "",
+      "severity": "none",
+      "location": "",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "Adoption no longer kills DEFAULT_RUNTIME_PID when no managed PID is recorded. With the managed marker and no PID file, the external adoption path keeps the external server running and skips the second probe while it is alive.",
+      "safe_line": "packages/ssh/src/tunnel.ts:679",
+      "scenario": "Tried: REMOTE_MANAGED=managed, PID file absent, runtime file names an alive, answering Q. Line 671 fails (DEFAULT_RUNTIME_PID is Q, not an empty REMOTE_PID), so the elif at 674 runs. wait_ready 2s at 676 succeeds, so ADOPTED_PID=Q (677). Line 679 has REMOTE_PID empty, so nothing is killed (the old PID_TO_STOP fallback to DEFAULT_RUNTIME_PID is gone). Lines 684-687 set REMOTE_MANAGED=external and write the files. Line 704 server_running Q is true, so the second probe is skipped and external Q is returned. Also tried: Q answers once, then the handover is interrupted. The tunnel readiness check at tunnel.ts:1297-1300 (20s) then fails and no second server is launched; the next reconnect probes again (tunnel.ts:706). Also checked: server_running (tunnel.ts:625-630) returns 1 for an empty argument, so the && || precedence is correct.",
+      "consequence": "None on this path. The service-owned server is not killed and no second server is started on the same home.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:668-700",
+        "packages/ssh/src/tunnel.ts:701-710",
+        "packages/ssh/src/tunnel.ts:623-630",
+        "packages/ssh/src/tunnel.ts:1297-1300"
+      ],
+      "covered_by": null,
+      "missing": "",
+      "severity": "none",
+      "location": "",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": false,
+      "location": "packages/ssh/src/tunnel.ts:679-680",
+      "summary": "Adoption still kills a PID taken from a stale PID file with no identity check. The old code did this too, and the new code does not change it.",
+      "scenario": "1) A managed server P crashes, so PID file still names P. 2) P's PID is recycled by an unrelated user process X. 3) A default-home server Q is running and answers on the runtime port. 4) Reconnect: wait_ready on the runtime port succeeds (tunnel.ts:676), REMOTE_MANAGED=managed, REMOTE_PID=X, kill -0 X succeeds (tunnel.ts:679), so SIGTERM goes to X (tunnel.ts:680). The old code did the same via PID_TO_STOP=${REMOTE_PID:-...} (diff removed lines 579-582).",
+      "consequence": "An unrelated process on the remote host gets SIGTERM. Likelihood is low: it needs PID recycling in the window and a default-home server. The impact is high if it happens.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:676-687",
+        "diff: removed lines 579-582 (old PID_TO_STOP kill)",
+        "packages/ssh/src/tunnel.ts:657-660"
+      ],
+      "covered_by": null,
+      "missing": "",
+      "safe_line": ""
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"packages/ssh/src/tunnel.ts:711-723 (reuse path) and packages/ssh/src/tunnel.ts:780-790 (stop script)\",\"summary\":\"A managed server whose event loop is blocked for good (sync infinite loop or deadlock, not a short stall) now makes both reconnect and disconnect fail. The note says 'until the user disconnects', but disconnect cannot stop it either.\",\"scenario\":\"1) Managed server P is alive, PID file names P, event loop blocked permanently. 2) Reconnect: runtime file names P, so the first branch (tunnel.ts:671-673) keeps P; the elif at tunnel.ts:711 passes server_running; wait_ready 60s (tunnel.ts:720) fails; script prints 'Retry the connection; the server was left running' and exits 1 (tunnel.ts:721-722). command.ts:266-275 turns that into SshCommandError, so no tunnel. 3) Disconnect: stopRemoteServer runs REMOTE_STOP_SCRIPT, which sends SIGTERM (tunnel.ts:781), waits 2s, P is still alive, so it exits 1 'did not stop within 2 seconds. Its ownership files were kept.' (tunnel.ts:787-789). disconnectEnvironment (tunnel.ts:1787-1791) fails. Before this change the reuse probe failed after 2s, the script sent SIGTERM and relaunched on a new port, so the user got a working connection (diff removed lines 613-618). The server runs under runMain and ProviderSessionManager, which install JS SIGTERM listeners (serviceLauncher.ts:11-14, binCli.ts:94-99, ProviderSessionManager.ts:412-413); with a blocked loop those handlers never run, so SIGTERM does not kill it. Caveat: node_modules is not vendored, so I could not read runMain's handler itself; the repo comment at serviceLauncher.ts:11-14 is the only evidence for it.\",\"consequence\":\"A hung managed server that the old code replaced on reconnect now blocks every reconnect (60s each) and every disconnect until someone kills it on the remote host by hand. The error text tells the user to retry, which will not help.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:606-614\",\"packages/ssh/src/tunnel.ts:341-349\",\"packages/ssh/src/tunnel.ts:780-790\",\"packages/ssh/src/tunnel.ts:1780-1791\",\"packages/ssh/src/command.ts:266-275\",\"apps/server/src/serviceLauncher.ts:11-14\",\"apps/server/src/binCli.ts:94-99\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:412-413\",\"diff: removed lines 613-618 (old kill-and-relaunch on failed reuse probe)\"],\"safe_line\":\"\",\"covered_by\":null,\"missing\":\"\"},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Deleting the map entry before closing a stale forward does stop the finalizer from calling the remote stop. The stale close and the relaunch run under the same target lock, so no other path can set or read a new entry in between.\",\"safe_line\":\"packages/ssh/src/tunnel.ts:1587\",\"scenario\":\"Tried: stale entry E in tunnels[key]. ensureTunnelEntry (under withTargetLock, tunnel.ts:1725) deletes tunnels[key] at tunnel.ts:1676, then closeTunnelEntry calls Scope.close(E.scope). E.scope is the same entryScope the finalizer was added to (tunnel.ts:1246-1255, 1572). The finalizer at tunnel.ts:1587 computes stopRemote = tunnels.get(key) === E, which is false, so it kills only the local ssh process and returns at tunnel.ts:1597-1598. The remote stop is skipped. Then createTunnelEntry sets the new entry (tunnel.ts:1579); that runs only after Scope.close returns, since Scope.close awaits its finalizers. Tried a concurrent disconnectEnvironment: it takes the same key lock (tunnel.ts:1771) and cannot interleave. Tried a failed relaunch: no entry is left, and disconnectEnvironment still runs stopRemoteServer when entry is null (tunnel.ts:1787-1791). The one remaining risk is that the relaunched server is hung, which is note 0's hazard, not this one.\",\"consequence\":\"None for this path. The stale forward is replaced and the remote server is kept.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:1587-1599\",\"packages/ssh/src/tunnel.ts:1646-1677\",\"packages/ssh/src/tunnel.ts:1725-1728\",\"packages/ssh/src/tunnel.ts:1246-1255\",\"packages/ssh/src/tunnel.ts:1572\",\"packages/ssh/src/tunnel.ts:1579\",\"packages/ssh/src/tunnel.ts:1771-1791\"],\"covered_by\":null,\"missing\":\"\",\"severity\":\"none\",\"location\":\"\",\"introduced_by_change\":false},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"Adoption no longer kills DEFAULT_RUNTIME_PID when no managed PID is recorded. With the managed marker and no PID file, the external adoption path keeps the external server running and skips the second probe while it is alive.\",\"safe_line\":\"packages/ssh/src/tunnel.ts:679\",\"scenario\":\"Tried: REMOTE_MANAGED=managed, PID file absent, runtime file names an alive, answering Q. Line 671 fails (DEFAULT_RUNTIME_PID is Q, not an empty REMOTE_PID), so the elif at 674 runs. wait_ready 2s at 676 succeeds, so ADOPTED_PID=Q (677). Line 679 has REMOTE_PID empty, so nothing is killed (the old PID_TO_STOP fallback to DEFAULT_RUNTIME_PID is gone). Lines 684-687 set REMOTE_MANAGED=external and write the files. Line 704 server_running Q is true, so the second probe is skipped and external Q is returned. Also tried: Q answers once, then the handover is interrupted. The tunnel readiness check at tunnel.ts:1297-1300 (20s) then fails and no second server is launched; the next reconnect probes again (tunnel.ts:706). Also checked: server_running (tunnel.ts:625-630) returns 1 for an empty argument, so the && || precedence is correct.\",\"consequence\":\"None on this path. The service-owned server is not killed and no second server is started on the same home.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:668-700\",\"packages/ssh/src/tunnel.ts:701-710\",\"packages/ssh/src/tunnel.ts:623-630\",\"packages/ssh/src/tunnel.ts:1297-1300\"],\"covered_by\":null,\"missing\":\"\",\"severity\":\"none\",\"location\":\"\",\"introduced_by_change\":false},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":false,\"location\":\"packages/ssh/src/tunnel.ts:679-680\",\"summary\":\"Adoption still kills a PID taken from a stale PID file with no identity check. The old code did this too, and the new code does not change it.\",\"scenario\":\"1) A managed server P crashes, so PID file still names P. 2) P's PID is recycled by an unrelated user process X. 3) A default-home server Q is running and answers on the runtime port. 4) Reconnect: wait_ready on the runtime port succeeds (tunnel.ts:676), REMOTE_MANAGED=managed, REMOTE_PID=X, kill -0 X succeeds (tunnel.ts:679), so SIGTERM goes to X (tunnel.ts:680). The old code did the same via PID_TO_STOP=${REMOTE_PID:-...} (diff removed lines 579-582).\",\"consequence\":\"An unrelated process on the remote host gets SIGTERM. Likelihood is low: it needs PID recycling in the window and a default-home server. The impact is high if it happens.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:676-687\",\"diff: removed lines 579-582 (old PID_TO_STOP kill)\",\"packages/ssh/src/tunnel.ts:657-660\"],\"covered_by\":null,\"missing\":\"\",\"safe_line\":\"\"}]}"
+}
