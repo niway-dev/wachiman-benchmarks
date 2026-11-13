@@ -15,7 +15,17 @@ New cases (13, the result that counts) and the 5 known cases (in-sample: the pro
 | judge, Haiku 5.5 high | 2 (#25239, #29838) | 1 / 0 | 1.23 | 0 of 16 | $0.20 | 277 s |
 | control: the same review run again | 0 | not run | 0.85 | 4 of 11 | $0.47 | 153 s |
 
-**Answer: use Sonnet 5.5 high as the second reviewer, as a judge over the first reviewer's contract notes, not as a second plain review.** See [Which model for the second reviewer](#which-model-for-the-second-reviewer) for what is checked and what is inferred.
+**Measured answer: if a second reviewer were added, it would be Sonnet 5.5 high, as a judge over the first reviewer's contract notes, not as a second plain review.** See [Which model for the second reviewer](#which-model-for-the-second-reviewer) for what is checked and what is inferred.
+
+## Decision (owner, 2026-11-13)
+
+**The product does not change.** The reviewer stays as shipped: Sonnet 5.5 high, one pass, no judge. No second pass is built. This experiment is kept as evidence of what more spending buys on this class of bug:
+
+- **A second plain run bought nothing.** It caught the same case as the first run, and added 11 findings, 4 of them wrong, for $0.47 more per review.
+- **The best judge stayed below the bar set before the run.** Sonnet 5.5 high added 2 of 13 bugs (3 of 13 with the reviewer's own catch) for $0.42 more per review. The bar was 1 in 3 held-out cases.
+- **On [#22107](https://github.com/pingdotgg/t3code/pull/22107) every judge read the code and still called the bug safe.** More reading by a second model did not fix the misjudgement it was built for.
+
+Reopen when: a second pass, repeated at least twice on this set or a larger one, reaches 1 in 3 held-out cases with at most 1 wrong alarm per review.
 
 ## Question
 
