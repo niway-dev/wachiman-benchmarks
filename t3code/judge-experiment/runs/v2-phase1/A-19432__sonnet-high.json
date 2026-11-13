@@ -1,0 +1,159 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-19432.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+  "base_commit": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+  "wall_ms": 107554,
+  "cost_usd": 0.2927493,
+  "duration_ms": 107146,
+  "num_turns": 12,
+  "usage": {
+    "input_tokens": 18,
+    "cache_creation_input_tokens": 39702,
+    "cache_read_input_tokens": 274476,
+    "output_tokens": 10599,
+    "output_tokens_details": {
+      "thinking_tokens": 6496
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 39702,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3379,
+        "cache_read_input_tokens": 44500,
+        "cache_creation_input_tokens": 3462,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3462
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4552,
+      "outputTokens": 25,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0004677,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 18,
+      "outputTokens": 10599,
+      "cacheReadInputTokens": 274476,
+      "cacheCreationInputTokens": 39702,
+      "webSearchRequests": 0,
+      "costUSD": 0.2922816,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 6496,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 39702,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "A stale or recycled PID in the pid file now makes every reconnect fail after 60s. Before this change the script killed it and relaunched.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:657-659",
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:626-629",
+        "packages/ssh/src/tunnel.ts:780-792",
+        "packages/ssh/src/tunnel.ts:54"
+      ],
+      "location": "packages/ssh/src/tunnel.ts:720-722",
+      "scenario": "1) A managed server was launched, so ~/.t3/ssh-launch/<key>/{pid,port,managed} exist. 2) The remote reboots or the server crashes and the pid file is not cleaned up. 3) An unrelated process of the same user later gets that PID. 4) The user reconnects. Line 711 passes because server_running only checks kill -0 and the ps stat is not Z. 5) RUNNER_CHANGED is 0, so line 720 runs wait_ready for 60s. Nothing listens, so it fails, prints 'left running' and exits 1. 6) Every retry repeats this, because the script never touches the pid, port or managed files on this path. The old code killed the process after a 2s probe and relaunched. The script has no PID-identity check; the stop script at 780-787 also just kills whatever the PID file names.",
+      "consequence": "The user cannot reconnect to that host without an explicit disconnect. Each attempt blocks for about 60s while holding the target lock. The message claims the 'server was left running' when no server exists. Disconnecting then runs the stop script, which kills the unrelated process; that part existed before this change.",
+      "severity": "low",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "tunnels.delete(key) runs before closeTunnelEntry and outside any uninterruptible region. An interrupt in between leaves the ssh forward process untracked.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1675-1677",
+        "packages/ssh/src/tunnel.ts:1383-1392",
+        "packages/ssh/src/tunnel.ts:1558",
+        "packages/ssh/src/tunnel.ts:1782-1785",
+        "packages/ssh/src/tunnel.ts:1401-1409"
+      ],
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "scenario": "1) A stale forward is detected at 1659-1674. 2) Line 1676 removes the entry from the map. 3) The ensureEnvironment fiber is interrupted before Scope.close at 1392 starts, for example because the caller cancels the request. closeTunnelEntry begins with a logDebug and is not wrapped in uninterruptible. 4) entryScope was created with Scope.make at 1558 and is not a child of the manager scope. The manager finalizer at 1401-1409 only closes entries still in the map. So the old ssh -N process is never killed until the host process exits. disconnectEnvironment wraps the same delete-then-close in Effect.uninterruptible (1785), which suggests this ordering needs protection. I did not read Effect's interrupt-check points, so the exact window is unconfirmed. Before this change the entry stayed in the map until close finished, so a later disconnect or manager shutdown would still close it.",
+      "consequence": "A leaked ssh forward process and local port, outside any later cleanup. The effect is small and needs an interrupt to land in a narrow window.",
+      "severity": "low",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "Dropping the DEFAULT_RUNTIME_PID kill and skipping the second probe holds up in the cases I tried: zombie, empty ADOPTED_PID, and a runtime file naming our own managed PID.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:625-630",
+        "packages/ssh/src/tunnel.ts:671-673",
+        "packages/ssh/src/tunnel.ts:674-700",
+        "packages/ssh/src/tunnel.ts:701-710",
+        "packages/ssh/src/tunnel.ts:739-741",
+        "packages/ssh/src/tunnel.ts:458",
+        "packages/ssh/src/tunnel.ts:558",
+        "apps/server/src/serverRuntimeState.ts:72"
+      ],
+      "location": "packages/ssh/src/tunnel.ts:671-710",
+      "scenario": "Cases tried: (a) The runtime file pid might differ from the recorded REMOTE_PID because of a wrapper process. The runner script execs node (458) or the t3 binary (558), and the server writes pid: process.pid (serverRuntimeState.ts:72). The launch script records $! from nohup env (739-741), which also execs. So the pids match and line 671 recognises our own server. (b) ADOPTED_PID is empty when adoption was skipped or the first probe failed. server_running '' returns 1 via the -n test (626), so the old probe path at 706 still runs. (c) The runtime file names a zombie. resolve_default_runtime_port still passes, because kill -0 succeeds for a zombie. server_running then returns 1 on stat Z (627-629), so the else branch at 724 clears the state and relaunches. (d) ps is missing or errors. The $(...) has || true, the output is empty, and the case falls through with status 0, so kill -0 is trusted. The one residual case is a managed marker with the pid file lost and the runtime file naming our own server. That server would be adopted as external and never stopped. The script's own code cannot produce this state, because 753 removes all three files together.",
+      "safe_line": "packages/ssh/src/tunnel.ts:626",
+      "consequence": "",
+      "severity": "none"
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "If an adopted external server stalls for more than about 4s at reconnect, the script launches a second server on the same home, which cannot get ownership. The connection then fails after about 60s. The new ADOPTED_PID guard only covers the case where the first probe succeeds.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:674-699",
+        "packages/ssh/src/tunnel.ts:701-710",
+        "packages/ssh/src/tunnel.ts:739-755",
+        "packages/ssh/src/tunnel.ts:65-66",
+        "apps/server/src/serverOwnership.ts:24-35"
+      ],
+      "location": "packages/ssh/src/tunnel.ts:695-710",
+      "scenario": "1) An earlier reconnect adopted a service-owned server, so the managed file says 'external' and the port file holds its port. 2) The service server stalls, for example in a long SQLite pause. 3) The user reconnects. The probe at 676 fails after 2s, so ADOPTED_PID stays empty. 4) Line 696-698 reloads REMOTE_MANAGED=external from the files. 5) At 701 server_running '' is false, so line 706 probes again for 2s and fails. 6) Lines 707-709 clear the state, so 729-744 pick a port and launch a new `t3 serve --base-dir ~/.t3`. 7) The new server hits ServerAlreadyRunningError (serverOwnership.ts:24-35) and exits, or it succeeds if ownership has been released. 8) wait_ready at 744 fails, the script kills the new PID and removes the pid, port and managed files at 751-753, then exits 1. The comment at 702-703 says the intent is to avoid launching a second server after a momentary stall, but the guard only helps when the first probe succeeds. I did not read the full ownership acquisition, so whether the second server exits or runs beside the first depends on it.",
+      "consequence": "Reconnect fails after about 60s, and the ownership files are wiped, so the adopted external server is forgotten until the next successful adoption.",
+      "severity": "low",
+      "introduced_by_change": false
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"A stale or recycled PID in the pid file now makes every reconnect fail after 60s. Before this change the script killed it and relaunched.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:657-659\",\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:626-629\",\"packages/ssh/src/tunnel.ts:780-792\",\"packages/ssh/src/tunnel.ts:54\"],\"location\":\"packages/ssh/src/tunnel.ts:720-722\",\"scenario\":\"1) A managed server was launched, so ~/.t3/ssh-launch/<key>/{pid,port,managed} exist. 2) The remote reboots or the server crashes and the pid file is not cleaned up. 3) An unrelated process of the same user later gets that PID. 4) The user reconnects. Line 711 passes because server_running only checks kill -0 and the ps stat is not Z. 5) RUNNER_CHANGED is 0, so line 720 runs wait_ready for 60s. Nothing listens, so it fails, prints 'left running' and exits 1. 6) Every retry repeats this, because the script never touches the pid, port or managed files on this path. The old code killed the process after a 2s probe and relaunched. The script has no PID-identity check; the stop script at 780-787 also just kills whatever the PID file names.\",\"consequence\":\"The user cannot reconnect to that host without an explicit disconnect. Each attempt blocks for about 60s while holding the target lock. The message claims the 'server was left running' when no server exists. Disconnecting then runs the stop script, which kills the unrelated process; that part existed before this change.\",\"severity\":\"low\",\"introduced_by_change\":true},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"tunnels.delete(key) runs before closeTunnelEntry and outside any uninterruptible region. An interrupt in between leaves the ssh forward process untracked.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:1675-1677\",\"packages/ssh/src/tunnel.ts:1383-1392\",\"packages/ssh/src/tunnel.ts:1558\",\"packages/ssh/src/tunnel.ts:1782-1785\",\"packages/ssh/src/tunnel.ts:1401-1409\"],\"location\":\"packages/ssh/src/tunnel.ts:1676\",\"scenario\":\"1) A stale forward is detected at 1659-1674. 2) Line 1676 removes the entry from the map. 3) The ensureEnvironment fiber is interrupted before Scope.close at 1392 starts, for example because the caller cancels the request. closeTunnelEntry begins with a logDebug and is not wrapped in uninterruptible. 4) entryScope was created with Scope.make at 1558 and is not a child of the manager scope. The manager finalizer at 1401-1409 only closes entries still in the map. So the old ssh -N process is never killed until the host process exits. disconnectEnvironment wraps the same delete-then-close in Effect.uninterruptible (1785), which suggests this ordering needs protection. I did not read Effect's interrupt-check points, so the exact window is unconfirmed. Before this change the entry stayed in the map until close finished, so a later disconnect or manager shutdown would still close it.\",\"consequence\":\"A leaked ssh forward process and local port, outside any later cleanup. The effect is small and needs an interrupt to land in a narrow window.\",\"severity\":\"low\",\"introduced_by_change\":true},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"Dropping the DEFAULT_RUNTIME_PID kill and skipping the second probe holds up in the cases I tried: zombie, empty ADOPTED_PID, and a runtime file naming our own managed PID.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:625-630\",\"packages/ssh/src/tunnel.ts:671-673\",\"packages/ssh/src/tunnel.ts:674-700\",\"packages/ssh/src/tunnel.ts:701-710\",\"packages/ssh/src/tunnel.ts:739-741\",\"packages/ssh/src/tunnel.ts:458\",\"packages/ssh/src/tunnel.ts:558\",\"apps/server/src/serverRuntimeState.ts:72\"],\"location\":\"packages/ssh/src/tunnel.ts:671-710\",\"scenario\":\"Cases tried: (a) The runtime file pid might differ from the recorded REMOTE_PID because of a wrapper process. The runner script execs node (458) or the t3 binary (558), and the server writes pid: process.pid (serverRuntimeState.ts:72). The launch script records $! from nohup env (739-741), which also execs. So the pids match and line 671 recognises our own server. (b) ADOPTED_PID is empty when adoption was skipped or the first probe failed. server_running '' returns 1 via the -n test (626), so the old probe path at 706 still runs. (c) The runtime file names a zombie. resolve_default_runtime_port still passes, because kill -0 succeeds for a zombie. server_running then returns 1 on stat Z (627-629), so the else branch at 724 clears the state and relaunches. (d) ps is missing or errors. The $(...) has || true, the output is empty, and the case falls through with status 0, so kill -0 is trusted. The one residual case is a managed marker with the pid file lost and the runtime file naming our own server. That server would be adopted as external and never stopped. The script's own code cannot produce this state, because 753 removes all three files together.\",\"safe_line\":\"packages/ssh/src/tunnel.ts:626\",\"consequence\":\"\",\"severity\":\"none\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"If an adopted external server stalls for more than about 4s at reconnect, the script launches a second server on the same home, which cannot get ownership. The connection then fails after about 60s. The new ADOPTED_PID guard only covers the case where the first probe succeeds.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:674-699\",\"packages/ssh/src/tunnel.ts:701-710\",\"packages/ssh/src/tunnel.ts:739-755\",\"packages/ssh/src/tunnel.ts:65-66\",\"apps/server/src/serverOwnership.ts:24-35\"],\"location\":\"packages/ssh/src/tunnel.ts:695-710\",\"scenario\":\"1) An earlier reconnect adopted a service-owned server, so the managed file says 'external' and the port file holds its port. 2) The service server stalls, for example in a long SQLite pause. 3) The user reconnects. The probe at 676 fails after 2s, so ADOPTED_PID stays empty. 4) Line 696-698 reloads REMOTE_MANAGED=external from the files. 5) At 701 server_running '' is false, so line 706 probes again for 2s and fails. 6) Lines 707-709 clear the state, so 729-744 pick a port and launch a new `t3 serve --base-dir ~/.t3`. 7) The new server hits ServerAlreadyRunningError (serverOwnership.ts:24-35) and exits, or it succeeds if ownership has been released. 8) wait_ready at 744 fails, the script kills the new PID and removes the pid, port and managed files at 751-753, then exits 1. The comment at 702-703 says the intent is to avoid launching a second server after a momentary stall, but the guard only helps when the first probe succeeds. I did not read the full ownership acquisition, so whether the second server exits or runs beside the first depends on it.\",\"consequence\":\"Reconnect fails after about 60s, and the ownership files are wiped, so the adopted external server is forgotten until the next successful adoption.\",\"severity\":\"low\",\"introduced_by_change\":false}]}"
+}

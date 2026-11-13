@@ -1,0 +1,242 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-33632.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "9a0d02723c182cd9da01973b30c2b38b299bdbc6",
+  "base_commit": "e6fa2e35c34c6b1af2cef4eaf444f1b88804933e",
+  "wall_ms": 292880,
+  "cost_usd": 1.5939073000000001,
+  "duration_ms": 292374,
+  "num_turns": 41,
+  "usage": {
+    "input_tokens": 64,
+    "cache_creation_input_tokens": 88650,
+    "cache_read_input_tokens": 2140413,
+    "output_tokens": 22766,
+    "output_tokens_details": {
+      "thinking_tokens": 13242
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 88650,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 4876,
+        "cache_read_input_tokens": 99842,
+        "cache_creation_input_tokens": 2969,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2969
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 10377,
+      "outputTokens": 22,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0010487,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 64,
+      "outputTokens": 22766,
+      "cacheReadInputTokens": 2140413,
+      "cacheCreationInputTokens": 88650,
+      "webSearchRequests": 0,
+      "costUSD": 1.5928586000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 13242,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 88650,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The CSRF token is bound to the DPoP session id. If the cached token is renewed between loading the consent screen and pressing Approve, the decision fails, and every retry resends the same stale token until the page is reloaded.",
+      "scenario": "1) The hosted app's cached DPoP token for env X has about 61s left (it may be cached from earlier dashboard use; TTL is 1h). 2) /approve-agent loads: approval runs with token A, and the server returns csrfToken=sign(sessionA,…). 3) The user reads the screen, picks a level (requireLevelChoice) and maybe switches windows, which re-arms the button. More than 1s later they press Approve. 4) The cached token is now inside the 60s refresh skew, so getDpopToken exchanges a new token B with a new session id. 5) Server approve: approvingSession gives csrf(sessionB), which does not equal the posted csrf(sessionA), so the server returns 'Your session cannot approve this request. Enter a pairing code instead.' 6) The client catches this as `refused` and does not retry. McpConsent keeps the stale details, so every later Approve fails the same way.",
+      "location": "apps/web/src/components/auth/ConnectAgentSurface.tsx:201-220 (decide reuses loaded.details.csrfToken); apps/server/src/auth/McpOAuth.ts:310-319,474",
+      "consequence": "The owner sees a confusing 'enter a pairing code' error on a page with no code field. Approve keeps failing until they reload the page. This happens when the dwell time crosses the token's refresh boundary.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "evidence": [
+        "packages/client-runtime/src/state/connectMcpApproval.ts:64-106",
+        "packages/client-runtime/src/state/environmentHttpAuth.ts:183-258",
+        "packages/client-runtime/src/authorization/service.ts:393-406",
+        "packages/client-runtime/src/connection/model.ts:137",
+        "apps/server/src/auth/EnvironmentAuth.ts:978-994",
+        "apps/server/src/auth/McpOAuth.ts:310-319",
+        "apps/server/src/auth/McpOAuth.ts:410-422",
+        "apps/server/src/auth/McpOAuth.ts:471-480",
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:201-221",
+        "apps/web/src/components/auth/ApproveAgentSurface.tsx:60-61"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Every await in the hosted call is bounded: the token exchange has a 30s timeout, and the request with its retry has a 10s timeout.",
+      "scenario": "I tried to make the call hang: the relay token exchange stalls on the first authorizeDpopHttp at line 64, which sits outside the 10s timeout. The forked exchange is capped at 30s and fails with ConnectionTransientError. That error is mapped to ConnectMcpApprovalUnavailableError and shown to the user. The lock is held only for the cache read and the fork, not for the join.",
+      "safe_line": "packages/client-runtime/src/authorization/service.ts:445-454",
+      "evidence": [
+        "packages/client-runtime/src/authorization/service.ts:385-477",
+        "packages/client-runtime/src/authorization/service.ts:568-574",
+        "packages/client-runtime/src/state/environmentHttpAuth.ts:260-271",
+        "packages/client-runtime/src/state/connectMcpApproval.ts:22,64,109"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The headers are optional keys, and CORS allows authorization and dpop globally, so `{}` works and DPoP headers from app.t3.codes pass the preflight.",
+      "scenario": "I tried a hosted-app cross-origin POST carrying Authorization and DPoP, and a PeerLinks or primary call with headers {}. The global CORS layer allows both headers. With no header, resolveRequestCredential falls back to the cookie, as before.",
+      "safe_line": "packages/contracts/src/environmentHttp.ts:92-95",
+      "evidence": [
+        "packages/contracts/src/environmentHttp.ts:92-95",
+        "packages/contracts/src/environmentHttp.ts:654-671",
+        "apps/server/src/httpCors.ts:4-9",
+        "apps/server/src/http.ts:256-271",
+        "apps/server/src/server.ts:848",
+        "apps/server/src/auth/EnvironmentAuth.ts:756-829",
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:108-115"
+      ]
+    },
+    {
+      "note_index": 3,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The hazard the note names (a non-owner on the tunnel has no code fallback) is finding 0. The extra `environment` param is dropped because the request schema has only optional keys. I could not verify from the checkout that the relay's DPoP httpBaseUrl host equals the tunnel host, which the resource and issuer checks need.",
+      "evidence": [
+        "apps/server/src/auth/mcpOAuthHttp.ts:78-93",
+        "apps/server/src/auth/mcpOAuthHttp.ts:127-135",
+        "packages/contracts/src/auth.ts:526-534",
+        "apps/web/src/cloud/t3ConnectState.ts:28-41",
+        "apps/server/src/auth/McpOAuth.ts:71-77,131-139"
+      ]
+    },
+    {
+      "note_index": 4,
+      "verdict": "safe",
+      "summary": "Servers without the flag leave it undefined, so the wizard keeps the three-step flow with a code. The only reader checks `=== true`.",
+      "scenario": "I tried an older environment saved in a new web client: capabilities.mcpHostedApproval is undefined, so hostedApproval is false and the Access step and code still show. Whether the nightly host serves the page is finding 2.",
+      "safe_line": "apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:125-126",
+      "evidence": [
+        "apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:117-176",
+        "apps/server/src/environment/ServerEnvironment.ts:289-293"
+      ]
+    },
+    {
+      "note_index": 5,
+      "verdict": "safe",
+      "summary": "The server only registers and matches https or http on localhost, 127.0.0.1 and [::1]. The client set is a superset, so it never refuses a redirect the server can produce.",
+      "scenario": "I tried a loopback redirect whose port differs from the registered one, and the error redirects from validateAuthorization. Both use a presented redirectUri that passed parseRedirect, so it is https or a loopback host from the server's three-entry set. All of these are in isLoopbackHost.",
+      "safe_line": "apps/server/src/auth/McpOAuth.ts:109-111",
+      "evidence": [
+        "apps/server/src/auth/McpOAuth.ts:104-129",
+        "apps/server/src/auth/McpOAuth.ts:369-385",
+        "packages/shared/src/preview.ts:41-56",
+        "apps/web/src/components/auth/ConnectAgentSurface.logic.ts:54-65"
+      ]
+    },
+    {
+      "note_index": 6,
+      "verdict": "safe",
+      "summary": "The load effect ignores stale answers through a cancelled flag. transport and authorization come from useState or a module constant, so they are stable. The stale-csrf retry problem is reported under note 0.",
+      "scenario": "I tried a StrictMode double mount and a remount. The first load's answer is dropped because `cancelled` is set in the cleanup. The deps never change, so no reload loop starts.",
+      "safe_line": "apps/web/src/components/auth/ConnectAgentSurface.tsx:165-181",
+      "evidence": [
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:108-115",
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:164-221",
+        "apps/web/src/components/auth/ApproveAgentSurface.tsx:76-86"
+      ]
+    },
+    {
+      "note_index": 7,
+      "verdict": "safe",
+      "summary": "This is the same check as note 5. Success and error redirects are built only from a redirectUri the server validated.",
+      "scenario": "I tried a decision answer for an approved request: redirectWith(authorization.redirectUri) uses the validated presented URI, so agentRedirectUrl accepts it. A javascript: URI can never be registered.",
+      "safe_line": "apps/server/src/auth/McpOAuth.ts:370-377",
+      "evidence": [
+        "apps/server/src/auth/McpOAuth.ts:488-500",
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:50-54,211-220"
+      ]
+    },
+    {
+      "note_index": 8,
+      "verdict": "covered",
+      "covered_by": 4,
+      "summary": "The open question about the managed remote-clients policy is finding 4. The missing code on the fallback page is finding 3.",
+      "evidence": [
+        "apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:125-176",
+        "apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:209-231",
+        "apps/web/src/components/mcp/mcpGate.ts:86-91"
+      ]
+    },
+    {
+      "note_index": 9,
+      "verdict": "safe",
+      "summary": "The command runs in parallel mode by default, so load and decide never cancel each other. Failures are squashed into Result.fail and shown as a message.",
+      "scenario": "I tried overlapping runs, such as a StrictMode double load followed by decide. The scheduler is parallel, so no run is interrupted, and any non-Unavailable failure gets the generic 'Could not reach' message.",
+      "safe_line": "packages/client-runtime/src/state/runtime.ts:435-436",
+      "evidence": [
+        "packages/client-runtime/src/state/runtime.ts:426-449",
+        "apps/web/src/state/connectMcpApproval.ts:12-23",
+        "apps/web/src/components/auth/ApproveAgentSurface.tsx:38-63"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Version skew: the new hosted /approve-agent replaces the old page at the same path, so the 'Approve with T3 Connect' button on not-yet-updated environments now lands on a page that cannot read its link.",
+      "scenario": "1) An environment runs the parent commit's server and bundled web. Its /connect-agent page shows connectSignIn and sends the browser to https://app.t3.codes/approve-agent?environment=X&access=auto&nonce=N&return_to=<tunnel>/connect-agent?... 2) app.t3.codes is deployed with this commit. ApproveAgentSurface reads `environment`, and readAuthorizationRequest decodes the rest as {} because all keys are optional and extras are ignored. 3) The load call reaches the old server through the relay with no client_id, and validateAuthorization fails with 'This sign-in link names an unknown app.' 4) The fallback link is built from the same search, minus environment, and leads to the same error. Nothing returns to the old page's #t3-connect-code fragment handler. This assumes the parent commit's connectSignIn flow shipped in a released server, which I cannot see in the checkout.",
+      "location": "apps/web/src/components/auth/ApproveAgentSurface.tsx:28-31,149-166",
+      "consequence": "On every environment not yet updated, the T3 Connect approval button dead-ends with 'This sign-in cannot continue'. The user has to go back and paste a code instead.",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "evidence": [
+        "/tmp/t3code-judge/diffs/9a0d02723c18.diff:434-461",
+        "/tmp/t3code-judge/diffs/9a0d02723c18.diff:1138-1149",
+        "apps/web/src/components/auth/ApproveAgentSurface.tsx:28-31",
+        "apps/web/src/components/auth/ApproveAgentSurface.tsx:149-166",
+        "apps/web/src/components/auth/ConnectAgentSurface.tsx:117-122",
+        "packages/contracts/src/auth.ts:526-534",
+        "apps/server/src/auth/McpOAuth.ts:281-287",
+        "apps/server/src/auth/McpOAuth.ts:363-368"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The CSRF token is bound to the DPoP session id. If the cached token is renewed between loading the consent screen and pressing Approve, the decision fails, and every retry resends the same stale token until the page is reloaded.\",\"scenario\":\"1) The hosted app's cached DPoP token for env X has about 61s left (it may be cached from earlier dashboard use; TTL is 1h). 2) /approve-agent loads: approval runs with token A, and the server returns csrfToken=sign(sessionA,…). 3) The user reads the screen, picks a level (requireLevelChoice) and maybe switches windows, which re-arms the button. More than 1s later they press Approve. 4) The cached token is now inside the 60s refresh skew, so getDpopToken exchanges a new token B with a new session id. 5) Server approve: approvingSession gives csrf(sessionB), which does not equal the posted csrf(sessionA), so the server returns 'Your session cannot approve this request. Enter a pairing code instead.' 6) The client catches this as `refused` and does not retry. McpConsent keeps the stale details, so every later Approve fails the same way.\",\"location\":\"apps/web/src/components/auth/ConnectAgentSurface.tsx:201-220 (decide reuses loaded.details.csrfToken); apps/server/src/auth/McpOAuth.ts:310-319,474\",\"consequence\":\"The owner sees a confusing 'enter a pairing code' error on a page with no code field. Approve keeps failing until they reload the page. This happens when the dwell time crosses the token's refresh boundary.\",\"severity\":\"low\",\"introduced_by_change\":true,\"evidence\":[\"packages/client-runtime/src/state/connectMcpApproval.ts:64-106\",\"packages/client-runtime/src/state/environmentHttpAuth.ts:183-258\",\"packages/client-runtime/src/authorization/service.ts:393-406\",\"packages/client-runtime/src/connection/model.ts:137\",\"apps/server/src/auth/EnvironmentAuth.ts:978-994\",\"apps/server/src/auth/McpOAuth.ts:310-319\",\"apps/server/src/auth/McpOAuth.ts:410-422\",\"apps/server/src/auth/McpOAuth.ts:471-480\",\"apps/web/src/components/auth/ConnectAgentSurface.tsx:201-221\",\"apps/web/src/components/auth/ApproveAgentSurface.tsx:60-61\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Every await in the hosted call is bounded: the token exchange has a 30s timeout, and the request with its retry has a 10s timeout.\",\"scenario\":\"I tried to make the call hang: the relay token exchange stalls on the first authorizeDpopHttp at line 64, which sits outside the 10s timeout. The forked exchange is capped at 30s and fails with ConnectionTransientError. That error is mapped to ConnectMcpApprovalUnavailableError and shown to the user. The lock is held only for the cache read and the fork, not for the join.\",\"safe_line\":\"packages/client-runtime/src/authorization/service.ts:445-454\",\"evidence\":[\"packages/client-runtime/src/authorization/service.ts:385-477\",\"packages/client-runtime/src/authorization/service.ts:568-574\",\"packages/client-runtime/src/state/environmentHttpAuth.ts:260-271\",\"packages/client-runtime/src/state/connectMcpApproval.ts:22,64,109\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The headers are optional keys, and CORS allows authorization and dpop globally, so `{}` works and DPoP headers from app.t3.codes pass the preflight.\",\"scenario\":\"I tried a hosted-app cross-origin POST carrying Authorization and DPoP, and a PeerLinks or primary call with headers {}. The global CORS layer allows both headers. With no header, resolveRequestCredential falls back to the cookie, as before.\",\"safe_line\":\"packages/contracts/src/environmentHttp.ts:92-95\",\"evidence\":[\"packages/contracts/src/environmentHttp.ts:92-95\",\"packages/contracts/src/environmentHttp.ts:654-671\",\"apps/server/src/httpCors.ts:4-9\",\"apps/server/src/http.ts:256-271\",\"apps/server/src/server.ts:848\",\"apps/server/src/auth/EnvironmentAuth.ts:756-829\",\"apps/web/src/components/auth/ConnectAgentSurface.tsx:108-115\"]},{\"note_index\":3,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The hazard the note names (a non-owner on the tunnel has no code fallback) is finding 0. The extra `environment` param is dropped because the request schema has only optional keys. I could not verify from the checkout that the relay's DPoP httpBaseUrl host equals the tunnel host, which the resource and issuer checks need.\",\"evidence\":[\"apps/server/src/auth/mcpOAuthHttp.ts:78-93\",\"apps/server/src/auth/mcpOAuthHttp.ts:127-135\",\"packages/contracts/src/auth.ts:526-534\",\"apps/web/src/cloud/t3ConnectState.ts:28-41\",\"apps/server/src/auth/McpOAuth.ts:71-77,131-139\"]},{\"note_index\":4,\"verdict\":\"safe\",\"summary\":\"Servers without the flag leave it undefined, so the wizard keeps the three-step flow with a code. The only reader checks `=== true`.\",\"scenario\":\"I tried an older environment saved in a new web client: capabilities.mcpHostedApproval is undefined, so hostedApproval is false and the Access step and code still show. Whether the nightly host serves the page is finding 2.\",\"safe_line\":\"apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:125-126\",\"evidence\":[\"apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:117-176\",\"apps/server/src/environment/ServerEnvironment.ts:289-293\"]},{\"note_index\":5,\"verdict\":\"safe\",\"summary\":\"The server only registers and matches https or http on localhost, 127.0.0.1 and [::1]. The client set is a superset, so it never refuses a redirect the server can produce.\",\"scenario\":\"I tried a loopback redirect whose port differs from the registered one, and the error redirects from validateAuthorization. Both use a presented redirectUri that passed parseRedirect, so it is https or a loopback host from the server's three-entry set. All of these are in isLoopbackHost.\",\"safe_line\":\"apps/server/src/auth/McpOAuth.ts:109-111\",\"evidence\":[\"apps/server/src/auth/McpOAuth.ts:104-129\",\"apps/server/src/auth/McpOAuth.ts:369-385\",\"packages/shared/src/preview.ts:41-56\",\"apps/web/src/components/auth/ConnectAgentSurface.logic.ts:54-65\"]},{\"note_index\":6,\"verdict\":\"safe\",\"summary\":\"The load effect ignores stale answers through a cancelled flag. transport and authorization come from useState or a module constant, so they are stable. The stale-csrf retry problem is reported under note 0.\",\"scenario\":\"I tried a StrictMode double mount and a remount. The first load's answer is dropped because `cancelled` is set in the cleanup. The deps never change, so no reload loop starts.\",\"safe_line\":\"apps/web/src/components/auth/ConnectAgentSurface.tsx:165-181\",\"evidence\":[\"apps/web/src/components/auth/ConnectAgentSurface.tsx:108-115\",\"apps/web/src/components/auth/ConnectAgentSurface.tsx:164-221\",\"apps/web/src/components/auth/ApproveAgentSurface.tsx:76-86\"]},{\"note_index\":7,\"verdict\":\"safe\",\"summary\":\"This is the same check as note 5. Success and error redirects are built only from a redirectUri the server validated.\",\"scenario\":\"I tried a decision answer for an approved request: redirectWith(authorization.redirectUri) uses the validated presented URI, so agentRedirectUrl accepts it. A javascript: URI can never be registered.\",\"safe_line\":\"apps/server/src/auth/McpOAuth.ts:370-377\",\"evidence\":[\"apps/server/src/auth/McpOAuth.ts:488-500\",\"apps/web/src/components/auth/ConnectAgentSurface.tsx:50-54,211-220\"]},{\"note_index\":8,\"verdict\":\"covered\",\"covered_by\":4,\"summary\":\"The open question about the managed remote-clients policy is finding 4. The missing code on the fallback page is finding 3.\",\"evidence\":[\"apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:125-176\",\"apps/web/src/components/mcp/UseInAnotherAppDialog.tsx:209-231\",\"apps/web/src/components/mcp/mcpGate.ts:86-91\"]},{\"note_index\":9,\"verdict\":\"safe\",\"summary\":\"The command runs in parallel mode by default, so load and decide never cancel each other. Failures are squashed into Result.fail and shown as a message.\",\"scenario\":\"I tried overlapping runs, such as a StrictMode double load followed by decide. The scheduler is parallel, so no run is interrupted, and any non-Unavailable failure gets the generic 'Could not reach' message.\",\"safe_line\":\"packages/client-runtime/src/state/runtime.ts:435-436\",\"evidence\":[\"packages/client-runtime/src/state/runtime.ts:426-449\",\"apps/web/src/state/connectMcpApproval.ts:12-23\",\"apps/web/src/components/auth/ApproveAgentSurface.tsx:38-63\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Version skew: the new hosted /approve-agent replaces the old page at the same path, so the 'Approve with T3 Connect' button on not-yet-updated environments now lands on a page that cannot read its link.\",\"scenario\":\"1) An environment runs the parent commit's server and bundled web. Its /connect-agent page shows connectSignIn and sends the browser to https://app.t3.codes/approve-agent?environment=X&access=auto&nonce=N&return_to=<tunnel>/connect-agent?... 2) app.t3.codes is deployed with this commit. ApproveAgentSurface reads `environment`, and readAuthorizationRequest decodes the rest as {} because all keys are optional and extras are ignored. 3) The load call reaches the old server through the relay with no client_id, and validateAuthorization fails with 'This sign-in link names an unknown app.' 4) The fallback link is built from the same search, minus environment, and leads to the same error. Nothing returns to the old page's #t3-connect-code fragment handler. This assumes the parent commit's connectSignIn flow shipped in a released server, which I cannot see in the checkout.\",\"location\":\"apps/web/src/components/auth/ApproveAgentSurface.tsx:28-31,149-166\",\"consequence\":\"On every environment not yet updated, the T3 Connect approval button dead-ends with 'This sign-in cannot continue'. The user has to go back and paste a code instead.\",\"severity\":\"medium\",\"introduced_by_change\":true,\"evidence\":[\"/tmp/t3code-judge/diffs/9a0d02723c18.diff:434-461\",\"/tmp/t3code-judge/diffs/9a0d02723c18.diff:1138-1149\",\"apps/web/src/components/auth/ApproveAgentSurface.tsx:28-31\",\"apps/web/src/components/auth/ApproveAgentSurface.tsx:149-166\",\"apps/web/src/components/auth/ConnectAgentSurface.tsx:117-122\",\"packages/contracts/src/auth.ts:526-534\",\"apps/server/src/auth/McpOAuth.ts:281-287\",\"apps/server/src/auth/McpOAuth.ts:363-368\"]}]}"
+}

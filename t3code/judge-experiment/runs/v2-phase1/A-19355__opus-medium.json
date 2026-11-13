@@ -1,0 +1,127 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-19355.json",
+  "config": "opus-medium",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+  "base_commit": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+  "wall_ms": 134861,
+  "cost_usd": 0.8777418999999999,
+  "duration_ms": 134346,
+  "num_turns": 27,
+  "usage": {
+    "input_tokens": 44,
+    "cache_creation_input_tokens": 61769,
+    "cache_read_input_tokens": 907040,
+    "output_tokens": 10076,
+    "output_tokens_details": {
+      "thinking_tokens": 4440
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 61769,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1626,
+        "cache_read_input_tokens": 65798,
+        "cache_creation_input_tokens": 662,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 662
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4744,
+      "outputTokens": 23,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00048590000000000005,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 44,
+      "outputTokens": 10076,
+      "cacheReadInputTokens": 907040,
+      "cacheCreationInputTokens": 61769,
+      "webSearchRequests": 0,
+      "costUSD": 0.8772559999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 4440,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 61769,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "I tried two orderings: a replacement session with the same id adds tasks between the read and the write, and retryReleaseRecords re-runs the write after a replacement opened. Neither drops or resurrects tasks. Each attempt re-reads the row, removes only the task ids it captured, and returns without writing when nothing is left to remove. The commit is guarded by a full-row string compare inside the transaction. The other remaining hazard, rows that never re-encode to the same text, is finding 0.",
+      "scenario": "1) close(S) removes the entry; readReleasedBackgroundTasks captures {dev-server} for P1. 2) While scope close hangs, a replacement session with id S writes P1 with [dev-server, replacement-task]. 3) The write re-reads P1, so remaining=[replacement-task]; the CAS compares against the fresh row and commits. 4) If writeReleaseRecords fails and retryReleaseRecords re-runs it, the re-read finds no captured ids (remaining.length === tasks.length) and returns without writing. Separately, the old pump persists nothing once the entry is removed (comment at ProviderSessionManager.ts:967-971), so the dying adapter cannot re-add rows.",
+      "safe_line": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:854",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:785-886",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-953",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:967-1008",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1059-1106",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2172-2192",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2535",
+        "apps/server/src/orchestration-v2/EventSink.ts:529-560",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2248",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3921-3924",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:4797-4811",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:268-275",
+        "packages/provider-muse/src/server/adapter.ts:99"
+      ],
+      "introduced_by_change": true
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "The cleanup write is a `provider-thread.updated` event. Applying that event always sets the app thread's activeProviderThreadId to the updated provider thread. If the released session's provider thread is no longer the active one when the cleanup runs, the write points the thread back at the old one.",
+      "scenario": "1) A thread on Claude session S has a dev-server task on provider thread P1. 2) The user switches provider; EffectWorker detaches S ('Provider thread handoff replaced this session binding.'). 3) If the new provider thread P2 was already written as active before the detach effect runs, the cleanup write for P1 makes ProjectionStore set thread.activeProviderThreadId=P1. 4) ProviderSwitchService.ts:107 and ProviderTurnStartService.ts:397 then resolve the old Claude provider thread. I could not confirm that step 3's ordering (P2 active before the detach) is reachable without reading the full handoff flow in Orchestrator.",
+      "missing": "Whether, on a handoff or replace, any provider-thread.updated for the new provider thread can commit before the old session's detach and release finish.",
+      "location": "apps/server/src/orchestration-v2/ProjectionStore.ts:2264",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2249-2276",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:365-375",
+        "apps/server/src/orchestration-v2/ProviderSwitchService.ts:104-110",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService.ts:395-399",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:857-874"
+      ],
+      "introduced_by_change": true,
+      "severity": "medium"
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"I tried two orderings: a replacement session with the same id adds tasks between the read and the write, and retryReleaseRecords re-runs the write after a replacement opened. Neither drops or resurrects tasks. Each attempt re-reads the row, removes only the task ids it captured, and returns without writing when nothing is left to remove. The commit is guarded by a full-row string compare inside the transaction. The other remaining hazard, rows that never re-encode to the same text, is finding 0.\",\"scenario\":\"1) close(S) removes the entry; readReleasedBackgroundTasks captures {dev-server} for P1. 2) While scope close hangs, a replacement session with id S writes P1 with [dev-server, replacement-task]. 3) The write re-reads P1, so remaining=[replacement-task]; the CAS compares against the fresh row and commits. 4) If writeReleaseRecords fails and retryReleaseRecords re-runs it, the re-read finds no captured ids (remaining.length === tasks.length) and returns without writing. Separately, the old pump persists nothing once the entry is removed (comment at ProviderSessionManager.ts:967-971), so the dying adapter cannot re-add rows.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:854\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:785-886\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-953\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:967-1008\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1059-1106\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2172-2192\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2535\",\"apps/server/src/orchestration-v2/EventSink.ts:529-560\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2248\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:3921-3924\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:4797-4811\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:268-275\",\"packages/provider-muse/src/server/adapter.ts:99\"],\"introduced_by_change\":true},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"The cleanup write is a `provider-thread.updated` event. Applying that event always sets the app thread's activeProviderThreadId to the updated provider thread. If the released session's provider thread is no longer the active one when the cleanup runs, the write points the thread back at the old one.\",\"scenario\":\"1) A thread on Claude session S has a dev-server task on provider thread P1. 2) The user switches provider; EffectWorker detaches S ('Provider thread handoff replaced this session binding.'). 3) If the new provider thread P2 was already written as active before the detach effect runs, the cleanup write for P1 makes ProjectionStore set thread.activeProviderThreadId=P1. 4) ProviderSwitchService.ts:107 and ProviderTurnStartService.ts:397 then resolve the old Claude provider thread. I could not confirm that step 3's ordering (P2 active before the detach) is reachable without reading the full handoff flow in Orchestrator.\",\"missing\":\"Whether, on a handoff or replace, any provider-thread.updated for the new provider thread can commit before the old session's detach and release finish.\",\"location\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:2264\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:2249-2276\",\"apps/server/src/orchestration-v2/EffectWorker.ts:365-375\",\"apps/server/src/orchestration-v2/ProviderSwitchService.ts:104-110\",\"apps/server/src/orchestration-v2/ProviderTurnStartService.ts:395-399\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:857-874\"],\"introduced_by_change\":true,\"severity\":\"medium\"}]}"
+}

@@ -1,0 +1,128 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-7599.json",
+  "config": "opus-medium",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "8ddd9f7efcdfb6e32b614595242b5986942d37b0",
+  "base_commit": "fcbe45796aea99e9e2a9ce19dd9409fbd7e720e4",
+  "wall_ms": 47520,
+  "cost_usd": 0.2818619,
+  "duration_ms": 46870,
+  "num_turns": 13,
+  "usage": {
+    "input_tokens": 14,
+    "cache_creation_input_tokens": 21943,
+    "cache_read_input_tokens": 123906,
+    "output_tokens": 4041,
+    "output_tokens_details": {
+      "thinking_tokens": 1220
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 21943,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1289,
+        "cache_read_input_tokens": 25119,
+        "cache_creation_input_tokens": 1515,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1515
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 6477,
+      "outputTokens": 26,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0006607000000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 14,
+      "outputTokens": 4041,
+      "cacheReadInputTokens": 123906,
+      "cacheCreationInputTokens": 21943,
+      "webSearchRequests": 0,
+      "costUSD": 0.2812012,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 1220,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 21943,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The only real hazard in this note is the unbounded wait in stop() before closeRun: the mutex held by start/configResolve. Finding 0 already reports it. The other pre-close steps are cheap: onShutdown is only a Ref.set, and closeRun with a timeout forks the close and returns false when the timeout trips. markComplete still runs through ensuring.",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:350-371",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1048-1090",
+        "apps/desktop/src/backend/DesktopBackendPool.ts:302",
+        "apps/desktop/src/window/DesktopWindow.ts:957-959",
+        "apps/desktop/src/app/DesktopApp.ts:322-342",
+        "apps/desktop/src/app/DesktopLifecycle.ts:84-139"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "cannot_tell",
+      "summary": "The note claims the layer finalizer stop() at :1157 'later re-closes' the timed-out run, and treats that as harmless. That re-close is unbounded: state.active still holds the run, so closeRun runs with no timeout and does Scope.close plus Fiber.await(run.fiber) with no limit. If the backend is still hung, the layer-scope teardown under NodeRuntime.runMain hangs too. Whether that blocks process exit depends on Electron's app.quit being able to end the process while Node fibers are still pending. That is runtime behaviour that cannot be read in the checkout.",
+      "missing": "Whether Electron app.quit (DesktopLifecycle.ts:131-138) ends the process while runMain's layer finalizers (DesktopBackendManager.ts:1157) and the close fiber forked into parentScope are still blocked. Also whether closing an already-closing Scope in Effect v4 returns at once or waits.",
+      "scenario": "1. The backend hangs in teardown. 2. The quit finalizer times out after 5s, so stop returns early at :1088 and the run stays active. 3. markComplete fires, so scopedProgram returns. 4. runMain closes desktopRuntimeLayer, which calls stop() with no timeout. That reaches closeRun at :362, which calls Fiber.await(run.fiber) on the hung fiber with no limit.",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:355-363",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1051-1074",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1087-1090",
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1157",
+        "apps/desktop/src/main.ts:238",
+        "apps/desktop/src/app/DesktopLifecycle.ts:131-138"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "This note is the same mutex-wait hazard as finding 0: quit is delayed while start holds the mutex during configResolve. The other pre-close steps add no further unbounded wait. onShutdown is Ref.set(backendReadyRef,false).",
+      "evidence": [
+        "apps/desktop/src/backend/DesktopBackendManager.ts:1051",
+        "apps/desktop/src/window/DesktopWindow.ts:957-959",
+        "apps/desktop/src/app/DesktopApp.ts:336"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The only real hazard in this note is the unbounded wait in stop() before closeRun: the mutex held by start/configResolve. Finding 0 already reports it. The other pre-close steps are cheap: onShutdown is only a Ref.set, and closeRun with a timeout forks the close and returns false when the timeout trips. markComplete still runs through ensuring.\",\"evidence\":[\"apps/desktop/src/backend/DesktopBackendManager.ts:350-371\",\"apps/desktop/src/backend/DesktopBackendManager.ts:1048-1090\",\"apps/desktop/src/backend/DesktopBackendPool.ts:302\",\"apps/desktop/src/window/DesktopWindow.ts:957-959\",\"apps/desktop/src/app/DesktopApp.ts:322-342\",\"apps/desktop/src/app/DesktopLifecycle.ts:84-139\"]},{\"note_index\":1,\"verdict\":\"cannot_tell\",\"summary\":\"The note claims the layer finalizer stop() at :1157 'later re-closes' the timed-out run, and treats that as harmless. That re-close is unbounded: state.active still holds the run, so closeRun runs with no timeout and does Scope.close plus Fiber.await(run.fiber) with no limit. If the backend is still hung, the layer-scope teardown under NodeRuntime.runMain hangs too. Whether that blocks process exit depends on Electron's app.quit being able to end the process while Node fibers are still pending. That is runtime behaviour that cannot be read in the checkout.\",\"missing\":\"Whether Electron app.quit (DesktopLifecycle.ts:131-138) ends the process while runMain's layer finalizers (DesktopBackendManager.ts:1157) and the close fiber forked into parentScope are still blocked. Also whether closing an already-closing Scope in Effect v4 returns at once or waits.\",\"scenario\":\"1. The backend hangs in teardown. 2. The quit finalizer times out after 5s, so stop returns early at :1088 and the run stays active. 3. markComplete fires, so scopedProgram returns. 4. runMain closes desktopRuntimeLayer, which calls stop() with no timeout. That reaches closeRun at :362, which calls Fiber.await(run.fiber) on the hung fiber with no limit.\",\"evidence\":[\"apps/desktop/src/backend/DesktopBackendManager.ts:355-363\",\"apps/desktop/src/backend/DesktopBackendManager.ts:1051-1074\",\"apps/desktop/src/backend/DesktopBackendManager.ts:1087-1090\",\"apps/desktop/src/backend/DesktopBackendManager.ts:1157\",\"apps/desktop/src/main.ts:238\",\"apps/desktop/src/app/DesktopLifecycle.ts:131-138\"]},{\"note_index\":2,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"This note is the same mutex-wait hazard as finding 0: quit is delayed while start holds the mutex during configResolve. The other pre-close steps add no further unbounded wait. onShutdown is Ref.set(backendReadyRef,false).\",\"evidence\":[\"apps/desktop/src/backend/DesktopBackendManager.ts:1051\",\"apps/desktop/src/window/DesktopWindow.ts:957-959\",\"apps/desktop/src/app/DesktopApp.ts:336\"]}]}"
+}

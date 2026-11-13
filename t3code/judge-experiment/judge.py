@@ -37,7 +37,7 @@ SETTINGS = HERE / "claude-code.settings.json"
 TOOLS = "Read,Grep,Glob"
 DISALLOWED = "Bash,Read(//proc/**),Grep(//proc/**),Glob(//proc/**)"
 CALL_BUDGET_USD = 5.0
-TOTAL_STOP_USD = 80.0
+TOTAL_STOP_USD = float(os.environ.get("JUDGE_TOTAL_STOP_USD", "80"))
 TIMEOUT_S = 40 * 60
 
 CONFIGS = {
@@ -248,6 +248,7 @@ def main() -> None:
     template = Path(a.prompt).read_text()
     out_dir = Path(a.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    streak = 0
     for config in a.configs.split(","):
         for inp in a.inputs:
             p = Path(inp).resolve()
@@ -260,6 +261,13 @@ def main() -> None:
                     log.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {p.stem}__{config} exception {e!r}\n")
                 status = f"fail {e!r}"
             print(f"{time.strftime('%H:%M:%S')} {p.stem} {config}: {status} | total ${total_spend():.2f}", flush=True)
+            # A transient API block (seen: 403 from the API's edge) fails every call in seconds;
+            # back off instead of burning through the queue, and give up after a long streak.
+            streak = streak + 1 if status.startswith("fail") else 0
+            if streak >= 8:
+                raise SystemExit("STOP: 8 failures in a row")
+            if streak:
+                time.sleep(60 * streak)
 
 
 if __name__ == "__main__":

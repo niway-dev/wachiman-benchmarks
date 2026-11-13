@@ -1,0 +1,124 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-22107.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+  "base_commit": "48745ffba50d8c00e430fc3d06244b4317690227",
+  "wall_ms": 220260,
+  "cost_usd": 1.1586098000000002,
+  "duration_ms": 219651,
+  "num_turns": 25,
+  "usage": {
+    "input_tokens": 40,
+    "cache_creation_input_tokens": 75750,
+    "cache_read_input_tokens": 1004277,
+    "output_tokens": 17548,
+    "output_tokens_details": {
+      "thinking_tokens": 12442
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 75750,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2457,
+        "cache_read_input_tokens": 78927,
+        "cache_creation_input_tokens": 1514,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1514
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4634,
+      "outputTokens": 342,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0006344,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 313,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 40,
+      "outputTokens": 17548,
+      "cacheReadInputTokens": 1004277,
+      "cacheCreationInputTokens": 75750,
+      "webSearchRequests": 0,
+      "costUSD": 1.1579754000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 12442,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 75750,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1280",
+      "summary": "A fetch that hangs records no failure until its 5-minute limit runs out, so the failure backoff never builds up. Every status refresh after the 15s cache TTL joins the stuck fiber and waits the full 5s.",
+      "scenario": "1) The upstream host is blackholed: packets are dropped and nothing answers (for example a VPN-only host while the VPN is down), so ssh or https connect hangs for the OS or curl connect timeout, about 75-300s. 2) t=0: statusDetailsRemote forks the fetch. The waiter times out at 5s (1314-1316) and the cache stores success for 15s (1553). 3) t=15s and every 15s after: the cache misses. `failure` is undefined because tapError (1300) has not fired, so the gate at 1280 passes. The lookup finds the pending fiber (1283-1284) and joins it for another 5s. 4) Only when the fetch exits is count=1 / retryAt=+30s recorded. The next fetch hangs again. Before this change the fetch was killed at 5s, the failure was recorded right away, and cooldown grew 30s→60s→…→15min, so most status reads returned at once. Now about every status refresh (vcsRefreshStatus RPC, broadcaster ticks, the post-pull refreshGitStatus) costs 5s for as long as the host stays unreachable. Several such repos also hold the 4 global permits (1302), so healthy repos' fetches queue and show stale behind counts.",
+      "consequence": "Status refreshes stall 5s each, repeatedly and with no escalating backoff, while the remote is blackholed. Healthy repos' upstream refresh is delayed while the global slots are held.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1559-1572",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:100-106",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2254-2266",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:517-523",
+        "apps/server/src/git/GitManager.ts:1346-1352"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The only real hazard here is the unbounded Fiber.await before the pull, which is finding 0. I also tried a key mismatch between the status fetch and the pull and could not build one: both resolve the realpath'd common dir through resolveGitCommonDir, and status matches the longest remote name first, which agrees with branch.<b>.remote for normal and slash-named remotes. The retry guard (same branch, same HEAD) also held.",
+      "scenario": "I tried four cases: the pull and the status fetch reaching gitCommonDir through different paths; remote names with slashes ('team/upstream'); a branch whose remote is '.'; and a lock failure after HEAD has moved. Keys match in the normal cases, and the guard at 2715-2721 blocks the retry once HEAD or the branch has moved. The remaining delay is finding 0.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2639-2755",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1324-1360",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1502-1515",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1236-1256",
+        "apps/server/src/git/remoteRefs.ts:12-41",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:588-596",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:437-454",
+        "apps/server/src/ws.ts:2756-2763"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:1280\",\"summary\":\"A fetch that hangs records no failure until its 5-minute limit runs out, so the failure backoff never builds up. Every status refresh after the 15s cache TTL joins the stuck fiber and waits the full 5s.\",\"scenario\":\"1) The upstream host is blackholed: packets are dropped and nothing answers (for example a VPN-only host while the VPN is down), so ssh or https connect hangs for the OS or curl connect timeout, about 75-300s. 2) t=0: statusDetailsRemote forks the fetch. The waiter times out at 5s (1314-1316) and the cache stores success for 15s (1553). 3) t=15s and every 15s after: the cache misses. `failure` is undefined because tapError (1300) has not fired, so the gate at 1280 passes. The lookup finds the pending fiber (1283-1284) and joins it for another 5s. 4) Only when the fetch exits is count=1 / retryAt=+30s recorded. The next fetch hangs again. Before this change the fetch was killed at 5s, the failure was recorded right away, and cooldown grew 30s→60s→…→15min, so most status reads returned at once. Now about every status refresh (vcsRefreshStatus RPC, broadcaster ticks, the post-pull refreshGitStatus) costs 5s for as long as the host stays unreachable. Several such repos also hold the 4 global permits (1302), so healthy repos' fetches queue and show stale behind counts.\",\"consequence\":\"Status refreshes stall 5s each, repeatedly and with no escalating backoff, while the remote is blackholed. Healthy repos' upstream refresh is delayed while the global slots are held.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1278-1322\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1559-1572\",\"apps/server/src/vcs/GitVcsDriverCore.ts:100-106\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2254-2266\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:517-523\",\"apps/server/src/git/GitManager.ts:1346-1352\"]},{\"note_index\":1,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The only real hazard here is the unbounded Fiber.await before the pull, which is finding 0. I also tried a key mismatch between the status fetch and the pull and could not build one: both resolve the realpath'd common dir through resolveGitCommonDir, and status matches the longest remote name first, which agrees with branch.<b>.remote for normal and slash-named remotes. The retry guard (same branch, same HEAD) also held.\",\"scenario\":\"I tried four cases: the pull and the status fetch reaching gitCommonDir through different paths; remote names with slashes ('team/upstream'); a branch whose remote is '.'; and a lock failure after HEAD has moved. Keys match in the normal cases, and the guard at 2715-2721 blocks the retry once HEAD or the branch has moved. The remaining delay is finding 0.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2639-2755\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1324-1360\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1502-1515\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1236-1256\",\"apps/server/src/git/remoteRefs.ts:12-41\",\"apps/server/src/vcs/GitVcsDriverCore.ts:588-596\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:437-454\",\"apps/server/src/ws.ts:2756-2763\"]}]}"
+}
