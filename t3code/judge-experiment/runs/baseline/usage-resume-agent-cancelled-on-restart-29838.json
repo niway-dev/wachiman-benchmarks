@@ -1,0 +1,116 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 90f0158 of t3code-fork against its parent (4dff7de)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "4dff7de3f99677dd886018dbc195062c0768f2c7",
+      "ref": "4dff7de"
+    },
+    "head": {
+      "sha": "90f0158e60b08946bcaae1df07109a893e7c36af",
+      "ref": "90f0158"
+    },
+    "title": "fix(server): attribute usage-limit auto-resume to T3 Code (#29838)",
+    "description": "fix(server): attribute usage-limit auto-resume to T3 Code (#29838)",
+    "author": "shivam"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts",
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts",
+      "line": 76,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Usage-limit resume now matches the ACP \"app-owned wake turn\" predicate",
+      "body": "`createdBy: \"agent\"` plus `creationSource: \"server\"` is exactly what `acpIsAppOwnedWakeTurn` tests (`packages/provider-acp/src/server/adapter.ts:1497-1502`). That predicate is documented as \"a delegated child finishing\". At `adapter.ts:7914-7917` it skips resetting `midTurnUnreportedCompletedTaskIds`, which a real user turn does reset. A usage-limit auto-resume on an ACP provider therefore stops clearing that set, as a user-typed resume used to. Was this considered? The Pi, Muse, OpenCode and Claude adapters only match `creationSource === \"provider\"`, so they are unaffected. I did not trace what the set controls, so the impact may be nil.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Usage-limit auto-resume message is now sent as createdBy \"agent\" (creationSource \"server\") instead of \"user\", so the UI attributes it to T3 Code",
+      "location": "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:76",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:704-708",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:8046-8049",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5524-5566",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:13819-13821",
+        "apps/server/src/orchestration-v2/RestartContinuation.ts:326",
+        "packages/client-runtime/src/userMessage.ts:110-115",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1572",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.ts:300",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:369",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:2465"
+      ],
+      "equivalent_path": "RestartContinuation.ts:326 already dispatches a server-originated \"Continue where you left off\" with createdBy \"agent\". client-runtime/src/userMessage.ts:110-115 maps agent+server to the \"t3code\" attribution.",
+      "before_after": "Before, createdBy \"user\" made the message render as the user's own and count as a user turn. Now it is attributed to T3 Code. The follow-up gate `mayStartSubagentFollowup` (Orchestrator.ts:704-708) and the sender check in `recordSubagentFollowup` (Orchestrator.ts:8046-8049) both accept `usageLimitContinuationOfRunId`, so a subagent child's auto-resume still registers a parent follow-up task, as it did when createdBy was \"user\". The dispatch guard at Orchestrator.ts:5524-5566 runs before follow-up recording and returns without a message when stale, so `recordSubagentFollowup` exits at `message?.runId == null`. Other createdBy==\"user\" readers now treat the resume as non-user: ProjectionStore.ts:1572 (latest user-authored time), threadHistoryPaging.ts:300 (user turns), ProviderRuntimeRecoveryService.ts:369 (retryable held messages), ProviderUsageAnalytics.ts:212 (request kind \"agent\"), and Orchestrator.ts:2465 (a held run for this message counts as unattended and is released). Orchestrator.ts:5685 (title regeneration for user messages after maintenance-only history) and the ACP predicate noted in the finding are the other readers.",
+      "visible_effect": "The resume bubble shows the T3 Code attribution instead of looking user-authored. Analytics report it as an agent request rather than a user request.",
+      "failure_mode": "If the Orchestrator allow-list were missed, a resumed child would not get a parent follow-up task. Both gates are updated, and the new DelegatedCompletionDelivery test covers that path. On rejection the dispatch emits a metadata-updated no-op, and the sweep's catchCause logs a warning.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is small and consistent. The auto-resume message is now sent as createdBy \\\"agent\\\" with creationSource \\\"server\\\", the same shape `RestartContinuation.ts:326` uses. Both places that decide whether a subagent follow-up gets tracked, `mayStartSubagentFollowup` and the sender check in `recordSubagentFollowup`, now let `usageLimitContinuationOfRunId` through. So a child's auto-resume still registers a parent follow-up task, as it did when createdBy was \\\"user\\\". I read the other createdBy==\\\"user\\\" readers (history paging, shell latest-user time, runtime recovery retry, analytics, held-run release) and found no breakage. The new tests look sound: the shell snapshot used in the DelegatedCompletionDelivery test includes subagent threads when called without options, and the `createdBy: \\\"agent\\\"` assertion in runtimeLayer.test.ts covers the attribution change. I read the code only and did not run the tests. The one low-confidence observation is that the resume now matches the ACP adapter's \\\"app-owned wake turn\\\" predicate, which skips a state reset that a user turn performs.\"",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 123,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 38,
+      "costUsd": 0.5704811999999999
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "4dff7de3f99677dd886018dbc195062c0768f2c7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5704811999999999,
+    "usage": {
+      "input": 36,
+      "output": 13578,
+      "cacheRead": 1044452,
+      "cacheWrite": 82546
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 38,
+    "durationMs": 147208,
+    "stop": "complete",
+    "notices": []
+  }
+}

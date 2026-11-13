@@ -38,9 +38,15 @@ mentions. Then give exactly one verdict:
   of events, written as steps. Give the file:line where it goes wrong, the
   consequence a user or operator would see, and a severity.
 - **safe**: you tried to break it and can cite the file:line, which you opened
-  in this session, that makes your scenario impossible. A `safe` verdict
-  without such a line is not allowed. If you cannot cite one, the verdict is
+  in this session, that makes your scenario impossible. Put that one file:line
+  in `safe_line` (required for every `safe`; `evidence` alone does not count)
+  and the case you tried in `scenario`. A `safe` verdict without a
+  `safe_line` is not allowed. If you cannot cite one, the verdict is
   `cannot_tell`.
+  "It keeps the previous behaviour", "it takes the default path" or "the
+  other side handles it" is not a reason. Open that path and state what it
+  does in the scenario you tried; if what it does there is wrong, the verdict
+  is `breaks`, even when the behaviour is old.
 - **cannot_tell**: say exactly what is missing (code that is not in the
   checkout, runtime behaviour you cannot read, a question only the author can
   answer).

@@ -1,0 +1,128 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit e2bb9e6 of t3code-fork against its parent (5d3d78a)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "5d3d78ab932bc71535d3155dad7f68fef39c5c16",
+      "ref": "5d3d78a"
+    },
+    "head": {
+      "sha": "e2bb9e63e129001aa37fa1f9f51cb334d1a3db42",
+      "ref": "e2bb9e6"
+    },
+    "title": "fix(server): subagent questions reach a busy parent agent (#29909)",
+    "description": "fix(server): subagent questions reach a busy parent agent (#29909)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/EffectWorker.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts",
+      "docs/orchestration-v2/orchestrator-mcp-server.md"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/EffectWorker.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts",
+      "docs/orchestration-v2/orchestrator-mcp-server.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/EffectWorker.ts",
+      "line": 295,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "Steer-race follow-up for a question notice runs on the composer model, while the steered copy and a mailbox follow-up use the parent run's model",
+      "body": "When a question notice is steered, `Orchestrator.ts:5837-5840` pins its model selection to the target run's selection, as it does for a delegated completion. If the steer loses the race with turn completion, the retry here passes `modelSelection: run.modelSelection` only when `message.delegatedCompletion !== undefined` (lines 295-297). A notification-only message therefore starts its new turn with the thread's current composer selection. The new test pins that behaviour at `SteeringCompletion.integration.test.ts:433-434`, where `started[1].modelSelection` equals `composerSelection`. The same notice thus runs on one model if the steer lands and another if it loses the race. A plain queued notice already uses the thread selection, so this may be intended. Is it? If it is, say so in a one-line comment. If not, pass `run.modelSelection` for notifications too.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Steer a delegated-task question notification into the running parent turn instead of queueing it behind that turn",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:5739",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5739-5775",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5830-5858",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4738-4753",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4939-4983",
+        "apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:49-52",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:263-300"
+      ],
+      "equivalent_path": "The existing delegated-completion mailbox routing in the same block (Orchestrator.ts:5739-5775) and the `steer_active` branch that calls `dispatchSteerIntoRun` (5830-5858).",
+      "before_after": "Before: only mailbox completions with completionWake 'always' were upgraded to steer_active, and a question notice stayed queue_after_active. Now: a notification with source.kind 'delegated_task' takes the same upgrade, requiring a running run, a running provider turn, a live session that supports active steering without interrupting tools, and (new) no Stop having reached the run. The steered message keeps the target run's model selection (5837-5840) and skips the thread selection update (4942-4944). `dispatchSteerIntoRun` stores the notification on the message and emits `notificationTurnItem` (4842, 4911). The Notifications-must-be-queued validation (5680-5695) runs before the upgrade, so it still sees queue_after_active.",
+      "visible_effect": "The parent agent sees the child's question during its current turn. The notification card shows in the parent thread's turn items. Only DelegatedTaskQuestionReactor emits kind 'delegated_task' notifications outside tests (DelegatedTaskQuestionReactor.ts:49-52), so no other flow is rerouted. The new `stopReachedRun` guard also applies to mailbox completions. It avoids the 'is stopping and cannot be steered' dispatch error at 4747-4753.",
+      "failure_mode": "If the steer is rejected because the turn completed, the EffectWorker catch re-dispatches the message as queue_after_active (EffectWorker.ts:282-299). Before this change a notification-only message was re-dispatched as start_immediately and was rejected by the validation at Orchestrator.ts:5681-5689. A steered question cannot be cancelled when the user answers it first, unlike a queued one. The notice text covers that case ('If it is no longer pending, it was answered or dismissed').",
+      "evidence_checked": true
+    },
+    {
+      "action": "Retry a failed steer of a notification message as a queued dispatch",
+      "location": "apps/server/src/orchestration-v2/EffectWorker.ts:281",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/EffectWorker.ts:278-330",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695",
+        "apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts:372-456"
+      ],
+      "equivalent_path": "The existing delegatedCompletion retry in the same catch block, which already used queue_after_active and passed `notification` through.",
+      "before_after": "Before: only messages with a delegatedCompletion were retried as queue_after_active. Notification-only messages got start_immediately and failed the notification validation. Now: `queued` covers both kinds, and the message's notification is forwarded (lines 306-308).",
+      "visible_effect": "A question notice that loses the steer race still starts a follow-up turn on the parent, and the test checks that exactly one notification item exists.",
+      "failure_mode": "The retry reuses the message id and uses command id `command:steer-follow-up:${effect.id}`, so a repeated effect run cannot duplicate the message. A disabled provider instance is logged and dropped (EffectWorker.ts:317-329).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no defects in this change. Question notices from delegated tasks now steer into a running parent turn, and a notice that loses the steer race is retried as a queued message. One question for the author: after a lost steer race, the retry runs the notice on the thread's composer model, not the parent run's. The steered copy and a mailbox completion use the run's model, and the new test pins the composer model at `SteeringCompletion.integration.test.ts:433-434`. The doc paragraph matches the code. I only read the code; I did not run the tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 157,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.41289180000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5d3d78ab932bc71535d3155dad7f68fef39c5c16"
+  },
+  "execution": {
+    "costUsdEstimate": 0.41289180000000003,
+    "usage": {
+      "input": 20,
+      "output": 10666,
+      "cacheRead": 444398,
+      "cacheWrite": 65438
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 102409,
+    "stop": "complete",
+    "notices": []
+  }
+}

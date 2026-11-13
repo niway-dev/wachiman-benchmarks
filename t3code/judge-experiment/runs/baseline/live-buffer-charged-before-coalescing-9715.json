@@ -1,0 +1,155 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 108f295 of t3code-fork against its parent (d536b05)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "d536b0580d044967dc644498d8c5a6e96464f767",
+      "ref": "d536b05"
+    },
+    "head": {
+      "sha": "108f295cc3672716c3cb8291ce487846df5ce098",
+      "ref": "108f295"
+    },
+    "title": "fix(server): bound slow-client event buffers (#9715)",
+    "description": "fix(server): bound slow-client event buffers (#9715)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration/LiveStreamBudget.test.ts",
+      "apps/server/src/orchestration/LiveStreamBudget.ts",
+      "apps/server/src/orchestration/ThreadLiveEventCoalescer.test.ts",
+      "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts",
+      "apps/server/src/server.test.ts",
+      "apps/server/src/ws.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration/LiveStreamBudget.ts",
+      "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts",
+      "apps/server/src/ws.ts",
+      "apps/server/src/orchestration/LiveStreamBudget.test.ts",
+      "apps/server/src/orchestration/ThreadLiveEventCoalescer.test.ts",
+      "apps/server/src/server.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration/LiveStreamBudget.ts",
+      "line": 26,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Every live event is now JSON-stringified just to be measured",
+      "body": "`serializedSize` calls `JSON.stringify` on the full event payload and keeps only its byte length. It is used by `retain` and `replace`. The shell stream (`ws.ts:1437`) now does this for every domain event of every thread, and the shell stream previously never serialized raw events at all. The WeakMap cache means each event object is measured once, not once per subscriber. The thread path measures twice, though: the raw event on `retain`, then the projected event on `replace` (`ThreadLiveEventCoalescer.ts:129-135`). That is a second stringify of a new object. High-frequency `thread.message-sent` events with large text are the expensive case. AGENTS.md asks for care about hot-path cost. Consider a cheaper estimate for the limit check, or at least a note that this cost was measured.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration/LiveStreamBudget.ts",
+      "line": 9,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "medium",
+      "title": "New user-visible resubscribe behavior and the fixed limits are not documented",
+      "body": "Slow clients now get an `OrchestrationGetSnapshotError` once more than 1,000 items or 8 MiB are buffered. They must resubscribe from their last sequence. The limits are hard-coded and apply to the shell stream, which carries raw events from all threads. AGENTS.md says contributor-facing architecture changes belong in `docs/internals/`, but nothing was added. A single raw event larger than 8 MiB overflows immediately and the stream cannot make progress live. It only converges because replay is unbudgeted.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Thread subscription live tail now flows through a budgeted coalescer and `budget.deliver`. Overflow fails the stream with OrchestrationGetSnapshotError.",
+      "location": "apps/server/src/ws.ts:1587",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/ws.ts:1587-1596",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        "packages/client-runtime/src/state/threads.ts:641-642"
+      ],
+      "equivalent_path": "Previous unbounded input/output queues in ThreadLiveEventCoalescer plus offerAndWait/takeAll for the synchronized marker.",
+      "before_after": "Before, an input queue fed a processing fiber and the marker was awaited via a Deferred then drained with takeAll. After, `offerAll` coalesces inline under a mutex and the marker is offered into the same ordered output queue, so the marker cannot pass events from an earlier batch. The producer fiber stops on budget failure through raceFirst(liveBuffer.failed).",
+      "visible_effect": "Slow client: the stream errors and the client resubscribes with its cursor. The client-runtime has a retry/resubscribe path at packages/client-runtime/src/state/threads.ts:641-642. Other clients see no change.",
+      "failure_mode": "On overflow, pending and queued items are released, the output queue fails, and the PubSub consumer is stopped even without an ACK. Items in the unacked batch stay charged until the scope closes. A single event over 8 MiB fails live delivery and is only recovered through replay.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Shell subscription buffers raw live events under a LiveStreamBudget and coalesces at delivery time, replacing charges with projected output.",
+      "location": "apps/server/src/ws.ts:1411",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/ws.ts:1411-1459",
+        "apps/server/src/ws.ts:1477-1491",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:96-129"
+      ],
+      "equivalent_path": "Previous `coalesceShellLiveStream` over an unbounded Queue, which the diff removes.",
+      "before_after": "Same groupedWithin(512, 50ms) plus coalesceShellLiveInputs, now wrapped in retain/replace/deliver. The completion-marker path takes all queued items and coalesces them as before.",
+      "visible_effect": "The shell stream fails on overflow and the client resumes with afterSequence.",
+      "failure_mode": "Between `retain` and `Queue.offer`, `closeLiveBuffer` may run in another fiber. The item then stays charged only until the budget scope finalizer, which is harmless. Catch-up replay is not budgeted, but it is bounded by replayGap.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Concurrent offerAll, flushWindow timer, close and budget-failure close on the coalescer.",
+      "location": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:60-77"
+      ],
+      "equivalent_path": "Previous mutex-guarded `process`, which is now `offerAll`.",
+      "before_after": "offerAll, flushWindow and close all take the same mutex. flushWindow re-checks `generation === windowGeneration` after acquiring the mutex, and close bumps the generation. cancelWindow runs only under the mutex. Check-before-await is therefore revalidated after the permit is acquired.",
+      "visible_effect": "None beyond ordering: the marker stays after earlier batches.",
+      "failure_mode": "A budget overflow inside offerAll or flushWindow completes `failed`. The forked close waits for the mutex and then clears. No deadlock, because the failing fiber returns its error and releases the permit.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no defects in this part. The budget design holds up when read against the Effect Queue semantics, and the tests are consistent with the code. I left two consider-level notes on `LiveStreamBudget.ts`: each live event is now JSON-stringified just to be measured, and the new limits and resubscribe behavior are undocumented. The part adds a per-subscription item and byte budget (1,000 items, 8 MiB) to the shell and thread live streams. When it overflows, the stream fails with `OrchestrationGetSnapshotError` and the client resubscribes from its cursor.\\n\\nI did not run anything, as instructed. Two things rest on code I did not verify:\\n- **ACK timing:** the design assumes `RpcServer` only requests the next batch after the client ACKs the previous one. I took that from the code comment.\\n- **Resubscribe on error:** the client-runtime has a retry/resubscribe path at `packages/client-runtime/src/state/threads.ts:641-642`, but I did not trace that it handles this error.\\n\\nThe shell and thread tests assert on the 1,000-item and 8 MiB limits, so they will need updating if those constants change.\\n\\nAn event larger than 8 MiB fails live delivery every time. It only gets through because replay is not budgeted.\\n\\nI could not point to a pull request description. The body only repeats the title, so there was nothing further to check against the code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 891,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.4471369
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "d536b0580d044967dc644498d8c5a6e96464f767"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4471369,
+    "usage": {
+      "input": 14,
+      "output": 17828,
+      "cacheRead": 316729,
+      "cacheWrite": 59289
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 152903,
+    "stop": "complete",
+    "notices": []
+  }
+}

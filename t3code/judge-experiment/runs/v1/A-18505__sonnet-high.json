@@ -1,0 +1,176 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-18505.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v1",
+  "prompt_sha256": "97dd94d569c15cb557ab1e611bb604407219beab4382e08d61b5bafd701e624a",
+  "reviewed_commit": "d514a8c6176ace9057dc8c7619f0b5f0d81d1bd0",
+  "base_commit": "37e2acda5118d13c144efb009d4911ff8f65d6ed",
+  "wall_ms": 260163,
+  "cost_usd": 0.9101389000000001,
+  "duration_ms": 259573,
+  "num_turns": 54,
+  "usage": {
+    "input_tokens": 72,
+    "cache_creation_input_tokens": 107667,
+    "cache_read_input_tokens": 2345847,
+    "output_tokens": 24401,
+    "output_tokens_details": {
+      "thinking_tokens": 13637
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 107667,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3219,
+        "cache_read_input_tokens": 110052,
+        "cache_creation_input_tokens": 2230,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2230
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 7202,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0007322,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 72,
+      "outputTokens": 24401,
+      "cacheReadInputTokens": 2345847,
+      "cacheCreationInputTokens": 107667,
+      "webSearchRequests": 0,
+      "costUSD": 0.9094067,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 13637,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 107667,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "summary": "If the secret read fails, the change stream falls back to the unmaterialized settings. The provider registry then gets the literal marker as the Antigravity apiKey.",
+      "location": "apps/server/src/serverSettings.ts:906-918",
+      "scenario": "1) Antigravity instance has apiKey saved in the secret store, and settings.json holds the marker `••••••`. 2) A settings change is emitted (any update, or a file-watch revalidate) while `secretStore.get` fails, for example a transient IO or permission error. 3) `materializeChanges` catches the ServerSettingsError, logs a warning and returns the raw `settings` (`Effect.as(settings)`), so config.apiKey is still `••••••`. 4) `layerSettingsWatcher` runs `reconcile(deriveProviderInstanceConfigMap(next))` on the `subscribeChanges` stream. The driver builds `auth.apiKey = '••••••'` (AntigravityDriver.ts:115) and exports it as GEMINI_API_KEY. Because the key is non-empty, `antigravityAuthConfigIssue` (antigravityAuthSupport.ts:144) sees it as configured. Before this commit the key was plaintext in config, so the fallback could not inject a marker.",
+      "consequence": "The Antigravity instance is rebuilt with a bogus credential. It reports configured, but requests fail with an auth error until the next successful settings emission. Env vars were safe in the old fallback because their value was \"\" with valueRedacted. Field secrets now carry the marker as their value.",
+      "evidence": [
+        "apps/server/src/serverSettings.ts:906-918",
+        "apps/server/src/settingsSecrets.ts:64-76",
+        "apps/server/src/provider/ProviderInstanceRegistryHydration.ts:116-132",
+        "apps/server/src/provider/Drivers/AntigravityDriver.ts:112-118",
+        "apps/server/src/provider/antigravityAuthSupport.ts:144"
+      ],
+      "missing": "",
+      "safe_line": "",
+      "covered_by": null
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "severity": "none",
+      "introduced_by_change": false,
+      "summary": "I tried a failed store write, partial moves, a failed file rewrite and a crash between the two steps. Each ends with the secret in the store or the plaintext still on disk, and the next load retries.",
+      "location": "apps/server/src/serverSettings.ts:690-717",
+      "scenario": "Cases tried: (a) `secretStore.set` fails for one secret. (b) Some secrets move and others fail. (c) `writeSettingsAtomically` fails after the moves. (d) The file is untrusted.",
+      "consequence": "",
+      "evidence": [
+        "apps/server/src/serverSettings.ts:690-717 (set errors are caught and only that secret stays inline; `moved` marks only successful stores; returns the original object if nothing moved)",
+        "apps/server/src/serverSettings.ts:840-855 (rewrite happens only when migrated !== loaded; a failed write fails the cache load, and a failed load is not cached via the Duration.zero ttl at 863)",
+        "apps/server/src/serverSettings.ts:956-963 (persist keeps an inline value when a marker is echoed for a not-yet-moved secret)",
+        "apps/server/src/settingsSecrets.ts:64-76"
+      ],
+      "missing": "",
+      "safe_line": "apps/server/src/serverSettings.ts:713 (`if (moved.size === 0) return settings`) together with 863 (failed loads are not cached) means a failed move or write is retried and never loses the credential.",
+      "covered_by": null
+    },
+    {
+      "note_index": 2,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "summary": "The note says there is no way to clear a saved provider-config secret and that this is unchanged. That is wrong for Antigravity apiKey. It was a plain editable field and is now write-only with no clear control.",
+      "location": "apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424",
+      "scenario": "1) An Antigravity instance has a saved apiKey, which the settings variant shows as configured. 2) The user focuses the field, empties it and blurs. 3) The settings branch renders `<SecretInput configured value=\"\">`. `useCommitOnBlur` sees next === value, so it does not commit. Even if it did, `if (configured && next === \"\") return` at SecretInput.tsx:32 would drop the commit. 4) No Remove button exists for provider config secrets. Only environment rows (ProviderInstanceCard.tsx:297-306) and host forms (SourceControlHostSettings.tsx:69-80) have one. Before this commit, apiKey had no `secret` flag. It rendered through the plain `DraftInput` branch at ProviderSettingsForm.tsx:426-439 and could be emptied. The same applies in the Add dialog: a mistyped key cannot be cleared once committed, and the placeholder says 'Stored secret'.",
+      "consequence": "A user cannot remove a saved Antigravity API key from the UI. They can only replace it, change authMethod, or delete the instance. The server side supports removal (empty string removes the secret, serverSettings.ts:964-966), but the UI never sends it.",
+      "evidence": [
+        "apps/web/src/components/settings/ProviderSettingsForm.tsx:415-439",
+        "apps/web/src/components/settings/SecretInput.tsx:31-34",
+        "apps/web/src/hooks/useCommitOnBlur.ts:29-35",
+        "apps/web/src/components/settings/ProviderInstanceCard.tsx:297-306",
+        "apps/web/src/components/settings/SourceControlHostSettings.tsx:69-80",
+        "packages/contracts/src/settings.ts:767-775",
+        "apps/server/src/serverSettings.ts:964-966"
+      ],
+      "missing": "",
+      "safe_line": "",
+      "covered_by": null
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "severity": "none",
+      "introduced_by_change": false,
+      "summary": "The open question is answered. `decodeTo` keeps the `to` AST's context, so `secretSetting` applied before `withDecodingDefault` is still found by `resolveAnnotationsKey`. The usage-limit field applies it after, which also works.",
+      "location": "packages/contracts/src/settings.ts:583-590",
+      "scenario": "Tried both orders. Antigravity `apiKey` and GitCafe `token` apply `secretSetting` before `withDecodingDefault`. Usage `managementKey` and GitHub `tokens` apply it after. I also checked that an unrelated annotateKey does not hide the flag.",
+      "consequence": "",
+      "evidence": [
+        "packages/contracts/src/settings.ts:559-565",
+        "packages/contracts/src/settings.ts:583-590",
+        "packages/contracts/src/settings.ts:767-772",
+        "packages/contracts/src/settings.ts:824",
+        "packages/source-control-gitcafe/src/client/definition.ts:28-30",
+        "packages/source-control-github/src/client/definition.ts:47-50",
+        ".repos/effect-smol/packages/effect/src/Schema.ts:5905-5916",
+        ".repos/effect-smol/packages/effect/src/SchemaAST.ts:4366-4375",
+        ".repos/effect-smol/packages/effect/src/SchemaAST.ts:4263-4272",
+        ".repos/effect-smol/packages/effect/src/SchemaAST.ts:4402-4411",
+        ".repos/effect-smol/packages/effect/src/Schema.ts:15958-15960",
+        "apps/server/src/serverSettings.test.ts:1486-1491"
+      ],
+      "missing": "",
+      "safe_line": ".repos/effect-smol/packages/effect/src/SchemaAST.ts:4374 (`appendTransformation` only replaces `to.encoding`, so `to.context` stays) plus Schema.ts:15959 (`resolveAnnotationsKey` reads `ast.context.annotations`). Test 1486-1491 asserts the Antigravity and GitCafe values are redacted and kept off disk.",
+      "covered_by": null
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"summary\":\"If the secret read fails, the change stream falls back to the unmaterialized settings. The provider registry then gets the literal marker as the Antigravity apiKey.\",\"location\":\"apps/server/src/serverSettings.ts:906-918\",\"scenario\":\"1) Antigravity instance has apiKey saved in the secret store, and settings.json holds the marker `••••••`. 2) A settings change is emitted (any update, or a file-watch revalidate) while `secretStore.get` fails, for example a transient IO or permission error. 3) `materializeChanges` catches the ServerSettingsError, logs a warning and returns the raw `settings` (`Effect.as(settings)`), so config.apiKey is still `••••••`. 4) `layerSettingsWatcher` runs `reconcile(deriveProviderInstanceConfigMap(next))` on the `subscribeChanges` stream. The driver builds `auth.apiKey = '••••••'` (AntigravityDriver.ts:115) and exports it as GEMINI_API_KEY. Because the key is non-empty, `antigravityAuthConfigIssue` (antigravityAuthSupport.ts:144) sees it as configured. Before this commit the key was plaintext in config, so the fallback could not inject a marker.\",\"consequence\":\"The Antigravity instance is rebuilt with a bogus credential. It reports configured, but requests fail with an auth error until the next successful settings emission. Env vars were safe in the old fallback because their value was \\\"\\\" with valueRedacted. Field secrets now carry the marker as their value.\",\"evidence\":[\"apps/server/src/serverSettings.ts:906-918\",\"apps/server/src/settingsSecrets.ts:64-76\",\"apps/server/src/provider/ProviderInstanceRegistryHydration.ts:116-132\",\"apps/server/src/provider/Drivers/AntigravityDriver.ts:112-118\",\"apps/server/src/provider/antigravityAuthSupport.ts:144\"],\"missing\":\"\",\"safe_line\":\"\",\"covered_by\":null},{\"note_index\":1,\"verdict\":\"safe\",\"severity\":\"none\",\"introduced_by_change\":false,\"summary\":\"I tried a failed store write, partial moves, a failed file rewrite and a crash between the two steps. Each ends with the secret in the store or the plaintext still on disk, and the next load retries.\",\"location\":\"apps/server/src/serverSettings.ts:690-717\",\"scenario\":\"Cases tried: (a) `secretStore.set` fails for one secret. (b) Some secrets move and others fail. (c) `writeSettingsAtomically` fails after the moves. (d) The file is untrusted.\",\"consequence\":\"\",\"evidence\":[\"apps/server/src/serverSettings.ts:690-717 (set errors are caught and only that secret stays inline; `moved` marks only successful stores; returns the original object if nothing moved)\",\"apps/server/src/serverSettings.ts:840-855 (rewrite happens only when migrated !== loaded; a failed write fails the cache load, and a failed load is not cached via the Duration.zero ttl at 863)\",\"apps/server/src/serverSettings.ts:956-963 (persist keeps an inline value when a marker is echoed for a not-yet-moved secret)\",\"apps/server/src/settingsSecrets.ts:64-76\"],\"missing\":\"\",\"safe_line\":\"apps/server/src/serverSettings.ts:713 (`if (moved.size === 0) return settings`) together with 863 (failed loads are not cached) means a failed move or write is retried and never loses the credential.\",\"covered_by\":null},{\"note_index\":2,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"summary\":\"The note says there is no way to clear a saved provider-config secret and that this is unchanged. That is wrong for Antigravity apiKey. It was a plain editable field and is now write-only with no clear control.\",\"location\":\"apps/web/src/components/settings/ProviderSettingsForm.tsx:415-424\",\"scenario\":\"1) An Antigravity instance has a saved apiKey, which the settings variant shows as configured. 2) The user focuses the field, empties it and blurs. 3) The settings branch renders `<SecretInput configured value=\\\"\\\">`. `useCommitOnBlur` sees next === value, so it does not commit. Even if it did, `if (configured && next === \\\"\\\") return` at SecretInput.tsx:32 would drop the commit. 4) No Remove button exists for provider config secrets. Only environment rows (ProviderInstanceCard.tsx:297-306) and host forms (SourceControlHostSettings.tsx:69-80) have one. Before this commit, apiKey had no `secret` flag. It rendered through the plain `DraftInput` branch at ProviderSettingsForm.tsx:426-439 and could be emptied. The same applies in the Add dialog: a mistyped key cannot be cleared once committed, and the placeholder says 'Stored secret'.\",\"consequence\":\"A user cannot remove a saved Antigravity API key from the UI. They can only replace it, change authMethod, or delete the instance. The server side supports removal (empty string removes the secret, serverSettings.ts:964-966), but the UI never sends it.\",\"evidence\":[\"apps/web/src/components/settings/ProviderSettingsForm.tsx:415-439\",\"apps/web/src/components/settings/SecretInput.tsx:31-34\",\"apps/web/src/hooks/useCommitOnBlur.ts:29-35\",\"apps/web/src/components/settings/ProviderInstanceCard.tsx:297-306\",\"apps/web/src/components/settings/SourceControlHostSettings.tsx:69-80\",\"packages/contracts/src/settings.ts:767-775\",\"apps/server/src/serverSettings.ts:964-966\"],\"missing\":\"\",\"safe_line\":\"\",\"covered_by\":null},{\"note_index\":3,\"verdict\":\"safe\",\"severity\":\"none\",\"introduced_by_change\":false,\"summary\":\"The open question is answered. `decodeTo` keeps the `to` AST's context, so `secretSetting` applied before `withDecodingDefault` is still found by `resolveAnnotationsKey`. The usage-limit field applies it after, which also works.\",\"location\":\"packages/contracts/src/settings.ts:583-590\",\"scenario\":\"Tried both orders. Antigravity `apiKey` and GitCafe `token` apply `secretSetting` before `withDecodingDefault`. Usage `managementKey` and GitHub `tokens` apply it after. I also checked that an unrelated annotateKey does not hide the flag.\",\"consequence\":\"\",\"evidence\":[\"packages/contracts/src/settings.ts:559-565\",\"packages/contracts/src/settings.ts:583-590\",\"packages/contracts/src/settings.ts:767-772\",\"packages/contracts/src/settings.ts:824\",\"packages/source-control-gitcafe/src/client/definition.ts:28-30\",\"packages/source-control-github/src/client/definition.ts:47-50\",\".repos/effect-smol/packages/effect/src/Schema.ts:5905-5916\",\".repos/effect-smol/packages/effect/src/SchemaAST.ts:4366-4375\",\".repos/effect-smol/packages/effect/src/SchemaAST.ts:4263-4272\",\".repos/effect-smol/packages/effect/src/SchemaAST.ts:4402-4411\",\".repos/effect-smol/packages/effect/src/Schema.ts:15958-15960\",\"apps/server/src/serverSettings.test.ts:1486-1491\"],\"missing\":\"\",\"safe_line\":\".repos/effect-smol/packages/effect/src/SchemaAST.ts:4374 (`appendTransformation` only replaces `to.encoding`, so `to.context` stays) plus Schema.ts:15959 (`resolveAnnotationsKey` reads `ast.context.annotations`). Test 1486-1491 asserts the Antigravity and GitCafe values are redacted and kept off disk.\",\"covered_by\":null}]}"
+}

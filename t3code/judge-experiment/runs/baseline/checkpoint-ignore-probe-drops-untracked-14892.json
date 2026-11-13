@@ -1,0 +1,128 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 6d266ea of t3code-fork against its parent (a3de2ae)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "a3de2ae057b93c9097cf5abef0e581b4302bc0b7",
+      "ref": "a3de2ae"
+    },
+    "head": {
+      "sha": "6d266ea683ecc46c17aed5d68a093221be093862",
+      "ref": "6d266ea"
+    },
+    "title": "fix(server): checkpoints skip a project folder its parent repo ignores (#14892)",
+    "description": "fix(server): checkpoints skip a project folder its parent repo ignores (#14892)",
+    "author": "Jonas B."
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/CheckpointService.test.ts",
+      "apps/server/src/orchestration-v2/CheckpointService.ts",
+      "apps/server/src/vcs/GitVcsDriver.test.ts",
+      "apps/server/src/vcs/GitVcsDriver.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/CheckpointService.ts",
+      "apps/server/src/vcs/GitVcsDriver.ts",
+      "apps/server/src/orchestration-v2/CheckpointService.test.ts",
+      "apps/server/src/vcs/GitVcsDriver.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/CheckpointService.ts",
+      "line": 411,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Any VcsUnsupportedOperationError is now silently treated as 'missing', with no log",
+      "body": "The catchTags at lines 293-296 (baseline) and 410-412 (turn capture) swallow every `VcsUnsupportedOperationError` and log nothing. The old code logged a warning on every capture failure. The ignored-workspace case is the intended trigger (raised at GitVcsDriver.ts:1019). But `CheckpointStore.resolveCheckpoints` (checkpointing/CheckpointStore.ts:88) and `VcsDriverRegistry` (VcsDriverRegistry.ts:81, 193) raise the same error type for other reasons, such as a driver without checkpoint support or a failed driver resolution. Those cases used to be logged as 'error' and now disappear as 'missing', with no log and no distinct status. Consider logging at debug or info level here, or using a narrower dedicated error for the ignored-workspace case, so these causes can still be told apart.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/GitVcsDriver.ts",
+      "line": 969,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Extra `git check-ignore` process on every checkpoint capture",
+      "body": "`filterIgnoredPaths(input.cwd, [\".\"])` now runs on every capture, including the common case where the workspace is not ignored. That adds one process spawn, with a 20s timeout, per baseline and per turn checkpoint. It also adds a new failure point: a non-0/1 exit from check-ignore (GitVcsDriver.ts:718-726) now fails the whole capture, where before no such call existed. The repository's performance guidance asks for care about this kind of per-turn cost. Consider running the ignore probe only after `stageFiles([])` fails, as the nested-repo recovery already does, or at least documenting why an up-front probe is needed.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Checkpoint capture for a workspace directory that is itself git-ignored: skip the checkpoint, or stage tracked files only via `add -u`",
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:969",
+      "status": "open",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:969-1025",
+        "apps/server/src/vcs/GitVcsDriver.ts:1037-1038",
+        "apps/server/src/vcs/GitVcsDriver.ts:1151",
+        "apps/server/src/vcs/GitVcsDriver.ts:693-738",
+        "apps/server/src/orchestration-v2/CheckpointService.ts:287-296",
+        "apps/server/src/orchestration-v2/CheckpointService.ts:403-436",
+        "apps/server/src/checkpointing/CheckpointStore.ts:87-93"
+      ],
+      "equivalent_path": "The existing capture path stages with `add -A -- .` into a scratch index (GitVcsDriver.ts:1027-1044). It already did the HEAD seeding, read-tree and nested-repo recovery. On an ignored directory, git rejects `add -A`, so the capture failed and the checkpoint was recorded as status 'error'.",
+      "before_after": "Before: the capture failed and the checkpoint was stored as 'error' with a warning log. After: the driver probes whether '.' is ignored. If it is, it seeds the scratch index with staged-only additions under the workspace (diff --cached --diff-filter=A fed to update-index --index-info). If the scratch index then has no tracked entries under '.', it fails with VcsUnsupportedOperationError. Otherwise it stages with `add -u`, so tracked edits are kept and new untracked files are excluded. The temp index is removed in Effect.ensuring (line 1151), so the real index is untouched; the tests compare the real index bytes before and after.",
+      "visible_effect": "CheckpointService.captureBaseline returns without a ref. capture() returns a checkpoint with status 'missing' and files [] instead of 'error'. materializeBaselineCheckpoint also reports 'missing' because no ref exists. No file list or diff is produced for that turn.",
+      "failure_mode": "A non-0/1 exit from check-ignore, or an additions listing larger than WORKSPACE_FILES_MAX_OUTPUT_BYTES (outputMode 'error'), fails the capture. The service logs a warning and the status is 'error'; for the baseline the failure surfaces as CheckpointBaselineCaptureError. Other VcsUnsupportedOperationError sources are now silently mapped to 'missing' (see finding at CheckpointService.ts:411).",
+      "open_question": "I read the code but did not run git. Does `git update-index --index-info` take root-relative paths when called from a subdirectory cwd, and does `git check-ignore --no-index .` behave the same on every supported git version? The added tests cover the staged-only and mixed cases, which suggests yes, but I could not verify it.",
+      "candidates": [
+        "apps/server/src/vcs/GitVcsDriver.test.ts",
+        "apps/server/src/vcs/testing/VcsDriverContractHarness.ts"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change makes checkpoint capture handle a workspace directory that git ignores. In that case the capture is skipped, or only tracked files are staged. The logic reads correctly, and the new tests cover the ignored-project, ignored-later (committed-only, staged-only, mixed), baseline and turn-capture paths. I found two minor concerns, both at consider severity. First, `VcsUnsupportedOperationError` is now swallowed without any log, although other callers raise it for unrelated reasons. Second, an extra `git check-ignore` process now runs on every capture. I read the code only and did not run git or the tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 262,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.257599
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a3de2ae057b93c9097cf5abef0e581b4302bc0b7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.257599,
+    "usage": {
+      "input": 10,
+      "output": 7745,
+      "cacheRead": 146410,
+      "cacheWrite": 41372
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 73714,
+    "stop": "complete",
+    "notices": []
+  }
+}
