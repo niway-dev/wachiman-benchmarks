@@ -11,6 +11,7 @@ no claim the reports do not.
 - **The fair measure:** the 14 real bugs of severity Medium or higher found on these PRs by any
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
+- **t3code cases (2026-11-12):** escaped and replayed bugs of pingdotgg/t3code as a second unit next to Martian, one row per run set in [t3code/history.md](t3code/history.md); the key is [t3code/cases.tsv](t3code/cases.tsv).
 
 ## Martian's Code Review Bench (2026-11-07, public PRs)
 
