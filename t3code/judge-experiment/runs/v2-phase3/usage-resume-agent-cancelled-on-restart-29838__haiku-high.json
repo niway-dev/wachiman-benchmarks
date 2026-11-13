@@ -1,0 +1,118 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/usage-resume-agent-cancelled-on-restart-29838.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "90f0158e60b08946bcaae1df07109a893e7c36af",
+  "base_commit": "4dff7de3f99677dd886018dbc195062c0768f2c7",
+  "wall_ms": 236447,
+  "cost_usd": 0.18131281999999999,
+  "duration_ms": 235249,
+  "num_turns": 58,
+  "usage": {
+    "input_tokens": 76,
+    "cache_creation_input_tokens": 124051,
+    "cache_read_input_tokens": 2586032,
+    "output_tokens": 50369,
+    "output_tokens_details": {
+      "thinking_tokens": 36476
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 124051,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2532,
+        "cache_read_input_tokens": 124577,
+        "cache_creation_input_tokens": 4892,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 4892
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4469,
+      "outputTokens": 50398,
+      "cacheReadInputTokens": 2586032,
+      "cacheCreationInputTokens": 124051,
+      "webSearchRequests": 0,
+      "costUSD": 0.18131281999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 36476,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 124051,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "Re-typing the resume as createdBy \"agent\" removes it from the retryable set in ProviderRuntimeRecoveryService.reconcile. If the server restarts or shuts down after the resume run is created but before the provider accepts its prompt, the run is cancelled, and every later sweep replays the same dispatch as a no-op. The auto-resume for that limit window never runs.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:329-341 (unstartedRuns = status starting && neverStarted && no provider turn; queuedRuns)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:365-379 (retryableMessageIds only for createdBy === \"user\"; retryableRuns from unstartedRuns)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:417 (runs filtered only for retryableRunIds)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:418-441 (retryable runs become queued, queueHeld true; the held-queue path before this commit)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:471-480 (every remaining nonterminal run gets status cancelled, startedAt left null)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:81-87 (nonterminalRuns includes starting)",
+        "apps/server/src/orchestration-v2/RestartBackgroundNote.ts:175-178 (neverStarted = startedAt === null && no restartContinuationOfRunId)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6509-6512 (start_immediately run is created with status starting, startedAt null)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3985-3989 (latest executed run excludes cancelled runs with startedAt IS NULL, so the failed run R1 stays the latest)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:4019-4027 (candidate still matches limitRecovery.runId = R1 and resetAt)",
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:17-32 and 40-78 (limitRecoveryCommand rebuilds the same commandId and messageId, since identity and requestId are unchanged)",
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:102-146 (sweep dispatches each candidate; acted=true re-runs on next tick)",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:752-756 (dispatch goes to orchestrator.dispatch)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:13546-13600 (accepted receipt for the commandId returns stored events with replayed: true and does not create a run)",
+        "apps/server/src/orchestration-v2/RestartContinuation.ts:126-141 (restart continuation skips neverStarted runs, so no restart continuation revives the thread)"
+      ],
+      "scenario": "1) Thread hits usage_limit in run R1, which fails. Auto-resume is armed for R1. 2) Reset time passes; the sweep dispatches the resume M (createdBy agent, start_immediately). Run R2 is created with status starting and startedAt null, and the receipt is accepted. 3) Before the provider takes the prompt (no provider turn yet), the server restarts or shuts down. reconcile: R2 is unstarted, but M is no longer retryable, so R2 is cancelled, not held. 4) Next sweep: the candidate query skips the cancelled never-started R2 and still returns R1. limitRecoveryCommand rebuilds M with the same commandId. 5) orchestrator.dispatch finds the accepted receipt and replays it as a no-op. Steps 4-5 repeat on every tick.",
+      "consequence": "For that limit window the auto-resume never runs and nothing says so. The history shows a cancelled 'Continue where you left off' and the thread stays in usage-limit failure until the user acts. Before this commit the message was kept as a held queued run the user could see and start. The window is narrow (restart or shutdown between resume dispatch and provider acceptance), but it is reachable on every restart. Correction to the note: the reject path at Orchestrator.ts:5546-5564 returns successfully after a metadata-updated event, so the sweep logs no warning there.",
+      "severity": "medium",
+      "location": "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:369",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "safe_line": ""
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "On ACP, the resume now also skips clearing the ACP wake buffer and wake reports, not only midTurnUnreportedCompletedTaskIds. Buffered sibling-child wake frames survive a usage-limit resume instead of being dropped. Whether that is wrong depends on whether those frames are stale, which I cannot tell from the checkout.",
+      "evidence": [
+        "packages/provider-acp/src/server/adapter.ts:1492-1502 (acpIsAppOwnedWakeTurn matches createdBy agent + creationSource server)",
+        "packages/provider-acp/src/server/adapter.ts:7914-7917 (midTurnUnreportedCompletedTaskIds reset skipped for app-owned wake turns)",
+        "packages/provider-acp/src/server/adapter.ts:7926-7929 (wakeBuffer and wakeReports cleared only when !isAppOwnedWakeTurn)",
+        "packages/provider-acp/src/server/adapter.ts:7652-7660 (a continuation is offered when wakeBuffer is non-empty and no background task is running)"
+      ],
+      "severity": "low",
+      "location": "packages/provider-acp/src/server/adapter.ts:7926",
+      "scenario": "ACP session with buffered wake frames from a sibling child. A usage-limit resume is dispatched. Before this commit, the resume was a user turn and cleared the wake buffer. Now the buffer is kept and a later continuation may deliver those frames.",
+      "consequence": "Behaviour change on ACP providers only. It is the same predicate as finding 0, but a different set, so it is not covered by that finding. Impact unknown: it may be intended, or it may deliver stale wake reports.",
+      "missing": "Author intent for usage-limit resumes versus real user turns, and whether buffered wake frames can be stale at resume time.",
+      "safe_line": ""
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"Re-typing the resume as createdBy \\\"agent\\\" removes it from the retryable set in ProviderRuntimeRecoveryService.reconcile. If the server restarts or shuts down after the resume run is created but before the provider accepts its prompt, the run is cancelled, and every later sweep replays the same dispatch as a no-op. The auto-resume for that limit window never runs.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:329-341 (unstartedRuns = status starting && neverStarted && no provider turn; queuedRuns)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:365-379 (retryableMessageIds only for createdBy === \\\"user\\\"; retryableRuns from unstartedRuns)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:417 (runs filtered only for retryableRunIds)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:418-441 (retryable runs become queued, queueHeld true; the held-queue path before this commit)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:471-480 (every remaining nonterminal run gets status cancelled, startedAt left null)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:81-87 (nonterminalRuns includes starting)\",\"apps/server/src/orchestration-v2/RestartBackgroundNote.ts:175-178 (neverStarted = startedAt === null && no restartContinuationOfRunId)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6509-6512 (start_immediately run is created with status starting, startedAt null)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:3985-3989 (latest executed run excludes cancelled runs with startedAt IS NULL, so the failed run R1 stays the latest)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:4019-4027 (candidate still matches limitRecovery.runId = R1 and resetAt)\",\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:17-32 and 40-78 (limitRecoveryCommand rebuilds the same commandId and messageId, since identity and requestId are unchanged)\",\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:102-146 (sweep dispatches each candidate; acted=true re-runs on next tick)\",\"apps/server/src/orchestration-v2/ThreadManagementService.ts:752-756 (dispatch goes to orchestrator.dispatch)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:13546-13600 (accepted receipt for the commandId returns stored events with replayed: true and does not create a run)\",\"apps/server/src/orchestration-v2/RestartContinuation.ts:126-141 (restart continuation skips neverStarted runs, so no restart continuation revives the thread)\"],\"scenario\":\"1) Thread hits usage_limit in run R1, which fails. Auto-resume is armed for R1. 2) Reset time passes; the sweep dispatches the resume M (createdBy agent, start_immediately). Run R2 is created with status starting and startedAt null, and the receipt is accepted. 3) Before the provider takes the prompt (no provider turn yet), the server restarts or shuts down. reconcile: R2 is unstarted, but M is no longer retryable, so R2 is cancelled, not held. 4) Next sweep: the candidate query skips the cancelled never-started R2 and still returns R1. limitRecoveryCommand rebuilds M with the same commandId. 5) orchestrator.dispatch finds the accepted receipt and replays it as a no-op. Steps 4-5 repeat on every tick.\",\"consequence\":\"For that limit window the auto-resume never runs and nothing says so. The history shows a cancelled 'Continue where you left off' and the thread stays in usage-limit failure until the user acts. Before this commit the message was kept as a held queued run the user could see and start. The window is narrow (restart or shutdown between resume dispatch and provider acceptance), but it is reachable on every restart. Correction to the note: the reject path at Orchestrator.ts:5546-5564 returns successfully after a metadata-updated event, so the sweep logs no warning there.\",\"severity\":\"medium\",\"location\":\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:369\",\"introduced_by_change\":true,\"covered_by\":null,\"safe_line\":\"\"},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"On ACP, the resume now also skips clearing the ACP wake buffer and wake reports, not only midTurnUnreportedCompletedTaskIds. Buffered sibling-child wake frames survive a usage-limit resume instead of being dropped. Whether that is wrong depends on whether those frames are stale, which I cannot tell from the checkout.\",\"evidence\":[\"packages/provider-acp/src/server/adapter.ts:1492-1502 (acpIsAppOwnedWakeTurn matches createdBy agent + creationSource server)\",\"packages/provider-acp/src/server/adapter.ts:7914-7917 (midTurnUnreportedCompletedTaskIds reset skipped for app-owned wake turns)\",\"packages/provider-acp/src/server/adapter.ts:7926-7929 (wakeBuffer and wakeReports cleared only when !isAppOwnedWakeTurn)\",\"packages/provider-acp/src/server/adapter.ts:7652-7660 (a continuation is offered when wakeBuffer is non-empty and no background task is running)\"],\"severity\":\"low\",\"location\":\"packages/provider-acp/src/server/adapter.ts:7926\",\"scenario\":\"ACP session with buffered wake frames from a sibling child. A usage-limit resume is dispatched. Before this commit, the resume was a user turn and cleared the wake buffer. Now the buffer is kept and a later continuation may deliver those frames.\",\"consequence\":\"Behaviour change on ACP providers only. It is the same predicate as finding 0, but a different set, so it is not covered by that finding. Impact unknown: it may be intended, or it may deliver stale wake reports.\",\"missing\":\"Author intent for usage-limit resumes versus real user turns, and whether buffered wake frames can be stale at resume time.\",\"safe_line\":\"\"}]}"
+}

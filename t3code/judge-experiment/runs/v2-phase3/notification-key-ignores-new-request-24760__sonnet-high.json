@@ -1,0 +1,181 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/notification-key-ignores-new-request-24760.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "242d00cd34534e7a93cb6f6b02cf4652bdd1210e",
+  "base_commit": "c79ef8c454e1268ff79da5a9dcb74572e86f7861",
+  "wall_ms": 207586,
+  "cost_usd": 0.5843392,
+  "duration_ms": 207105,
+  "num_turns": 31,
+  "usage": {
+    "input_tokens": 46,
+    "cache_creation_input_tokens": 69082,
+    "cache_read_input_tokens": 962366,
+    "output_tokens": 21096,
+    "output_tokens_details": {
+      "thinking_tokens": 13300
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 69082,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 4887,
+        "cache_read_input_tokens": 72616,
+        "cache_creation_input_tokens": 1081,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1081
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 7121,
+      "outputTokens": 21,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0007226,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 46,
+      "outputTokens": 21096,
+      "cacheReadInputTokens": 962366,
+      "cacheCreationInputTokens": 69082,
+      "webSearchRequests": 0,
+      "costUSD": 0.5836165999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 13300,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 69082,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Concurrent per-thread and full sweeps can both dispatch thread.auto-settle, but dispatch is serialized per thread and the handler rejects the second command.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11575-11593",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:339-358",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:534-560",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:146-160"
+      ],
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:11584",
+      "scenario": "A thread-triggered sweep and the 1-minute full sweep both pick the same thread and dispatch auto-settle. Both go through threadDispatch.withLock(commandThreadId). The first one settles. The second re-reads the projection and fails on settledOverride !== null. settleThread's catchCause turns that into a warning log. The result is no double settle and no stuck state. Only one extra warning is logged. The per-thread state machine also coalesces events that arrive while queued or running, and only interrupts (shutdown) can leave a stale entry.",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Per-command refresh and the run-end refresh are bounded and de-duplicated by the command-id set. The map is cleaned on terminal run status, and a refresh only re-reads open links.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:485-501",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:533-547",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:210-233",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:561-567",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:155",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:199-203"
+      ],
+      "safe_line": "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:540",
+      "scenario": "I tried repeated turn-item.updated events for one command id, a command still active, a late command event after run end, and a refresh while the run is active. Repeated events return void once the id is in `ended`. An active item only creates the map entry. A late entry is deleted on the next terminal run, which costs one extra read. requestSync marks the key as requested, which isDue accepts (line 211), so the read is fresh. A thread with an active run is not a settlement candidate (ThreadSettlementService.ts:155), so the earlier read only prefetches the snapshot that the run-end sweep uses. The note's 'can settle before the run ends' is therefore loose but not harmful.",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The completion gate cancels on unsettled, archived or quiet observations, suppresses a pending completion on attention, and de-duplicates by completion time. I could not build a double or stale notification.",
+      "evidence": [
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:41-64",
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:66-76",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:129-135",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:214-280"
+      ],
+      "safe_line": "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:42",
+      "scenario": "I tried four cases. (1) A thread goes unsettled during the 2s wait: line 42 cancels the timer. (2) The same completion is re-observed after an unrelated shell change: line 55 keeps the existing timer. (3) Attention arrives while a completion is pending: lines 46-51 mark that completion handled and cancel it. (4) The thread leaves the snapshot, or the effect is cleaned up and StrictMode remounts: retain/clear drop the timers and `previous` is cleared, so the first sighting is skipped (line 44). The timer reads current state through `present` (an effect event) and `previous.current`, and returns quietly if the entry is gone.",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "summary": "Both clients re-render when the tracker version bumps and call observe again, so the expired hold is picked up. The manual-drop path deliberately uses the raw isThreadWorking.",
+      "evidence": [
+        "apps/web/src/components/Sidebar.tsx:384-387",
+        "apps/web/src/components/Sidebar.tsx:421-428",
+        "apps/web/src/components/Sidebar.tsx:515-527",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:58-66",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:105-106",
+        "packages/client-runtime/src/state/threadInbox.ts:144-157"
+      ],
+      "safe_line": "apps/web/src/components/Sidebar.tsx:519",
+      "scenario": "I tried an expiry timer that fires with no thread change, and an expiry that fires slightly early. The timer sets working=false and bumps the version before notifying. The Sidebar calls partitionSidebarThreads directly in render (not memoized), with the version in clockKey, and observe runs there. Mobile re-runs observe through the useMemo deps. An early-firing timer re-arms through schedule(), and the version bump is harmless. On web, the optimistic drop does not use the held state, so a manual move is not held.",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 4,
+      "verdict": "breaks",
+      "summary": "Tracker state lives at module scope and survives list unmounts, but the hold is armed from stale `previous.working`. A thread that finished while the list was unmounted shows in Working for 2s after remount.",
+      "evidence": [
+        "packages/client-runtime/src/state/threadInbox.ts:117-121",
+        "packages/client-runtime/src/state/threadInbox.ts:197-221",
+        "apps/web/src/components/Sidebar.tsx:289",
+        "apps/mobile/src/features/threads/threadListV2.ts:46",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:62-66"
+      ],
+      "scenario": "1. The list is mounted and observes thread T as working, so states[T].working=true. 2. The list unmounts (the comment at threadInbox.ts:117-121 says routes unmount the list), so nobody calls observe. 3. T finishes. 4. The list remounts and observe runs: previous.working=true, actual=false, not actionable, not moved or excluded, so deadline=at+2000 (line 217) and working=true. 5. T is shown in Working for 2s, then jumps to the inbox. Its returnedAt is the remount time, not the real completion time. The result is the same visible flash the commit is meant to remove, now triggered by remount. Before this commit the thread went straight to the inbox on remount.",
+      "location": "packages/client-runtime/src/state/threadInbox.ts:215",
+      "consequence": "After navigating back, an already-finished thread sits in the Working shelf for 2s and then jumps to the top of the inbox.",
+      "severity": "low",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 5,
+      "verdict": "breaks",
+      "summary": "The deadline is wall-clock (Date.now) and is never capped at 2s from now, so a backwards clock step extends the hold by the size of the step.",
+      "evidence": [
+        "packages/client-runtime/src/state/threadInbox.ts:132-135",
+        "packages/client-runtime/src/state/threadInbox.ts:144-158",
+        "packages/client-runtime/src/state/threadInbox.ts:215-219"
+      ],
+      "scenario": "1. T stops and is observed at wall time W, so deadline=W+2000. 2. The system clock steps back by N seconds, for example after an NTP correction or manual change. 3. schedule() arms setTimeout(next - now()), about 2000+N ms. 4. observe also keeps working=true because deadline > at. T stays in Working for about 2s+N instead of 2s. The note's 'worst-case hold is 2s' does not hold, and the note's own 'deadline can be pushed later' admits the clock jump is possible.",
+      "location": "packages/client-runtime/src/state/threadInbox.ts:158",
+      "consequence": "After a backwards clock step, a finished thread can stay in the Working shelf for as long as the step.",
+      "severity": "low",
+      "introduced_by_change": true
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Concurrent per-thread and full sweeps can both dispatch thread.auto-settle, but dispatch is serialized per thread and the handler rejects the second command.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113\",\"apps/server/src/orchestration-v2/Orchestrator.ts:11575-11593\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:339-358\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:534-560\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:146-160\"],\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:11584\",\"scenario\":\"A thread-triggered sweep and the 1-minute full sweep both pick the same thread and dispatch auto-settle. Both go through threadDispatch.withLock(commandThreadId). The first one settles. The second re-reads the projection and fails on settledOverride !== null. settleThread's catchCause turns that into a warning log. The result is no double settle and no stuck state. Only one extra warning is logged. The per-thread state machine also coalesces events that arrive while queued or running, and only interrupts (shutdown) can leave a stale entry.\",\"introduced_by_change\":true},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Per-command refresh and the run-end refresh are bounded and de-duplicated by the command-id set. The map is cleaned on terminal run status, and a refresh only re-reads open links.\",\"evidence\":[\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:485-501\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:533-547\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:210-233\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:561-567\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:155\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:199-203\"],\"safe_line\":\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:540\",\"scenario\":\"I tried repeated turn-item.updated events for one command id, a command still active, a late command event after run end, and a refresh while the run is active. Repeated events return void once the id is in `ended`. An active item only creates the map entry. A late entry is deleted on the next terminal run, which costs one extra read. requestSync marks the key as requested, which isDue accepts (line 211), so the read is fresh. A thread with an active run is not a settlement candidate (ThreadSettlementService.ts:155), so the earlier read only prefetches the snapshot that the run-end sweep uses. The note's 'can settle before the run ends' is therefore loose but not harmful.\",\"introduced_by_change\":true},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The completion gate cancels on unsettled, archived or quiet observations, suppresses a pending completion on attention, and de-duplicates by completion time. I could not build a double or stale notification.\",\"evidence\":[\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:41-64\",\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:66-76\",\"apps/web/src/components/ThreadNotificationCoordinator.tsx:129-135\",\"apps/web/src/components/ThreadNotificationCoordinator.tsx:214-280\"],\"safe_line\":\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:42\",\"scenario\":\"I tried four cases. (1) A thread goes unsettled during the 2s wait: line 42 cancels the timer. (2) The same completion is re-observed after an unrelated shell change: line 55 keeps the existing timer. (3) Attention arrives while a completion is pending: lines 46-51 mark that completion handled and cancel it. (4) The thread leaves the snapshot, or the effect is cleaned up and StrictMode remounts: retain/clear drop the timers and `previous` is cleared, so the first sighting is skipped (line 44). The timer reads current state through `present` (an effect event) and `previous.current`, and returns quietly if the entry is gone.\",\"introduced_by_change\":true},{\"note_index\":3,\"verdict\":\"safe\",\"summary\":\"Both clients re-render when the tracker version bumps and call observe again, so the expired hold is picked up. The manual-drop path deliberately uses the raw isThreadWorking.\",\"evidence\":[\"apps/web/src/components/Sidebar.tsx:384-387\",\"apps/web/src/components/Sidebar.tsx:421-428\",\"apps/web/src/components/Sidebar.tsx:515-527\",\"apps/mobile/src/features/threads/useThreadListV2.ts:58-66\",\"apps/mobile/src/features/threads/useThreadListV2.ts:105-106\",\"packages/client-runtime/src/state/threadInbox.ts:144-157\"],\"safe_line\":\"apps/web/src/components/Sidebar.tsx:519\",\"scenario\":\"I tried an expiry timer that fires with no thread change, and an expiry that fires slightly early. The timer sets working=false and bumps the version before notifying. The Sidebar calls partitionSidebarThreads directly in render (not memoized), with the version in clockKey, and observe runs there. Mobile re-runs observe through the useMemo deps. An early-firing timer re-arms through schedule(), and the version bump is harmless. On web, the optimistic drop does not use the held state, so a manual move is not held.\",\"introduced_by_change\":true},{\"note_index\":4,\"verdict\":\"breaks\",\"summary\":\"Tracker state lives at module scope and survives list unmounts, but the hold is armed from stale `previous.working`. A thread that finished while the list was unmounted shows in Working for 2s after remount.\",\"evidence\":[\"packages/client-runtime/src/state/threadInbox.ts:117-121\",\"packages/client-runtime/src/state/threadInbox.ts:197-221\",\"apps/web/src/components/Sidebar.tsx:289\",\"apps/mobile/src/features/threads/threadListV2.ts:46\",\"apps/mobile/src/features/threads/useThreadListV2.ts:62-66\"],\"scenario\":\"1. The list is mounted and observes thread T as working, so states[T].working=true. 2. The list unmounts (the comment at threadInbox.ts:117-121 says routes unmount the list), so nobody calls observe. 3. T finishes. 4. The list remounts and observe runs: previous.working=true, actual=false, not actionable, not moved or excluded, so deadline=at+2000 (line 217) and working=true. 5. T is shown in Working for 2s, then jumps to the inbox. Its returnedAt is the remount time, not the real completion time. The result is the same visible flash the commit is meant to remove, now triggered by remount. Before this commit the thread went straight to the inbox on remount.\",\"location\":\"packages/client-runtime/src/state/threadInbox.ts:215\",\"consequence\":\"After navigating back, an already-finished thread sits in the Working shelf for 2s and then jumps to the top of the inbox.\",\"severity\":\"low\",\"introduced_by_change\":true},{\"note_index\":5,\"verdict\":\"breaks\",\"summary\":\"The deadline is wall-clock (Date.now) and is never capped at 2s from now, so a backwards clock step extends the hold by the size of the step.\",\"evidence\":[\"packages/client-runtime/src/state/threadInbox.ts:132-135\",\"packages/client-runtime/src/state/threadInbox.ts:144-158\",\"packages/client-runtime/src/state/threadInbox.ts:215-219\"],\"scenario\":\"1. T stops and is observed at wall time W, so deadline=W+2000. 2. The system clock steps back by N seconds, for example after an NTP correction or manual change. 3. schedule() arms setTimeout(next - now()), about 2000+N ms. 4. observe also keeps working=true because deadline > at. T stays in Working for about 2s+N instead of 2s. The note's 'worst-case hold is 2s' does not hold, and the note's own 'deadline can be pushed later' admits the clock jump is possible.\",\"location\":\"packages/client-runtime/src/state/threadInbox.ts:158\",\"consequence\":\"After a backwards clock step, a finished thread can stay in the Working shelf for as long as the step.\",\"severity\":\"low\",\"introduced_by_change\":true}]}"
+}

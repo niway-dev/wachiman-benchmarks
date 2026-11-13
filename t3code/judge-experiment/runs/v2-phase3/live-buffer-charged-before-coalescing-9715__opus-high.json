@@ -1,0 +1,137 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/live-buffer-charged-before-coalescing-9715.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "108f295cc3672716c3cb8291ce487846df5ce098",
+  "base_commit": "d536b0580d044967dc644498d8c5a6e96464f767",
+  "wall_ms": 355495,
+  "cost_usd": 1.6359047999999998,
+  "duration_ms": 354647,
+  "num_turns": 25,
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 95076,
+    "cache_read_input_tokens": 1234677,
+    "output_tokens": 31384,
+    "output_tokens_details": {
+      "thinking_tokens": 25882
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 95076,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3188,
+        "cache_read_input_tokens": 90893,
+        "cache_creation_input_tokens": 8874,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 8874
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5004,
+      "outputTokens": 26,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005134,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 42,
+      "outputTokens": 31384,
+      "cacheReadInputTokens": 1234677,
+      "cacheCreationInputTokens": 95076,
+      "webSearchRequests": 0,
+      "costUSD": 1.6353913999999998,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 25882,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 95076,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Thread live tail: the marker is serialized against producer batches by the coalescer mutex, and overflow shuts the producer and the buffers down whether or not delivery has started.",
+      "scenario": "Case 1: the marker offer runs while the producer is coalescing a PubSub chunk. Both go through offerAll under the same mutex, so the marker queues after the whole chunk. Events pulled from PubSub but not yet offered can still land after the marker. That race existed before (Queue.offer into the input queue), and catch-up replays through the captured headSequence, so nothing is lost. Case 2: overflow during catch-up, before deliver starts. The budget.failed fork runs close(error), which releases pending and queued items and fails the output queue. When deliver starts, its check fails and the client retries after 250ms from lastSequence (client.ts:255-268). Case 3: the ACK is held. raceFirst(liveBuffer.failed) interrupts the producer. Its uninterruptible regions are synchronous retain/offer on an unbounded queue, so the interrupt cannot hang.",
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:163",
+      "evidence": [
+        "apps/server/src/ws.ts:1587-1596",
+        "apps/server/src/ws.ts:1643-1651",
+        "apps/server/src/ws.ts:1684-1691",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        "packages/client-runtime/src/state/threads.ts:639-644",
+        "packages/client-runtime/src/rpc/client.ts:234-271",
+        ".repos/effect-smol/packages/effect/src/unstable/rpc/RpcServer.ts:431-440"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Shell buffer: when closeLiveBuffer races retain→offer, the item is only charged a little longer; it cannot leak or be delivered wrongly.",
+      "scenario": "The scheduler yields between a successful retain and Queue.offer (ws.ts:1437-1438), and the budget.failed fork runs closeLiveBuffer(error). Queue.offer on the Done queue returns false (Queue.ts:634), so the item stays in `retained`. If deliver has started, its failure handler releases every retained item not in flight (LiveStreamBudget.ts:159-161). Otherwise the budget scope finalizer releases it. Second case: closeLiveBuffer runs twice (failure, then finalizer). The liveBufferClosed guard (ws.ts:1419) stops Queue.clear().orDie from running on a Done queue. Third case: overflow while the snapshot loads. The snapshot is emitted, deliver's check (LiveStreamBudget.ts:134) fails, and the shell client retries (shell.ts:249-250).",
+      "safe_line": "apps/server/src/orchestration/LiveStreamBudget.ts:53",
+      "evidence": [
+        "apps/server/src/ws.ts:1411-1459",
+        "apps/server/src/ws.ts:1477-1491",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:52-56",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        ".repos/effect-smol/packages/effect/src/Queue.ts:632-656",
+        ".repos/effect-smol/packages/effect/src/Queue.ts:1114-1133",
+        ".repos/effect-smol/packages/effect/src/Queue.ts:1171-1182",
+        "packages/client-runtime/src/state/shell.ts:249-250"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "Coalescer concurrency: overflow inside the window flush, close, and a stale window cannot deadlock or double-clear.",
+      "scenario": "Case 1: the window fiber's flushPending overflows while it holds the mutex. It fails, the permit is released, and catchTags swallows the error. The forked close(error) then takes the mutex and calls Fiber.interrupt on windowFiber. That fiber has either finished or is blocked on the semaphore, which is interruptible, so the interrupt returns. Case 2: a stale window wakes after close. The generation was bumped, so the check at :145 skips the flush. Case 3: close runs a second time (failure, then the scope finalizer). The `closed` flag stops Queue.clear(output).orDie from running on a Done queue. Stream.fromQueue never shuts the output queue down (Channel.ts:1259 is a plain takeAll), so nothing else can make clear() fail.",
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:208",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-156",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:60-77",
+        ".repos/effect-smol/packages/effect/src/Channel.ts:1257-1259",
+        ".repos/effect-smol/packages/effect/src/Queue.ts:1171-1182"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Thread live tail: the marker is serialized against producer batches by the coalescer mutex, and overflow shuts the producer and the buffers down whether or not delivery has started.\",\"scenario\":\"Case 1: the marker offer runs while the producer is coalescing a PubSub chunk. Both go through offerAll under the same mutex, so the marker queues after the whole chunk. Events pulled from PubSub but not yet offered can still land after the marker. That race existed before (Queue.offer into the input queue), and catch-up replays through the captured headSequence, so nothing is lost. Case 2: overflow during catch-up, before deliver starts. The budget.failed fork runs close(error), which releases pending and queued items and fails the output queue. When deliver starts, its check fails and the client retries after 250ms from lastSequence (client.ts:255-268). Case 3: the ACK is held. raceFirst(liveBuffer.failed) interrupts the producer. Its uninterruptible regions are synchronous retain/offer on an unbounded queue, so the interrupt cannot hang.\",\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:163\",\"evidence\":[\"apps/server/src/ws.ts:1587-1596\",\"apps/server/src/ws.ts:1643-1651\",\"apps/server/src/ws.ts:1684-1691\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\",\"packages/client-runtime/src/state/threads.ts:639-644\",\"packages/client-runtime/src/rpc/client.ts:234-271\",\".repos/effect-smol/packages/effect/src/unstable/rpc/RpcServer.ts:431-440\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Shell buffer: when closeLiveBuffer races retain→offer, the item is only charged a little longer; it cannot leak or be delivered wrongly.\",\"scenario\":\"The scheduler yields between a successful retain and Queue.offer (ws.ts:1437-1438), and the budget.failed fork runs closeLiveBuffer(error). Queue.offer on the Done queue returns false (Queue.ts:634), so the item stays in `retained`. If deliver has started, its failure handler releases every retained item not in flight (LiveStreamBudget.ts:159-161). Otherwise the budget scope finalizer releases it. Second case: closeLiveBuffer runs twice (failure, then finalizer). The liveBufferClosed guard (ws.ts:1419) stops Queue.clear().orDie from running on a Done queue. Third case: overflow while the snapshot loads. The snapshot is emitted, deliver's check (LiveStreamBudget.ts:134) fails, and the shell client retries (shell.ts:249-250).\",\"safe_line\":\"apps/server/src/orchestration/LiveStreamBudget.ts:53\",\"evidence\":[\"apps/server/src/ws.ts:1411-1459\",\"apps/server/src/ws.ts:1477-1491\",\"apps/server/src/orchestration/LiveStreamBudget.ts:52-56\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\",\".repos/effect-smol/packages/effect/src/Queue.ts:632-656\",\".repos/effect-smol/packages/effect/src/Queue.ts:1114-1133\",\".repos/effect-smol/packages/effect/src/Queue.ts:1171-1182\",\"packages/client-runtime/src/state/shell.ts:249-250\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"Coalescer concurrency: overflow inside the window flush, close, and a stale window cannot deadlock or double-clear.\",\"scenario\":\"Case 1: the window fiber's flushPending overflows while it holds the mutex. It fails, the permit is released, and catchTags swallows the error. The forked close(error) then takes the mutex and calls Fiber.interrupt on windowFiber. That fiber has either finished or is blocked on the semaphore, which is interruptible, so the interrupt returns. Case 2: a stale window wakes after close. The generation was bumped, so the check at :145 skips the flush. Case 3: close runs a second time (failure, then the scope finalizer). The `closed` flag stops Queue.clear(output).orDie from running on a Done queue. Stream.fromQueue never shuts the output queue down (Channel.ts:1259 is a plain takeAll), so nothing else can make clear() fail.\",\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:208\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-156\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:60-77\",\".repos/effect-smol/packages/effect/src/Channel.ts:1257-1259\",\".repos/effect-smol/packages/effect/src/Queue.ts:1171-1182\"]}]}"
+}

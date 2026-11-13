@@ -1,0 +1,134 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/live-buffer-charged-before-coalescing-9715.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "108f295cc3672716c3cb8291ce487846df5ce098",
+  "base_commit": "d536b0580d044967dc644498d8c5a6e96464f767",
+  "wall_ms": 141636,
+  "cost_usd": 0.36169870000000004,
+  "duration_ms": 140894,
+  "num_turns": 17,
+  "usage": {
+    "input_tokens": 26,
+    "cache_creation_input_tokens": 44744,
+    "cache_read_input_tokens": 341973,
+    "output_tokens": 14796,
+    "output_tokens_details": {
+      "thinking_tokens": 10946
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 44744,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2671,
+        "cache_read_input_tokens": 47859,
+        "cache_creation_input_tokens": 1500,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1500
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5004,
+      "outputTokens": 26,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005134,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 26,
+      "outputTokens": 14796,
+      "cacheReadInputTokens": 341973,
+      "cacheCreationInputTokens": 44744,
+      "webSearchRequests": 0,
+      "costUSD": 0.36118529999999993,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 10946,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 44744,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Thread overflow fails the stream and stops the producer. I found no ordering or retry path that loses events or hangs the stream.",
+      "scenario": "Tried three cases. (1) Overflow while the client sits on an unACKed batch and deliver is not pulling. (2) A single raw event over 8 MiB. (3) Failure landing between pull completion and `inFlight = items`. In all three the failed-handler closes the source and the producer stops via `raceFirst(failed)`. In (3) the next `check` fails before the items are returned. The client sees the error and retries after 250 ms with its cursor, via `subscribeToSession()`. Resume then replays through the unbudgeted `readEvents`, or falls back to a snapshot past the 1,000-event gap cap. The oversize event is therefore recovered.",
+      "safe_line": "apps/server/src/orchestration/LiveStreamBudget.ts:147-170",
+      "evidence": [
+        "apps/server/src/orchestration/LiveStreamBudget.ts:52-56",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:147-170",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:172-182",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/ws.ts:1587-1596",
+        "packages/client-runtime/src/rpc/client.ts:234-270",
+        "packages/client-runtime/src/state/threads.ts:639-642",
+        "apps/server/src/ws.ts:1620-1656"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "The shell retain, Queue.offer, replace and deliver chain is consistent when a close or failure races it. Leftover charges are released, and the client resumes from its cursor.",
+      "scenario": "Tried the close race. (a) `closeLiveBuffer` runs between `retain` and `Queue.offer`. The offer on a done queue is a no-op, and the item stays charged only until the budget finalizer releases all retained items. (b) Overflow while `coalesceShellEvents` is mid-refetch, with the items already taken from the queue. The failed-handler releases those items, and the later `replace` hits `if (failure) return Effect.fail(failure)`, so the error surfaces cleanly. (c) The marker path with a failed buffer. `retain` fails first. The client's shell state retries after 250 ms and resumes from `snapshotSequence`.",
+      "safe_line": "apps/server/src/orchestration/LiveStreamBudget.ts:103-106",
+      "evidence": [
+        "apps/server/src/orchestration/LiveStreamBudget.ts:52-56",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:79-94",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:103-129",
+        "apps/server/src/ws.ts:1411-1491",
+        "apps/server/src/ws.ts:909-929",
+        "packages/client-runtime/src/state/shell.ts:191-252",
+        "packages/client-runtime/src/rpc/client.ts:255-269"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The coalescer's mutex, generation check and close are consistent. I could not build a stale-window flush, a deadlock, or a marker that overtakes earlier events.",
+      "scenario": "Tried to get a stale window timer to flush or clobber state. The timer wakes and waits for the mutex while `offerAll` handles a non-update event: `cancelWindow` interrupts it, and the generation bump makes any survivor skip the flush. A timer finishing `flushPending` while a new `offerAll` forks a new window before the old fiber's `ensuring` runs: the old fiber's `ensuring` does not null `windowFiber`, because its generation no longer matches. Budget overflow inside `offerAll` or `flushWindow`: `close` waits for the mutex, which the failing fiber releases when it returns the error. `flushPending` is uninterruptible and only does non-blocking work (`Queue.offerAll` on an unbounded queue), so it cannot hold the mutex indefinitely.",
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-156",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:58-77"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Thread overflow fails the stream and stops the producer. I found no ordering or retry path that loses events or hangs the stream.\",\"scenario\":\"Tried three cases. (1) Overflow while the client sits on an unACKed batch and deliver is not pulling. (2) A single raw event over 8 MiB. (3) Failure landing between pull completion and `inFlight = items`. In all three the failed-handler closes the source and the producer stops via `raceFirst(failed)`. In (3) the next `check` fails before the items are returned. The client sees the error and retries after 250 ms with its cursor, via `subscribeToSession()`. Resume then replays through the unbudgeted `readEvents`, or falls back to a snapshot past the 1,000-event gap cap. The oversize event is therefore recovered.\",\"safe_line\":\"apps/server/src/orchestration/LiveStreamBudget.ts:147-170\",\"evidence\":[\"apps/server/src/orchestration/LiveStreamBudget.ts:52-56\",\"apps/server/src/orchestration/LiveStreamBudget.ts:147-170\",\"apps/server/src/orchestration/LiveStreamBudget.ts:172-182\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/ws.ts:1587-1596\",\"packages/client-runtime/src/rpc/client.ts:234-270\",\"packages/client-runtime/src/state/threads.ts:639-642\",\"apps/server/src/ws.ts:1620-1656\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"The shell retain, Queue.offer, replace and deliver chain is consistent when a close or failure races it. Leftover charges are released, and the client resumes from its cursor.\",\"scenario\":\"Tried the close race. (a) `closeLiveBuffer` runs between `retain` and `Queue.offer`. The offer on a done queue is a no-op, and the item stays charged only until the budget finalizer releases all retained items. (b) Overflow while `coalesceShellEvents` is mid-refetch, with the items already taken from the queue. The failed-handler releases those items, and the later `replace` hits `if (failure) return Effect.fail(failure)`, so the error surfaces cleanly. (c) The marker path with a failed buffer. `retain` fails first. The client's shell state retries after 250 ms and resumes from `snapshotSequence`.\",\"safe_line\":\"apps/server/src/orchestration/LiveStreamBudget.ts:103-106\",\"evidence\":[\"apps/server/src/orchestration/LiveStreamBudget.ts:52-56\",\"apps/server/src/orchestration/LiveStreamBudget.ts:79-94\",\"apps/server/src/orchestration/LiveStreamBudget.ts:103-129\",\"apps/server/src/ws.ts:1411-1491\",\"apps/server/src/ws.ts:909-929\",\"packages/client-runtime/src/state/shell.ts:191-252\",\"packages/client-runtime/src/rpc/client.ts:255-269\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The coalescer's mutex, generation check and close are consistent. I could not build a stale-window flush, a deadlock, or a marker that overtakes earlier events.\",\"scenario\":\"Tried to get a stale window timer to flush or clobber state. The timer wakes and waits for the mutex while `offerAll` handles a non-update event: `cancelWindow` interrupts it, and the generation bump makes any survivor skip the flush. A timer finishing `flushPending` while a new `offerAll` forks a new window before the old fiber's `ensuring` runs: the old fiber's `ensuring` does not null `windowFiber`, because its generation no longer matches. Budget overflow inside `offerAll` or `flushWindow`: `close` waits for the mutex, which the failing fiber releases when it returns the error. `flushPending` is uninterruptible and only does non-blocking work (`Queue.offerAll` on an unbounded queue), so it cannot hold the mutex indefinitely.\",\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-156\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:58-77\"]}]}"
+}

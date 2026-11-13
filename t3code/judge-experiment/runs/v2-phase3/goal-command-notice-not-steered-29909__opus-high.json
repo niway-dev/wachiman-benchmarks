@@ -1,0 +1,123 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/goal-command-notice-not-steered-29909.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "e2bb9e63e129001aa37fa1f9f51cb334d1a3db42",
+  "base_commit": "5d3d78ab932bc71535d3155dad7f68fef39c5c16",
+  "wall_ms": 134414,
+  "cost_usd": 0.7788770000000002,
+  "duration_ms": 133888,
+  "num_turns": 22,
+  "usage": {
+    "input_tokens": 36,
+    "cache_creation_input_tokens": 56212,
+    "cache_read_input_tokens": 694866,
+    "output_tokens": 9479,
+    "output_tokens_details": {
+      "thinking_tokens": 4871
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 56212,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1706,
+        "cache_read_input_tokens": 58530,
+        "cache_creation_input_tokens": 2373,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2373
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4743,
+      "outputTokens": 19,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0004838,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 36,
+      "outputTokens": 9479,
+      "cacheReadInputTokens": 694866,
+      "cacheCreationInputTokens": 56212,
+      "webSearchRequests": 0,
+      "costUSD": 0.7783932000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 4871,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 56212,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "A steered question notice is lost for good if the parent's provider turn ends as failed or interrupted (not completed) before the steer effect delivers it. The note's failure_mode only covers the turnCompleted race. Before this change the notice stayed a queued run behind the parent turn, so it survived this case.",
+      "scenario": "1) A background task (completionWake 'always') opens a pending user_input request while the parent run is running on a provider that can steer. 2) The reactor dispatches the notice. Orchestrator.ts:5766-5772 upgrades it to steer_active, and dispatchSteerIntoRun attaches the message and the notification card to the running run (4961-4967) and queues a provider-turn.steer effect (4968-4982). 3) Before the worker runs that effect, the parent provider turn moves to 'failed' (provider error) or 'interrupted' (Stop lands after the dispatch-time stopReachedRun check). 4) ProviderTurnControlService.ts:136-144 fails with turnCompleted=false. EffectWorker.ts:265-270 rethrows, so no follow-up is dispatched. 5) Nothing delivers it again. The mailbox redelivery path covers delegatedCompletion only (EffectWorker.ts:254, NotificationMailbox.ts:25). A later wake by the reactor reuses commandId `server:delegated-task-question:${key}` (DelegatedTaskQuestionReactor.ts:45), and the receipt dedup at Orchestrator.ts:13462 turns it into a no-op.",
+      "location": "apps/server/src/orchestration-v2/EffectWorker.ts:265",
+      "consequence": "The parent thread shows a 'has a question' notification card, but the parent agent never received the text. A blocking child question then stays pending with no agent wake and no queued run to resume. Before this change the notice was a queued (possibly held) run that ran after the failed turn.",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5739-5775",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4939-4983",
+        "apps/server/src/orchestration-v2/ProviderTurnControlService.ts:132-144",
+        "apps/server/src/orchestration-v2/ProviderTurnControlService.ts:399-405",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:244-271",
+        "apps/server/src/orchestration-v2/NotificationMailbox.ts:20-34",
+        "apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:43-58",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:13451-13480",
+        "packages/contracts/src/orchestrationV2.ts:1175-1180"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "In the turnCompleted case, the queued retry puts the existing message on a new queued run under the same message id. The reactor's cancel-on-answer path still finds that run, and receipts dedupe repeats. The model-selection difference is already finding 0.",
+      "scenario": "The steer loses the race (turn completed). The retry re-dispatches the message as queue_after_active, passing its notification. Then the child's question is answered before the queued run starts. The reactor looks for a queued run whose userMessageId equals the notice's message id and cancels it. The queued path writes the message with id=command.messageId and runId set to the new run, so the lookup matches and the run is cancelled. Retrying the same effect again reuses commandId steer-follow-up:${effect.id}, which the receipt dedupes.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:6090",
+      "evidence": [
+        "apps/server/src/orchestration-v2/EffectWorker.ts:272-330",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6082-6103",
+        "apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:112-125",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:13462-13480"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"A steered question notice is lost for good if the parent's provider turn ends as failed or interrupted (not completed) before the steer effect delivers it. The note's failure_mode only covers the turnCompleted race. Before this change the notice stayed a queued run behind the parent turn, so it survived this case.\",\"scenario\":\"1) A background task (completionWake 'always') opens a pending user_input request while the parent run is running on a provider that can steer. 2) The reactor dispatches the notice. Orchestrator.ts:5766-5772 upgrades it to steer_active, and dispatchSteerIntoRun attaches the message and the notification card to the running run (4961-4967) and queues a provider-turn.steer effect (4968-4982). 3) Before the worker runs that effect, the parent provider turn moves to 'failed' (provider error) or 'interrupted' (Stop lands after the dispatch-time stopReachedRun check). 4) ProviderTurnControlService.ts:136-144 fails with turnCompleted=false. EffectWorker.ts:265-270 rethrows, so no follow-up is dispatched. 5) Nothing delivers it again. The mailbox redelivery path covers delegatedCompletion only (EffectWorker.ts:254, NotificationMailbox.ts:25). A later wake by the reactor reuses commandId `server:delegated-task-question:${key}` (DelegatedTaskQuestionReactor.ts:45), and the receipt dedup at Orchestrator.ts:13462 turns it into a no-op.\",\"location\":\"apps/server/src/orchestration-v2/EffectWorker.ts:265\",\"consequence\":\"The parent thread shows a 'has a question' notification card, but the parent agent never received the text. A blocking child question then stays pending with no agent wake and no queued run to resume. Before this change the notice was a queued (possibly held) run that ran after the failed turn.\",\"severity\":\"medium\",\"introduced_by_change\":true,\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:5739-5775\",\"apps/server/src/orchestration-v2/Orchestrator.ts:4939-4983\",\"apps/server/src/orchestration-v2/ProviderTurnControlService.ts:132-144\",\"apps/server/src/orchestration-v2/ProviderTurnControlService.ts:399-405\",\"apps/server/src/orchestration-v2/EffectWorker.ts:244-271\",\"apps/server/src/orchestration-v2/NotificationMailbox.ts:20-34\",\"apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:43-58\",\"apps/server/src/orchestration-v2/Orchestrator.ts:13451-13480\",\"packages/contracts/src/orchestrationV2.ts:1175-1180\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"In the turnCompleted case, the queued retry puts the existing message on a new queued run under the same message id. The reactor's cancel-on-answer path still finds that run, and receipts dedupe repeats. The model-selection difference is already finding 0.\",\"scenario\":\"The steer loses the race (turn completed). The retry re-dispatches the message as queue_after_active, passing its notification. Then the child's question is answered before the queued run starts. The reactor looks for a queued run whose userMessageId equals the notice's message id and cancels it. The queued path writes the message with id=command.messageId and runId set to the new run, so the lookup matches and the run is cancelled. Retrying the same effect again reuses commandId steer-follow-up:${effect.id}, which the receipt dedupes.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:6090\",\"evidence\":[\"apps/server/src/orchestration-v2/EffectWorker.ts:272-330\",\"apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6082-6103\",\"apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:112-125\",\"apps/server/src/orchestration-v2/Orchestrator.ts:13462-13480\"]}]}"
+}

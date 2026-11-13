@@ -1,0 +1,185 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/delegated-followup-self-queued-run-17696.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "c572cb71d2711d8cdb4ff7e0ba88af5e9a23aa81",
+  "base_commit": "fa9f936ef5cbbe4bd4f9890b638766fc92f45075",
+  "wall_ms": 389823,
+  "cost_usd": 2.1438147,
+  "duration_ms": 389346,
+  "num_turns": 56,
+  "usage": {
+    "input_tokens": 100,
+    "cache_creation_input_tokens": 110019,
+    "cache_read_input_tokens": 3486799,
+    "output_tokens": 28254,
+    "output_tokens_details": {
+      "thinking_tokens": 16354
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 110019,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 4979,
+        "cache_read_input_tokens": 112978,
+        "cache_creation_input_tokens": 1732,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1732
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 8124,
+      "outputTokens": 21,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0008229,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 100,
+      "outputTokens": 28254,
+      "cacheReadInputTokens": 3486799,
+      "cacheCreationInputTokens": 110019,
+      "webSearchRequests": 0,
+      "costUSD": 2.1429918000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 16354,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 110019,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "summary": "A follow-up task is finalized as soon as its own run ends. Unlike the original task, it does not wait for the child's own subagents or pending background work, so the parent gets an early result and the child's real final answer is never delivered.",
+      "scenario": "1) Parent P delegates to child C (task A). C completes and A is published (result plus transfer). 2) The user, or P via thread_send, sends C a follow-up. recordSubagentFollowup creates task B and tags run R2 with delegatedTaskId=B. 3) During R2, C delegates its own app-owned grandchild G and ends its turn, so R2 is completed while G is still running. Under the original-task rules, delegatedTaskProgress would report waiting_for_children. 4) handleTerminalRun runs finalizeAppOwnedSubagent. The loop skips A, but B has result===null, so it calls finalizeAppOwnedSubagentTask(B). That function only checks that R2 is terminal and whether a restart continuation is pending (9773-9793). It never checks for active children, so it writes B.result as R2's interim text and wakes P (completionWake 'always'). 5) G finishes and C gets a delegated-completion wake run R3. That run is untracked: recordSubagentFollowup returns early for notification/system commands (6758-6764), and continuedTaskId is only set for restart continuations. When R3 ends, the loop skips both A and B, because each has a result and a subagent_result transfer from C exists (10079-10085). R3's answer never reaches P.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:9773",
+      "consequence": "P is woken with an interim result for B ('waiting on subagent…'), and task_status reports B as completed. The actual answer C produces after its grandchild finishes is never relayed to P.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6754-6813",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9753-9793",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9834-9844",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10053-10099",
+        "packages/provider-core/src/server/subagentProjection.ts:210-259",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10872-10907"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "No path takes a child's lock and then its parent's lock while holding the first. Outside callers of the executor never dispatch while holding a lock, so the parent-then-child order cannot form a cycle.",
+      "scenario": "Looked for any path that holds the child C's lock and then waits for the parent P's lock while a user/MCP follow-up holds P and waits for C. handleTerminalRun releases the child lock before it takes the parent lock (10882-10906). recoverDelegatedTask and recovery take only the parent lock. The other ThreadCommandExecutor users only write events or settings under a single lock and never dispatch: CheckpointRollbackService:283, ProviderEventIngestor:421, environment handlers:72, ProjectService:478. The EffectWorker's steer-follow-up re-dispatch is not under a lock. Chains of nested subagents stay top-down (grandparent, parent, child).",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:10906",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10850-10870",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10872-10907",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11059-11066",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:1875-1882",
+        "apps/server/src/orchestration-v2/CheckpointRollbackService.ts:280-290",
+        "apps/server/src/orchestration-v2/ProviderEventIngestor.ts:409-424",
+        "apps/server/src/mcp/toolkits/environment/handlers.ts:57-73",
+        "apps/server/src/project/ProjectService.ts:474-486",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:234-288"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "If a server restart cancels a follow-up run mid-turn, the recovery sweep does list the child, but the task is not finalized early: the pending restart-continuation check holds it.",
+      "scenario": "Follow-up run R2 (delegatedTaskId=B) is cancelled by restart reconciliation, and an effect:restart-continuation:R2 is queued. The SQL query and needsRecovery both list C (a terminal run tied to B, whose result is null). In finalizeAppOwnedSubagentTask, childAwaitsRestartContinuation(taskRuns, R2) returns true, so nothing is written. The continuation run then gets delegatedTaskId=B from continuedTaskId (4567), so B settles on the continuation's outcome.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:9786",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3615",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9773-9793",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9520-9524",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10946-10957"
+      ]
+    },
+    {
+      "note_index": 3,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "summary": "When a steered thread_send arrives just after the target turn has ended, it returns the taskId of the run it tried to steer. The EffectWorker then re-dispatches the message, and that new run gets a different task.",
+      "scenario": "1) C has follow-up task B running in run R2. 2) P calls t3_thread_send in auto mode. ThreadManagementService steers into R2, the message's runId is R2, and recordSubagentFollowup returns early because R2 already has a delegatedTaskId. thread_send returns taskId=B (2474-2476). 3) The provider reports turnCompleted for the steer, so R2 completes and B is finalized with R2's text, which does not answer P's message. 4) EffectWorker re-dispatches the same messageId as a new message.dispatch, keeping createdBy and creationSource 'mcp' and senderThreadId=P (EffectWorker.ts:254-288). That starts run R3. recordSubagentFollowup sees no delegatedTaskId on R3 and A.result set, so it creates task C for R3.",
+      "location": "apps/server/src/mcp/OrchestratorMcpService.ts:2474",
+      "consequence": "The agent polls task_status for B and gets a completed result that ignores its message. The work it actually asked for runs under task C, whose id it was never given (it only finds out through the later wake).",
+      "evidence": [
+        "apps/server/src/mcp/OrchestratorMcpService.ts:2429-2480",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:589-675",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:234-288",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6782-6805"
+      ]
+    },
+    {
+      "note_index": 4,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "summary": "The subagent edge now shows the child's latest run status whenever the child has any run. A child whose turn ended while its own subagents still run shows as 'completed' and moves to 'Previous agents', although its task is still running.",
+      "scenario": "1) P delegates to C (task A, status 'running'). 2) C delegates grandchild G and ends its turn, so its latest run is 'completed' with no activity run. finalize leaves A running (waiting_for_children). 3) In P's lineage panel, deriveThreadRelationshipGraph computes child.activityRunStatus (null) ?? (latestRunId != null ? child.status ('completed') : subagent.status). Before this change the projection loop overrode the edge with subagent.status ('running'). Now it reports 'completed'. 4) ThreadRelationshipsPanel puts any edge with status 'completed' under 'Previous agents' (278-282) and leaves it out of runningCount (290-293). The hover card can still say 'running', because the agent passes through currentSubagent unchanged when no newer run exists.",
+      "location": "packages/client-runtime/src/state/threadRelationships.ts:108",
+      "consequence": "While a subagent is still waiting on its own subagents, the parent's UI shows it as completed, collapsed under Previous agents, and leaves it out of the running count.",
+      "evidence": [
+        "packages/client-runtime/src/state/threadRelationships.ts:71-123",
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176-206",
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:215-232",
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:271-293",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1409-1486",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1578-1584",
+        "packages/contracts/src/orchestrationV2.ts:1817-1873",
+        "packages/provider-core/src/server/subagentProjection.ts:234-256"
+      ]
+    },
+    {
+      "note_index": 5,
+      "verdict": "safe",
+      "summary": "For the tested sequence, the SQL and in-memory recovery checks give the same answer at every step.",
+      "scenario": "Sequence tried: the original transfer exists; then an untracked completed run (no row in either check); then a tracked completed run followed by a running untracked run; then the task's result is set. The new tracked clause is separate from latest-run ordering in both versions. It is a join on delegatedTaskId with result IS NULL in SQL and parent.subagents in memory, so the trailing running run does not hide it. Once the result is set, both versions drop the row. The legacy clause in both versions fails, because a subagent_result transfer to the lineage parent exists.",
+      "safe_line": "apps/server/src/orchestration-v2/ProjectionStore.ts:3601",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3615",
+        "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:1169-1250 (diff)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 (diff)"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"summary\":\"A follow-up task is finalized as soon as its own run ends. Unlike the original task, it does not wait for the child's own subagents or pending background work, so the parent gets an early result and the child's real final answer is never delivered.\",\"scenario\":\"1) Parent P delegates to child C (task A). C completes and A is published (result plus transfer). 2) The user, or P via thread_send, sends C a follow-up. recordSubagentFollowup creates task B and tags run R2 with delegatedTaskId=B. 3) During R2, C delegates its own app-owned grandchild G and ends its turn, so R2 is completed while G is still running. Under the original-task rules, delegatedTaskProgress would report waiting_for_children. 4) handleTerminalRun runs finalizeAppOwnedSubagent. The loop skips A, but B has result===null, so it calls finalizeAppOwnedSubagentTask(B). That function only checks that R2 is terminal and whether a restart continuation is pending (9773-9793). It never checks for active children, so it writes B.result as R2's interim text and wakes P (completionWake 'always'). 5) G finishes and C gets a delegated-completion wake run R3. That run is untracked: recordSubagentFollowup returns early for notification/system commands (6758-6764), and continuedTaskId is only set for restart continuations. When R3 ends, the loop skips both A and B, because each has a result and a subagent_result transfer from C exists (10079-10085). R3's answer never reaches P.\",\"location\":\"apps/server/src/orchestration-v2/Orchestrator.ts:9773\",\"consequence\":\"P is woken with an interim result for B ('waiting on subagent…'), and task_status reports B as completed. The actual answer C produces after its grandchild finishes is never relayed to P.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:6754-6813\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9753-9793\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9834-9844\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10053-10099\",\"packages/provider-core/src/server/subagentProjection.ts:210-259\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10872-10907\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"No path takes a child's lock and then its parent's lock while holding the first. Outside callers of the executor never dispatch while holding a lock, so the parent-then-child order cannot form a cycle.\",\"scenario\":\"Looked for any path that holds the child C's lock and then waits for the parent P's lock while a user/MCP follow-up holds P and waits for C. handleTerminalRun releases the child lock before it takes the parent lock (10882-10906). recoverDelegatedTask and recovery take only the parent lock. The other ThreadCommandExecutor users only write events or settings under a single lock and never dispatch: CheckpointRollbackService:283, ProviderEventIngestor:421, environment handlers:72, ProjectService:478. The EffectWorker's steer-follow-up re-dispatch is not under a lock. Chains of nested subagents stay top-down (grandparent, parent, child).\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:10906\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:10850-10870\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10872-10907\",\"apps/server/src/orchestration-v2/Orchestrator.ts:11059-11066\",\"apps/server/src/orchestration-v2/Orchestrator.ts:1875-1882\",\"apps/server/src/orchestration-v2/CheckpointRollbackService.ts:280-290\",\"apps/server/src/orchestration-v2/ProviderEventIngestor.ts:409-424\",\"apps/server/src/mcp/toolkits/environment/handlers.ts:57-73\",\"apps/server/src/project/ProjectService.ts:474-486\",\"apps/server/src/orchestration-v2/EffectWorker.ts:234-288\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"If a server restart cancels a follow-up run mid-turn, the recovery sweep does list the child, but the task is not finalized early: the pending restart-continuation check holds it.\",\"scenario\":\"Follow-up run R2 (delegatedTaskId=B) is cancelled by restart reconciliation, and an effect:restart-continuation:R2 is queued. The SQL query and needsRecovery both list C (a terminal run tied to B, whose result is null). In finalizeAppOwnedSubagentTask, childAwaitsRestartContinuation(taskRuns, R2) returns true, so nothing is written. The continuation run then gets delegatedTaskId=B from continuedTaskId (4567), so B settles on the continuation's outcome.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:9786\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3615\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9773-9793\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9520-9524\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10946-10957\"]},{\"note_index\":3,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"summary\":\"When a steered thread_send arrives just after the target turn has ended, it returns the taskId of the run it tried to steer. The EffectWorker then re-dispatches the message, and that new run gets a different task.\",\"scenario\":\"1) C has follow-up task B running in run R2. 2) P calls t3_thread_send in auto mode. ThreadManagementService steers into R2, the message's runId is R2, and recordSubagentFollowup returns early because R2 already has a delegatedTaskId. thread_send returns taskId=B (2474-2476). 3) The provider reports turnCompleted for the steer, so R2 completes and B is finalized with R2's text, which does not answer P's message. 4) EffectWorker re-dispatches the same messageId as a new message.dispatch, keeping createdBy and creationSource 'mcp' and senderThreadId=P (EffectWorker.ts:254-288). That starts run R3. recordSubagentFollowup sees no delegatedTaskId on R3 and A.result set, so it creates task C for R3.\",\"location\":\"apps/server/src/mcp/OrchestratorMcpService.ts:2474\",\"consequence\":\"The agent polls task_status for B and gets a completed result that ignores its message. The work it actually asked for runs under task C, whose id it was never given (it only finds out through the later wake).\",\"evidence\":[\"apps/server/src/mcp/OrchestratorMcpService.ts:2429-2480\",\"apps/server/src/orchestration-v2/ThreadManagementService.ts:589-675\",\"apps/server/src/orchestration-v2/EffectWorker.ts:234-288\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6782-6805\"]},{\"note_index\":4,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"summary\":\"The subagent edge now shows the child's latest run status whenever the child has any run. A child whose turn ended while its own subagents still run shows as 'completed' and moves to 'Previous agents', although its task is still running.\",\"scenario\":\"1) P delegates to C (task A, status 'running'). 2) C delegates grandchild G and ends its turn, so its latest run is 'completed' with no activity run. finalize leaves A running (waiting_for_children). 3) In P's lineage panel, deriveThreadRelationshipGraph computes child.activityRunStatus (null) ?? (latestRunId != null ? child.status ('completed') : subagent.status). Before this change the projection loop overrode the edge with subagent.status ('running'). Now it reports 'completed'. 4) ThreadRelationshipsPanel puts any edge with status 'completed' under 'Previous agents' (278-282) and leaves it out of runningCount (290-293). The hover card can still say 'running', because the agent passes through currentSubagent unchanged when no newer run exists.\",\"location\":\"packages/client-runtime/src/state/threadRelationships.ts:108\",\"consequence\":\"While a subagent is still waiting on its own subagents, the parent's UI shows it as completed, collapsed under Previous agents, and leaves it out of the running count.\",\"evidence\":[\"packages/client-runtime/src/state/threadRelationships.ts:71-123\",\"apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176-206\",\"apps/web/src/components/chat/ThreadRelationshipsControl.tsx:215-232\",\"apps/web/src/components/chat/ThreadRelationshipsControl.tsx:271-293\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:1409-1486\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:1578-1584\",\"packages/contracts/src/orchestrationV2.ts:1817-1873\",\"packages/provider-core/src/server/subagentProjection.ts:234-256\"]},{\"note_index\":5,\"verdict\":\"safe\",\"summary\":\"For the tested sequence, the SQL and in-memory recovery checks give the same answer at every step.\",\"scenario\":\"Sequence tried: the original transfer exists; then an untracked completed run (no row in either check); then a tracked completed run followed by a running untracked run; then the task's result is set. The new tracked clause is separate from latest-run ordering in both versions. It is a join on delegatedTaskId with result IS NULL in SQL and parent.subagents in memory, so the trailing running run does not hide it. Once the result is set, both versions drop the row. The legacy clause in both versions fails, because a subagent_result transfer to the lineage parent exists.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3601\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3615\",\"apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:1169-1250 (diff)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 (diff)\"]}]}"
+}

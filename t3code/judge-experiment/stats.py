@@ -19,7 +19,7 @@ CONFIGS = ["opus-high", "opus-medium", "sonnet-high", "sonnet-medium", "haiku-hi
 PER_BATCH_USD = {"sonnet": 0.32, "opus": 0.5, "haiku": 0.28}  # wachiman src/estimate.ts, origin/main
 KNOWN_VALID = {"22107", "19355", "18505", "33632", "19432"}
 # Spot-check overrides of worker labels: (phase, case, config, verdict_index) -> label
-OVERRIDES = {("p3", "ssh-prompt-queue-never-settles-25239", "sonnet-high", "0"): "partial"}
+OVERRIDES = {}  # spot-checked: worker labels kept (see README, Scoring notes)
 
 
 def tsv(name):
@@ -144,7 +144,9 @@ def main():
         print(f"- Sonnet high + {cfg}: {money(pair)} per review")
     total = sum(float(json.load(open(f)).get("cost_usd") or 0) for f in glob.glob(str(HERE / "runs/**/*.json"), recursive=True)
                 if "cost_usd" in json.load(open(f)))
-    print(f"\nRunning total (judge calls incl. v1 and failed calls, plus baselines): {money(total + base_cost)}")
+    run2_cost = sum(json.load(open(f))["execution"]["costUsdEstimate"] for f in glob.glob(str(HERE / "runs/baseline-run2/*.json")))
+    print(f"\nRunning total: judge calls (incl. v1 and failed calls) {money(total)} + baseline run 1 {money(base_cost)} "
+          f"+ baseline run 2 {money(run2_cost)} = {money(total + base_cost + run2_cost)}")
 
 
 if __name__ == "__main__":

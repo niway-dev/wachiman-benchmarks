@@ -1,0 +1,258 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit c572cb7 of t3code-fork against its parent (fa9f936)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "fa9f936ef5cbbe4bd4f9890b638766fc92f45075",
+      "ref": "fa9f936"
+    },
+    "head": {
+      "sha": "c572cb71d2711d8cdb4ff7e0ba88af5e9a23aa81",
+      "ref": "c572cb7"
+    },
+    "title": "fix(server): track resumed subagent follow-ups as separate tasks (#17696)",
+    "description": "fix(server): track resumed subagent follow-ups as separate tasks (#17696)",
+    "author": "Yash Singh"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/mcp/OrchestratorMcpService.test.ts",
+      "apps/server/src/mcp/OrchestratorMcpService.ts",
+      "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
+      "apps/server/src/mcp/toolkits/orchestrator/tools.test.ts",
+      "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/web/src/components/chat/ThreadRelationshipsControl.tsx",
+      "packages/client-runtime/src/state/threadRelationships.test.ts",
+      "packages/client-runtime/src/state/threadRelationships.ts",
+      "packages/contracts/src/orchestrationV2.ts",
+      "packages/contracts/src/orchestratorMcp.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/mcp/OrchestratorMcpService.ts",
+      "apps/server/src/mcp/toolkits/orchestrator/tools.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "apps/server/src/mcp/OrchestratorMcpService.test.ts",
+      "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
+      "apps/server/src/mcp/toolkits/orchestrator/tools.test.ts",
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/web/src/components/chat/ThreadRelationshipsControl.tsx",
+      "packages/client-runtime/src/state/threadRelationships.ts",
+      "packages/contracts/src/orchestrationV2.ts",
+      "packages/contracts/src/orchestratorMcp.ts",
+      "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts",
+      "packages/client-runtime/src/state/threadRelationships.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "line": 10861,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Every user/MCP message.dispatch now reads the thread before the receipt check, and unknown-thread errors change type",
+      "body": "`dispatchWithReceipt` now calls `appOwnedSubagentParentThreadId` (a `projectionStore.getThread` read) for every `message.dispatch` from a user or MCP, outside the child lock and before the command receipt is looked up. `recordSubagentFollowup` then reads the same thread again under the lock (line 6774). A missing or unreadable thread now fails here as `OrchestratorProjectionError` (mapped at 10862-10864). Before, the same failure went through `dispatchWithReceiptEffect` and surfaced as a dispatch error. Callers that match on the error tag see a different type for that case. The MCP and ThreadManagement paths load the target first, so this is probably unreachable from them. I did not check the web WS handler. Consider mapping to `OrchestratorDispatchError` with the command id, as the other branches of this function do.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "line": 6759,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Does an interrupt-and-restart follow-up (`restart_active`) create an extra task and wake?",
+      "body": "`recordSubagentFollowup` skips only server restart continuations (`restartContinuationOfRunId`). A `t3_thread_send` with `mode='restart'` (ThreadManagementService.ts:611) aborts the active follow-up run, which belongs to task T2, and starts a new run. That new run has no `delegatedTaskId` and no `restartContinuationOfRunId` that I could see. It would get a third task T3. T2 would finalize as `interrupted` and T3 as its own task, so the parent could get two completion wakes for one logical request. Is this intended? If not, should the restarted run inherit the interrupted run's `delegatedTaskId` the way `continuedTaskId` does for restart continuations? I did not find a test for the restart mode.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "line": 6762,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "A user typing directly in a completed subagent thread now creates a task that wakes the parent agent",
+      "body": "The gate `command.createdBy !== \"user\" && command.creationSource !== \"mcp\"` lets any user-authored `message.dispatch` into an app-owned child become a new task. `completionWake` is hard-coded to `\"always\"` (line 6826), and `senderThreadId` is not checked for users (line 6779). Each message a person sends in the child's own UI therefore wakes the parent agent with a delegated-completion run when it finishes, even if the person never asked the parent to react. The `failed` case in DelegatedCompletionDelivery.test.ts:984 locks this in. If waking the parent on user-initiated follow-ups is intended, the MCP tool text in tools.ts:222 could say so, since it currently describes only the parent-sent case. If not, restrict this to `senderThreadId === parentThreadId`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/web/src/components/chat/ThreadRelationshipsControl.tsx",
+      "line": 176,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "currentSubagent has non-trivial status/time logic and no test",
+      "body": "`currentSubagent` now decides between the task and the child's latest run. It compares `latestRunRequestedAt` with `agent.completedAt ?? startedAt ?? updatedAt`, maps `preparing`/`starting`/`queued` to `pending`, maps `rolled_back` to `interrupted`, and takes `startedAt`/`completedAt` from either the activity run or the latest run. The graph half of this change is covered in `threadRelationships.test.ts`, but this function is a private helper in a component file and nothing exercises it. Examples worth pinning: a terminal task with no `completedAt`, a child run requested a few ms after the task's `startedAt` while the task is still settling, and a queued follow-up. Moving it next to `deriveThreadRelationshipGraph` in `packages/client-runtime` would make it testable without rendering, and mobile could reuse it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/client-runtime/src/state/threadRelationships.ts",
+      "line": 108,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Edge status can become \"idle\" and override a recorded task status",
+      "body": "When `child.latestRunId != null` the edge takes `child.status`, which is `OrchestrationV2ShellThreadStatus` and includes `\"idle\"` (`packages/contracts/src/orchestrationV2.ts:1817-1820`). If a child with a latest run can report `idle`, the row would show `idle` instead of the task's `completed`/`failed`, and a failed task would no longer count in the section's \"N failed\" header. I did not find where the shell status is derived, so I could not confirm that `idle` and a non-null `latestRunId` can occur together. If they can, fall back to `subagent.status` for `idle`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "New follow-up intake: a user or MCP message.dispatch into a child whose original task already published a result creates a fresh app-owned task, node, turn item and run link in the parent.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:6754",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6754-6908",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9564-9573",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:636-644"
+      ],
+      "equivalent_path": "The fresh-delegation path (`delegated_task.request`, idAllocator.derive.delegatedTaskNode/TurnItem) creates the same subagent, node and turn-item trio under the parent lock.",
+      "before_after": "Before, a message into a completed child extended the original task, and its result was never redelivered. Now the follow-up emits run.updated (child), then node, subagent and turn-item updated (parent) in the same command transaction, with ids derived from the commandId. A replayed commandId hits the receipt and does not duplicate.",
+      "visible_effect": "The parent's timeline shows a new subagent item. task_status and thread_send return the new taskId. The parent is woken on completion through the existing delivery planner.",
+      "failure_mode": "If no owner run exists (`owner === null`) or the original is unpublished, it returns silently and the follow-up folds into the original task. The unpublished case is documented in a comment at line 6804 and the null owner is silent. A user message into a child whose queue is held creates a `pending` task that waits for resume.",
+      "evidence_checked": true
+    },
+    {
+      "action": "dispatchWithReceipt now takes the parent thread's lock, then the child's lock, for user/MCP message.dispatch into app-owned subagents.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:10850",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10850-10870",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10872-10907",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:7427-7441"
+      ],
+      "equivalent_path": "dispatchDelegatedTaskRequest already holds the parent lock while writing child events. handleTerminalRun takes the child lock and the parent lock only sequentially, never nested.",
+      "before_after": "Before, only the target thread's lock was taken. Now the order is parent then child, matching the existing parent-then-child order and the handleTerminalRun comment at 10875-10880. I found no code that holds a child lock and then takes the parent's. The internal dispatches of `message.dispatch` (7427 async-answer, 6689) go through dispatchMessage directly rather than the public dispatch, so they do not re-enter the parent lock.",
+      "visible_effect": "A follow-up send into a child waits behind any running parent-lock critical section, such as finalize or a wake offer. It is not visible except as latency.",
+      "failure_mode": "The keyed locks are non-reentrant. A future caller that dispatches a user/MCP message.dispatch into a child while holding that child's parent lock would deadlock. Nothing in the audited call sites does this today.",
+      "evidence_checked": true
+    },
+    {
+      "action": "finalizeAppOwnedSubagent is split into a per-task finalizer and a loop over every app-owned task of the child. Recovery SQL and the in-memory needsRecovery gain a per-task branch.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:10053",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10053-10094",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9773-9793",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3590-3614",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:557-582"
+      ],
+      "equivalent_path": "Previously a single finalize ran for forkedFrom.nodeId, called from handleTerminalRun, recoverDelegatedTasks and recoverDelegatedTask, all under the parent lock. Those callers are unchanged and still take the parent lock.",
+      "before_after": "Each task is finalized only if it has terminal runs of its own (`delegatedTaskId`), has not been held for a restart continuation, and lacks a result transfer for its run. The loop skips tasks that already have a result plus a transfer. The SQL recovery adds an EXISTS over runs joined to subagents with result IS NULL, ORed with the original unheld-latest-run branch. Parentheses balance and the join is by subagent_id.",
+      "visible_effect": "Follow-up results are published to the parent with a context transfer and wake. Server restart recovery finishes follow-ups whose terminal run was reconciled without the live listener. The test covers six outcomes.",
+      "failure_mode": "The loop's skip clause treats any `subagent_result` transfer from this child as proof that a task with a result is done. This holds because result and transfer are written in one transaction. Each terminal run of any app-owned child now costs an extra parent subagents+transfers read.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The MCP readTask, t3_thread_read acknowledgement and t3_thread_send result now resolve per-task state through `delegatedTaskId` and `taskResultTransfer`.",
+      "location": "apps/server/src/mcp/OrchestratorMcpService.ts:1278",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/mcp/OrchestratorMcpService.ts:1278-1356",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:395-451",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:2367-2410",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11035-11057"
+      ],
+      "equivalent_path": "The old path used `delegatedTaskProgress` and the first matching `subagent_result` transfer for the whole child thread.",
+      "before_after": "The original task (no `delegatedTaskId` on its runs) keeps the old progress path. A follow-up task uses its own latest run. `thread_send` re-reads the run from the projection after dispatch, so `result.run.delegatedTaskId` carries the new taskId (ThreadManagementService.ts:636-644).",
+      "visible_effect": "thread_send returns `taskId` for a follow-up. task_status for the follow-up reports its own state and result. Reading the child thread acknowledges every task whose result run appears in the returned page.",
+      "failure_mode": "`delegatedTaskResultPending` returns true when the task has no runs yet, which holds the result as working. For the original task, `taskResultTransfer` matches all runs without a `delegatedTaskId`, including automatic wake runs. This is harmless because only the original produces transfers for them.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Subagent lineage row status/timer now follows the child thread's latest run (including queued follow-ups and their terminal outcomes) instead of only the settled delegated task",
+      "location": "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176",
+      "status": "closed",
+      "evidence": [
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176-206",
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:215-232",
+        "packages/client-runtime/src/state/threadRelationships.ts:74-109",
+        "packages/contracts/src/orchestrationV2.ts:1860-1873",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6813-6834",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3016-3018"
+      ],
+      "equivalent_path": "The previous `liveSubagent` helper, which overrode the task only while the child had a live `activityRunStatus`, and the graph edge status in `deriveThreadRelationshipGraph`.",
+      "before_after": "Before: only running/waiting/preparing/starting runs overrode the task; a queued or settled follow-up kept the first task's status. After: queued status and any run requested after the task's completion/start also override. Edge and row use the same child-thread-first rule, and `rolled_back` is mapped to `interrupted` in both. The server creates a fresh app-owned task per follow-up with `startedAt = message.createdAt` (Orchestrator.ts:6813-6834), and the thread's subagents are ordered by started_at, so the Map keyed by childThreadId keeps the newest task (ProjectionStore.ts:3016-3018).",
+      "visible_effect": "The Lineage panel row and hover card show pending/running/terminal state of the latest follow-up, with progress/result cleared when the data belongs to a different run.",
+      "failure_mode": "Derived purely from already-loaded shells and the projection, with no async call. If `latestRun*` fields are absent (they are optional), `newerRun` is falsy and the old task is shown. A terminal task without `completedAt` could be treated as superseded by its own first run (low-impact, transient).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Recovery kind \"subagent-results\" now recovers a child thread when a run tagged with delegatedTaskId is terminal and its app-owned task has no result",
+      "location": "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:302",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:302-383",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:554-583",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3616"
+      ],
+      "equivalent_path": "The existing first-run fallback in the same recovery kind (latest unheld run terminal and no subagent_result transfer to the parent) in both the SQL and in-memory implementations.",
+      "before_after": "Test asserts that untracked later runs do not trigger recovery, that a tracked terminal run with an unresolved task does (even with a later running run), and that setting the task result stops it. I traced the SQL (ProjectionStore.ts:3586-3616) and the in-memory `needsRecovery` (ProjectionStore.ts:554-583) against these steps and both give [] / [child] / [] in the order asserted.",
+      "visible_effect": "After a restart, only follow-ups the server recorded as delegated tasks get their result re-delivered to the parent; older unrecorded child work is not re-notified.",
+      "failure_mode": "If the task never gets a result, the child thread stays a recovery candidate on every restart. The test does not cover that path.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 2.** I found no blocking defect in this part. The follow-up task lifecycle is consistent across intake, finalization, recovery SQL and the MCP read paths. The parent-then-child lock order matches the existing order, and I found no caller that nests it the other way. Three points are worth the author's attention:\n- Every user/MCP `message.dispatch` now does an extra thread read before the receipt check, and an unknown thread fails with a different error type.\n- It is unclear whether `restart_active` follow-ups should inherit the interrupted run's task. Without that, they create an extra task and a second parent wake.\n- A user typing in a child thread now always wakes the parent, which may or may not be intended.\n\nThe tests cover six follow-up outcomes plus an automatic-wake control. I read the code only and did not run anything.\n\n**Batch 2 of 2.** Part 2 holds the client relationship derivation, the web lineage row, two optional contract fields and a recovery test. I found no defect I could confirm. There are two lower-severity notes. The first is that `currentSubagent` has no test. The second is a low-confidence question about whether an `idle` child status can override a recorded task status. I traced the new recovery test through both the SQL and in-memory `subagent-results` implementations, and both give the asserted results. The contract additions are optional, so they are backward-compatible.",
+  "batches": [
+    {
+      "label": "Batch 1 of 2",
+      "files": 8,
+      "lines": 922,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 22,
+      "costUsd": 0.6650102999999999
+    },
+    {
+      "label": "Batch 2 of 2",
+      "files": 6,
+      "lines": 154,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 20,
+      "costUsd": 0.383601
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fa9f936ef5cbbe4bd4f9890b638766fc92f45075"
+  },
+  "execution": {
+    "costUsdEstimate": 1.0486113,
+    "usage": {
+      "input": 58,
+      "output": 32222,
+      "cacheRead": 1573993,
+      "cacheWrite": 142219
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 42,
+    "durationMs": 312813,
+    "stop": "complete",
+    "notices": []
+  }
+}

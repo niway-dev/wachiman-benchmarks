@@ -1,0 +1,123 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/goal-command-notice-not-steered-29909.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "e2bb9e63e129001aa37fa1f9f51cb334d1a3db42",
+  "base_commit": "5d3d78ab932bc71535d3155dad7f68fef39c5c16",
+  "wall_ms": 106229,
+  "cost_usd": 0.3486215,
+  "duration_ms": 105542,
+  "num_turns": 26,
+  "usage": {
+    "input_tokens": 28,
+    "cache_creation_input_tokens": 50135,
+    "cache_read_input_tokens": 439592,
+    "output_tokens": 10358,
+    "output_tokens_details": {
+      "thinking_tokens": 5292
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 50135,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2508,
+        "cache_read_input_tokens": 52492,
+        "cache_creation_input_tokens": 2258,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2258
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4743,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0004863,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 28,
+      "outputTokens": 10358,
+      "cacheReadInputTokens": 439592,
+      "cacheCreationInputTokens": 50135,
+      "webSearchRequests": 0,
+      "costUSD": 0.3481352,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 5292,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 50135,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The upgrade to steer_active runs after the queued-only validation. The model is pinned to the target run, so the steer cannot become a restart that interrupts tools. A Stop that already reached the run is excluded.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5739-5775",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5836-5840",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4797-4826",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4942-4947",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10711-10724",
+        "apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:146-156"
+      ],
+      "scenario": "I tried two ways the notification steer could interrupt the parent or fail validation. (1) The upgrade could trip the 'Notifications must be queued' check. (2) A model difference could push dispatchSteerIntoRun into the restart branch. For (1), the check at 5680-5695 runs on the original queue_after_active mode, before the upgrade at 5772. For (2), the modelSelection passed in is the target run's own, so selectionChanged is false. Attachments are empty and forceRestart is false, so the policy takes active_steering. The thread-selection update is also skipped for notifications.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:5839"
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The queued retry only fires when the provider reports turnCompleted. If the parent's turn ends as failed or interrupted before the steer is delivered, the question notice is lost. A queued notice used to survive that case.",
+      "scenario": "1. A child asks a question while the parent run is running. The reactor dispatches the notification, and Orchestrator.ts:5772 upgrades it to steer_active. 2. dispatchSteerIntoRun commits the message and its notification card onto the parent's run, and enqueues a provider-turn.steer effect (Orchestrator.ts:4961-4982). 3. Before the effect runs, the parent turn fails or is interrupted, for example a provider crash or a Stop that arrives after the 5770 check. 4. ProviderTurnControlService.ts:136-144 raises an error with turnCompleted: providerTurn.status === 'completed', which is false for failed or interrupted turns. 5. EffectWorker.ts:265-271 rethrows the error. The effect is retried up to 5 times (EffectWorker.ts:649, 786) and then dropped. 6. The follow-up dispatch at EffectWorker.ts:286 is never reached. No queued run exists, and the reactor's cancel and catch-up logic never re-sends it. Its re-send reuses the same commandId, and I did not check receipt dedupe. The parent never sees the question, so a child that is 'blocked until answered' stays blocked. Before this commit the notice was queued, so it always got its own run. Mailbox completions have a separate redelivery path (Orchestrator.ts:1380), and questions have none. This depends on the effect worker's receipt and retry behaviour past line 822, which I did not read.",
+      "location": "apps/server/src/orchestration-v2/EffectWorker.ts:265",
+      "consequence": "A delegated task question is silently dropped, and the child stays blocked, whenever the parent turn ends non-successfully between steer commit and delivery. The parent thread shows a notification card the agent never received.",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "evidence": [
+        "apps/server/src/orchestration-v2/EffectWorker.ts:263-300",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:649",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:786",
+        "apps/server/src/orchestration-v2/ProviderTurnControlService.ts:136-144",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:4961-4982",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:1380",
+        "apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:43-58"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The upgrade to steer_active runs after the queued-only validation. The model is pinned to the target run, so the steer cannot become a restart that interrupts tools. A Stop that already reached the run is excluded.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:5680-5695\",\"apps/server/src/orchestration-v2/Orchestrator.ts:5739-5775\",\"apps/server/src/orchestration-v2/Orchestrator.ts:5836-5840\",\"apps/server/src/orchestration-v2/Orchestrator.ts:4797-4826\",\"apps/server/src/orchestration-v2/Orchestrator.ts:4942-4947\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10711-10724\",\"apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:146-156\"],\"scenario\":\"I tried two ways the notification steer could interrupt the parent or fail validation. (1) The upgrade could trip the 'Notifications must be queued' check. (2) A model difference could push dispatchSteerIntoRun into the restart branch. For (1), the check at 5680-5695 runs on the original queue_after_active mode, before the upgrade at 5772. For (2), the modelSelection passed in is the target run's own, so selectionChanged is false. Attachments are empty and forceRestart is false, so the policy takes active_steering. The thread-selection update is also skipped for notifications.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:5839\"},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The queued retry only fires when the provider reports turnCompleted. If the parent's turn ends as failed or interrupted before the steer is delivered, the question notice is lost. A queued notice used to survive that case.\",\"scenario\":\"1. A child asks a question while the parent run is running. The reactor dispatches the notification, and Orchestrator.ts:5772 upgrades it to steer_active. 2. dispatchSteerIntoRun commits the message and its notification card onto the parent's run, and enqueues a provider-turn.steer effect (Orchestrator.ts:4961-4982). 3. Before the effect runs, the parent turn fails or is interrupted, for example a provider crash or a Stop that arrives after the 5770 check. 4. ProviderTurnControlService.ts:136-144 raises an error with turnCompleted: providerTurn.status === 'completed', which is false for failed or interrupted turns. 5. EffectWorker.ts:265-271 rethrows the error. The effect is retried up to 5 times (EffectWorker.ts:649, 786) and then dropped. 6. The follow-up dispatch at EffectWorker.ts:286 is never reached. No queued run exists, and the reactor's cancel and catch-up logic never re-sends it. Its re-send reuses the same commandId, and I did not check receipt dedupe. The parent never sees the question, so a child that is 'blocked until answered' stays blocked. Before this commit the notice was queued, so it always got its own run. Mailbox completions have a separate redelivery path (Orchestrator.ts:1380), and questions have none. This depends on the effect worker's receipt and retry behaviour past line 822, which I did not read.\",\"location\":\"apps/server/src/orchestration-v2/EffectWorker.ts:265\",\"consequence\":\"A delegated task question is silently dropped, and the child stays blocked, whenever the parent turn ends non-successfully between steer commit and delivery. The parent thread shows a notification card the agent never received.\",\"severity\":\"medium\",\"introduced_by_change\":true,\"evidence\":[\"apps/server/src/orchestration-v2/EffectWorker.ts:263-300\",\"apps/server/src/orchestration-v2/EffectWorker.ts:649\",\"apps/server/src/orchestration-v2/EffectWorker.ts:786\",\"apps/server/src/orchestration-v2/ProviderTurnControlService.ts:136-144\",\"apps/server/src/orchestration-v2/Orchestrator.ts:4961-4982\",\"apps/server/src/orchestration-v2/Orchestrator.ts:1380\",\"apps/server/src/orchestration-v2/DelegatedTaskQuestionReactor.ts:43-58\"]}]}"
+}

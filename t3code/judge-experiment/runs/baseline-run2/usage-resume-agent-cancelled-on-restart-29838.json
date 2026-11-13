@@ -1,0 +1,127 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 90f0158 of t3code-fork against its parent (4dff7de)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "4dff7de3f99677dd886018dbc195062c0768f2c7",
+      "ref": "4dff7de"
+    },
+    "head": {
+      "sha": "90f0158e60b08946bcaae1df07109a893e7c36af",
+      "ref": "90f0158"
+    },
+    "title": "fix(server): attribute usage-limit auto-resume to T3 Code (#29838)",
+    "description": "fix(server): attribute usage-limit auto-resume to T3 Code (#29838)",
+    "author": "shivam"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts",
+      "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
+      "line": 8340,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Early-dispatch probe still uses the old `createdBy: \"user\"` command shape",
+      "body": "The `recovery:early` dispatch hand-builds the same `message.dispatch` that `limitRecoveryCommand` now emits with `createdBy: \"agent\"`. It still says `createdBy: \"user\"`. The assertion that it is rejected holds either way, because the usage-limit guard at `Orchestrator.ts:5524-5565` does not read `createdBy`. But the probe no longer matches what the worker sends. It also still goes through the `createdBy === \"user\"` branch of `mayStartSubagentFollowup`, not the new `usageLimitContinuationOfRunId` branch. Use `createdBy: \"agent\"` so the probe matches the real command.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Usage-limit auto-resume `message.dispatch` is now attributed to `createdBy: \"agent\"` (creationSource \"server\") instead of \"user\".",
+      "location": "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:76",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:64-78",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1565-1580",
+        "apps/server/src/orchestration-v2/threadHistoryPaging.ts:298-302",
+        "apps/server/src/telemetry/ProviderUsageAnalytics.ts:207-215",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:2437-2469",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:5994-5997"
+      ],
+      "equivalent_path": "Other server-originated continuations already use createdBy \"agent\", for example RestartContinuation.ts:326, IdleCompactionService.ts:117 and ProviderContinuationService.ts:128.",
+      "before_after": "Before, the resume message counted as a user-authored message. Now it does not, so these readers treat it as unattended agent input: ProjectionStore.ts:1572 (`latestUserAuthoredMessageAt`), threadHistoryPaging.ts:300 (`isThreadHistoryUserTurn`), ProviderUsageAnalytics.ts:212 (`requestKind` now reports \"agent\", not \"user\") and Orchestrator.ts:2465 (`releaseUnattendedHolds`, whose unattended set is built from the held queued messages, not the completed run's message). `sentByUserFromClient` at Orchestrator.ts:5994 was already false because creationSource is \"server\", so held-queue release at dispatch is unchanged.",
+      "visible_effect": "Analytics label the resume as agent-originated. History paging no longer counts the resume as a user turn. A stale waiting-on-user item is no longer cleared by an auto-resume. All of these match the intent of 'attribute to T3 Code'.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Resume commands that carry `usageLimitContinuationOfRunId` are treated as subagent follow-ups, in the lock selection, in `recordSubagentFollowup` and in the sender check.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:707",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:698-709",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:8020-8051",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:13816-13830",
+        "apps/server/src/orchestration-v2/DelegatedCompletionDelivery.test.ts:2403-2506"
+      ],
+      "equivalent_path": "User and MCP follow-ups to an app-owned subagent child: `mayStartSubagentFollowup` selects the parent lock at Orchestrator.ts:13819-13830, and `recordSubagentFollowup` binds a new delegated task to the child's new run at Orchestrator.ts:8020-8105.",
+      "before_after": "Before, a resume command with createdBy \"user\" passed `mayStartSubagentFollowup` and the sender check, so the child's resumed run was tracked as a follow-up. Switching to \"agent\" would have dropped it silently. The two added `usageLimitContinuationOfRunId` clauses (lines 707 and 8048) keep that behaviour. The dispatch lock is unchanged: parent first, then child. The new task's `createdBy` becomes \"agent\" (line 8086), the same as MCP follow-ups.",
+      "visible_effect": "A child that hit its usage limit and was auto-resumed still gets a pending delegated task on the parent, so the parent is woken when the child finishes.",
+      "failure_mode": "If the clause were missing, the resumed child run would have no delegated task, and the parent would never be woken for the result. Covered by the new test.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change looks correct. Switching the auto-resume to `createdBy: \\\"agent\\\"` would have silently dropped the child's resumed run from subagent follow-up tracking. The two added `usageLimitContinuationOfRunId` clauses in `Orchestrator.ts` (lines 707 and 8048) preserve it. I read the other readers of `createdBy === \\\"user\\\"` that the new attribution changes: `ProjectionStore.ts:1572`, `threadHistoryPaging.ts:300`, the analytics `requestKind`, and `releaseUnattendedHolds`. Each effect is consistent with attributing the resume to T3 Code. The new delegated-completion test and the `runtimeLayer.test.ts` assertion cover the changed behaviour. I did not run any tests. One small test inconsistency remains: the `recovery:early` probe in `runtimeLayer.test.ts` still builds its command with `createdBy: \\\"user\\\"`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 123,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 29,
+      "costUsd": 0.3861247
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "4dff7de3f99677dd886018dbc195062c0768f2c7"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3861247,
+    "usage": {
+      "input": 20,
+      "output": 10546,
+      "cacheRead": 405447,
+      "cacheWrite": 60020
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 29,
+    "durationMs": 103639,
+    "stop": "complete",
+    "notices": []
+  }
+}

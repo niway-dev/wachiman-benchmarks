@@ -1,0 +1,131 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit fc21184 of t3code-fork against its parent (f7a23f0)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "f7a23f07894df20973fdcf5ad00e286378b77ebe",
+      "ref": "f7a23f0"
+    },
+    "head": {
+      "sha": "fc21184afbb85604660f459ca43bbbe55ad020e4",
+      "ref": "fc21184"
+    },
+    "title": "fix(claude): show automatic compaction while it runs (#15631)",
+    "description": "fix(claude): show automatic compaction while it runs (#15631)",
+    "author": "maria"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/mobile/src/lib/threadActivity.test.ts",
+      "apps/mobile/src/state/use-thread-composer-state.ts",
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts",
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/web/src/components/ChatView.tsx",
+      "packages/client-runtime/src/work-log/presentation.ts"
+    ],
+    "reviewed": [
+      "apps/mobile/src/state/use-thread-composer-state.ts",
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "apps/web/src/components/ChatView.tsx",
+      "packages/client-runtime/src/work-log/presentation.ts",
+      "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts",
+      "apps/mobile/src/lib/threadActivity.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "line": 7142,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "A bare `status: null` frame settles a running compaction as \"stopped\"",
+      "body": "The settle branch fires for `status === null && permissionMode === undefined` even when `compact_result` is absent. In that case a running compaction becomes `interrupted` (\"Context compaction stopped\") and `context.compaction` is set to null (line 7172). If the CLI or SDK version in use ever sends a plain `status: null` when compaction ends, without `compact_result`, the user sees a spurious \"stopped\" row. The later `compact_boundary` then finds `context.compaction === null` and adds a second, separate \"Context compacted\" row. Does every supported Claude CLI version put `compact_result` on the end-of-compaction status frame? The tests only cover frames that carry it, or that carry `permissionMode`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Claude adapter emits a running compaction item on `status: \"compacting\"`, settles it on `compact_result` or `status: null`, and completes the same item (same id and ordinal) at `compact_boundary`",
+      "location": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:7138-7270",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:7138-7174",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:7176-7270",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:6055-6071",
+        "apps/web/src/components/chat/MessagesTimeline.logic.ts:1400-1403",
+        "apps/web/src/session-logic.ts:442-448"
+      ],
+      "equivalent_path": "The `compact_boundary` handler, which before this change emitted a single completed compaction item. The Codex adapter creates its running item from item/started.",
+      "before_after": "Before, the item appeared only at the boundary, already completed, so auto-compaction showed no live state. Now a running item is emitted first and reused by the boundary, which adds token counts and keeps `completedAt` from the earlier success frame. A failed or unknown outcome clears `context.compaction`, so a retry creates a new item. Duplicate `compacting` frames while one is running are ignored.",
+      "visible_effect": "The web timeline and mobile activity row show \"Compacting context\", then \"Context compacted X → Y tokens\", \"Context compaction failed\" or \"Context compaction stopped\". Web and mobile `isCompacting` is true while the item is running, so mobile queues follow-ups instead of steering.",
+      "failure_mode": "If the turn ends before an outcome frame, `finalizeActiveTurn` (ClaudeAdapterV2.ts:6055-6071) settles the running item as failed, interrupted or cancelled before the terminal event, so no row stays running. If the server dies mid-compaction, the persisted item stays `running`, but clients gate on the active run id and the `inProgress` lifecycle. A bare `status: null` without `compact_result` is treated as an interruption (see finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Web and mobile treat failed, interrupted and cancelled compaction items as settled, and treat a running compaction in the active run as compacting",
+      "location": "apps/web/src/components/ChatView.tsx:2517-2535",
+      "status": "closed",
+      "evidence": [
+        "apps/web/src/components/ChatView.tsx:2517-2535",
+        "apps/mobile/src/state/use-thread-composer-state.ts:327-362",
+        "apps/web/src/components/chat/MessagesTimeline.tsx:1284-1285",
+        "apps/web/src/components/chat/V2LifecycleRow.tsx:110-119"
+      ],
+      "equivalent_path": "apps/mobile/src/state/use-thread-composer-state.ts:327-362, which carries the same logic",
+      "before_after": "Before, only `completed` settled a compaction, so a failed `/compact` kept `isCompacting` true until the run settled. Now every terminal status settles it, and a running item sets `isCompacting` without needing a `/compact` user message. Web and mobile are updated the same way. Web compares the item's run to `activeRuntime.activeRunId` for running and to `activeActivityRun.runId` for settled, a minor inconsistency.",
+      "visible_effect": "The compacting spinner and steering lock appear for automatic compaction and clear when it fails or is stopped.",
+      "failure_mode": "None found; web gates on busy or running phase and mobile gates on `threadRuntimeIsActive`.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change emits a running compaction item when Claude reports `status: \"compacting\"`, settles it on the outcome frame or at turn end, and has the later `compact_boundary` complete the same item. Clients follow in web, mobile and the shared label helper. I read all six files and the unchanged code they depend on, and found no defect I could establish. I could not read the Claude SDK types, so one question is open. It asks whether a plain `status: null` frame, with no `compact_result`, can mark a successful compaction as \\\"stopped\\\" and add a second row at the boundary. The new tests cover success, failure, a duplicate `compacting` frame, retry, and the three turn-end paths (result, interrupt, query exit), and they assert event order and item identity.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 520,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 22,
+      "costUsd": 0.45770549999999993
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f7a23f07894df20973fdcf5ad00e286378b77ebe"
+  },
+  "execution": {
+    "costUsdEstimate": 0.45770549999999993,
+    "usage": {
+      "input": 30,
+      "output": 11970,
+      "cacheRead": 735255,
+      "cacheWrite": 66105
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 22,
+    "durationMs": 126954,
+    "stop": "complete",
+    "notices": []
+  }
+}

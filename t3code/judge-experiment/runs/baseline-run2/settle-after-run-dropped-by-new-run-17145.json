@@ -1,0 +1,143 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 37eaf5d of t3code-fork against its parent (8597558)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "85975585579188be20f46d96b4972ce46c33f4bc",
+      "ref": "8597558"
+    },
+    "head": {
+      "sha": "37eaf5d293ef83ce86d2ce9a1583792696c82bbc",
+      "ref": "37eaf5d"
+    },
+    "title": "fix(server): an agent can settle its own thread when its turn ends (#17145)",
+    "description": "fix(server): an agent can settle its own thread when its turn ends (#17145)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
+      "apps/server/src/mcp/toolkits/thread/handlers.ts",
+      "apps/server/src/mcp/toolkits/thread/tools.ts",
+      "apps/server/src/orchestration-v2/ThreadManagementService.test.ts",
+      "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
+      "apps/server/src/relay/AgentAwarenessRelay.test.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/mcp/toolkits/thread/handlers.ts",
+      "apps/server/src/mcp/toolkits/thread/tools.ts",
+      "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+      "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts",
+      "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
+      "apps/server/src/orchestration-v2/ThreadManagementService.test.ts",
+      "apps/server/src/relay/AgentAwarenessRelay.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+      "line": 776,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Deferred settle can be dropped with no signal to the agent or user",
+      "body": "`settleThread` returns `{ settlesWhenTurnEnds: true }` and then runs `settleAfterRun` in a fiber forked into the layer scope with `Effect.ignoreCause({ log: true })`. The fiber has no persisted record, so these outcomes are lost with only a log line: a server restart during the turn, the 24h wait at line 429 expiring, `thread.settle` being refused, or the thread being deleted. The tool description and the `settleAfterRun` doc cover the failed, interrupted and queued-message cases. They do not mention restart or timeout. If silently staying active is the accepted trade-off, this is only awareness. Otherwise consider recording the intent in the projection or surfacing a failure.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ThreadManagementService.test.ts",
+      "line": 477,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "`settleThread`'s immediate and non-own-agent paths have no focused test",
+      "body": "The new tests cover `settleAfterRun` (completed, failed and interrupted) and the own-agent deferral in `runtimeLayer.test.ts`. Nothing asserts that `settleThread` with `byOwnAgent: false`, or with `activeRunId === null`, dispatches `thread.settle` with the caller's `commandId` and returns `{ sequence }`. That branch replaces the old handler dispatch for every settle of another thread, so a small test would guard the regression. Nothing in the added tests covers the case where the run completes but `thread.settle` is refused (a queued message), which the new tool description promises.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "t3_thread_organize action=settle now routes through ThreadManagementService.settleThread; when the caller targets its own thread mid-turn it defers settling until the run completes",
+      "location": "apps/server/src/mcp/toolkits/thread/handlers.ts:297",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/mcp/toolkits/thread/handlers.ts:295-301",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:754-785",
+        "apps/server/src/mcp/toolkits/thread/tools.ts:33",
+        "apps/server/src/mcp/toolkits/thread/tools.ts:49-52",
+        "apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts:770-778",
+        "apps/server/src/mcp/threadAccess.ts:121-125"
+      ],
+      "equivalent_path": "Previous handler built a `thread.settle` command and called `threads.dispatch` with a fresh commandId (the removed integration test shows it was refused for an active own thread). The non-own-agent path of settleThread (ThreadManagementService.ts:779-784) still dispatches `thread.settle` with the same commandId through the same `dispatch`, which hydrates legacy transcripts first.",
+      "before_after": "Before: settling an own thread with an active run failed with 'active or blocked work'. After: it returns `{settlesWhenTurnEnds:true}` and a forked fiber dispatches `thread.settle` with the deterministic commandId `server:settle-after-run:<runId>` once the run completes. Other threads and an idle own thread behave as before.",
+      "visible_effect": "The agent gets `{settlesWhenTurnEnds:true}` (success union at tools.ts:49-52). The thread shows as settled only after the turn completes; the integration test asserts it is not settled and the run is still running right after the call.",
+      "failure_mode": "The forked `settleAfterRun` ends silently, with only a log, when the run fails, is interrupted, times out after 24h, `thread.settle` is refused, or the server restarts. The thread then stays active even though the tool reported success.",
+      "evidence_checked": true
+    },
+    {
+      "action": "settleAfterRun waits for run termination with waitForThread",
+      "location": "apps/server/src/orchestration-v2/ThreadManagementService.ts:758",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:429",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:700-751",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:776"
+      ],
+      "equivalent_path": "The existing `waitForThread` MCP wait uses the same function with a caller-supplied `timeoutMs`.",
+      "before_after": "The whole wait is bounded by `Effect.timeoutOption` of 24h (SETTLE_AFTER_RUN_WAIT_MS) around the event-stream race (lines 700-735). The pre-reads (`getThreadEventSequence`, `getProjectThreadRecords`) and the post-timeout read at line 740 are DB reads with no explicit limit. No user action blocks on them, because the fiber is forked into the layer scope and the tool call returns immediately.",
+      "visible_effect": "None directly. In the worst case the fiber holds two event-stream subscriptions for up to 24h per settle call, and repeated settle calls in one turn fork duplicates. They are idempotent through the same commandId.",
+      "failure_mode": "After 24h the run is still active, so `run.status !== 'completed'` and the fiber returns without settling. The layer scope closing interrupts any fiber still waiting.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change lets an agent settle its own thread. `settleThread` returns `{settlesWhenTurnEnds:true}` immediately, and a fiber in the layer scope waits up to 24h for the run to complete, then dispatches `thread.settle` with a deterministic commandId. I found no defects. The handler, the tool schema, the 24h bound and the layer-scope fork all hold up against the code I read. There are two \"consider\" findings: a deferred settle that is dropped on restart, timeout or refusal leaves only a log line, and the `settleThread` immediate path has no focused test.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 201,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.24945119999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "85975585579188be20f46d96b4972ce46c33f4bc"
+  },
+  "execution": {
+    "costUsdEstimate": 0.24945119999999998,
+    "usage": {
+      "input": 12,
+      "output": 6997,
+      "cacheRead": 182812,
+      "cacheWrite": 40294
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 74200,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,222 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit 242d00c of t3code-fork against its parent (c79ef8c)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "c79ef8c454e1268ff79da5a9dcb74572e86f7861",
+      "ref": "c79ef8c"
+    },
+    "head": {
+      "sha": "242d00cd34534e7a93cb6f6b02cf4652bdd1210e",
+      "ref": "242d00c"
+    },
+    "title": "fix(clients): threads no longer flash in the inbox before they settle (#24760)",
+    "description": "fix(clients): threads no longer flash in the inbox before they settle (#24760)",
+    "author": "Theo Browne"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/mobile/src/features/threads/threadListV2.test.ts",
+      "apps/mobile/src/features/threads/threadListV2.ts",
+      "apps/mobile/src/features/threads/useThreadListV2.ts",
+      "apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts",
+      "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts",
+      "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts",
+      "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "apps/web/src/components/Sidebar.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.badge.browser.test.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.logic.test.ts",
+      "apps/web/src/components/ThreadNotificationCoordinator.logic.ts",
+      "apps/web/src/components/ThreadNotificationCoordinator.tsx",
+      "packages/client-runtime/src/state/threadInbox.test.ts",
+      "packages/client-runtime/src/state/threadInbox.ts"
+    ],
+    "reviewed": [
+      "apps/mobile/src/features/threads/threadListV2.ts",
+      "apps/mobile/src/features/threads/useThreadListV2.ts",
+      "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts",
+      "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "apps/web/src/components/Sidebar.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.logic.ts",
+      "apps/web/src/components/ThreadNotificationCoordinator.tsx",
+      "apps/mobile/src/features/threads/threadListV2.test.ts",
+      "apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts",
+      "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts",
+      "apps/web/src/components/ThreadNotificationCoordinator.badge.browser.test.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.logic.test.ts",
+      "packages/client-runtime/src/state/threadInbox.ts",
+      "packages/client-runtime/src/state/threadInbox.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "line": 614,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "low",
+      "title": "provider-thread.updated now starts a per-thread sweep on every update that holds no background work",
+      "body": "`provider-thread.updated` is emitted from many sites (ProviderEventIngestor.ts:583, Orchestrator.ts at about a dozen places, ProviderTurnStartService.ts:374/951, and others), not only when background tasks change. This case enqueues a sweep whenever `backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? [])` is false, which is true for most updates. The comment above the group says it sweeps only \"when the work can have ended\", but this case does not check that. Each enqueue costs at least a settings read, `getSettlementCandidates(threadId)` and `listShells`. When the thread is a candidate it also costs host and git lookups, and those are the slow reads the PR is trying to keep off the critical path. I did not confirm how often these events fire during a running turn. If it is high, compare against the previous payload's pending tasks, or sweep only when the update clears a task that was holding completion.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Per-thread settlement sweeps run as independent fibers (FiberSet, 8-permit semaphore, per-thread queued/running/rerun state) instead of through the single drainable worker",
+      "location": "apps/server/src/orchestration-v2/ThreadSettlementService.ts:532",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:519-560",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:322-347",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:661",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:671-674"
+      ],
+      "equivalent_path": "The previous `makeDrainableWorker` serialized per-thread and full sweeps. `runSweep(event)` for merged pull requests already ran outside the worker, concurrently.",
+      "before_after": "Before: a thread's sweep waited behind a full sweep and any other thread's host reads. After: `enqueueThread` starts a fiber at once, one per thread, and repeat events during a run coalesce into one rerun. Each sweep re-reads the projections, so a rerun sees fresh state. `drain` waits for both the full-sweep worker and the FiberSet.",
+      "visible_effect": "A thread that has just stopped settles sooner, so it no longer appears in Working and then vanishes (the PR's goal).",
+      "failure_mode": "`runSweep` catches every non-interrupt cause, so a fiber cannot fail the set. A defect or interrupt could leave a stale entry in `threadSweepStates`, but only when the scope closes. Concurrent full and per-thread sweeps can both reach `thread.auto-settle`, which carries `snapshotAt`. Merge-event sweeps already ran concurrently with the worker before this change.",
+      "evidence_checked": true
+    },
+    {
+      "action": "PullRequestSyncReactor reads the thread's open links when a close command ends, and again when the run ends",
+      "location": "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:533",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:485-501",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:533-547",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:561-567"
+      ],
+      "equivalent_path": "Before this change the read happened only at terminal `run.updated`, for threads recorded in `closeCommandThreads`.",
+      "before_after": "Before: one read per run. After: one read when each close command item reaches a non-active status, deduplicated by item id, plus one at run end if any close command ran. `requestSync` only queues the \"requested\" sweep, so the second read coalesces when the first sweep has not started and otherwise costs a second host read.",
+      "visible_effect": "Settlement after an agent merge can land before the run ends. `merge --auto` is still caught at run end.",
+      "failure_mode": "The `closeCommands` entry is removed only at a terminal run event, so a thread deleted mid-run leaves a small leaked entry, the same as before. Host failures are logged by `logSkipped` and are not user-visible.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Web completion notifications are delayed by WORKING_EXIT_GRACE_MS through a timer-backed gate, and presentation runs through useEffectEvent",
+      "location": "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:19",
+      "status": "closed",
+      "evidence": [
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:35-65",
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:66-76",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:129-133",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:214-226",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:228-280"
+      ],
+      "equivalent_path": "The old inline loop in the `threads` effect notified immediately on a new completion and re-ran whenever settings, route or focus changed.",
+      "before_after": "Before: completion notified in the same effect pass. After: `gate.observe` arms a timer for settled completions. Any non-settled, archived or quiet observation cancels it, attention replaces and skips the earlier completion, and `retain` and `clear` drop state for removed threads and on unmount or disconnect. `present` reads the latest settings, focus and route when the timer fires, from `previous.current`.",
+      "visible_effect": "A completion toast, sound or desktop notification appears about 2s after the thread settles. A continuation inside that window produces none. Attention notifications are still immediate.",
+      "failure_mode": "The effect cleanup clears the gate and `previous`, so a remount or StrictMode re-run treats threads as a first sighting and does not re-notify. An env that disconnects (`threads === null`) clears pending timers. I traced each logic-test case against the code and found no mismatch. I did not run the tests.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Sidebar and mobile list re-render when the inbox tracker's grace expires (useSyncExternalStore on the tracker version), and the per-render observation now supplies `isWorking`",
+      "location": "apps/web/src/components/Sidebar.tsx:384",
+      "status": "closed",
+      "evidence": [
+        "apps/web/src/components/Sidebar.tsx:384-387",
+        "apps/web/src/components/Sidebar.tsx:519-527",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:57-66",
+        "apps/mobile/src/features/threads/threadListV2.ts:663",
+        "packages/client-runtime/src/state/threadInbox.ts:136-160"
+      ],
+      "equivalent_path": "Mobile `useThreadListV2` previously observed only on threads changes and used `isThreadWorking` for shelf placement.",
+      "before_after": "Before: placement used raw working state and the tracker only supplied return times. After: placement uses the tracker's held `isWorking` snapshot. A tracker timer bumps the version when a grace expires, which changes `clockKey` on web and the `useMemo` deps on mobile, so the list is rebuilt. Manually dragged rows on web use raw `isThreadWorking`. `getThreadListV2OrderedSection` and the move-availability code ignore working state, so they need no `isWorking`.",
+      "visible_effect": "A thread that stops working stays in Working for 2s and then moves to the inbox without waiting for a minute tick.",
+      "failure_mode": "The tracker listeners and timer are cleared when `observe(null)` runs (shelf disabled). The tracker is module-scoped, so it survives unmount. Calling `observe` again after expiry is idempotent.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Inbox tracker holds a thread that stopped working in the Working shelf for 2s (WORKING_EXIT_GRACE_MS), then flips it to Active via a setTimeout and subscriber notification",
+      "location": "packages/client-runtime/src/state/threadInbox.ts:122",
+      "status": "closed",
+      "evidence": [
+        "packages/client-runtime/src/state/threadInbox.ts:136-160",
+        "packages/client-runtime/src/state/threadInbox.ts:215-221",
+        "packages/client-runtime/src/state/threadInbox.ts:173-179",
+        "packages/client-runtime/src/state/threadInbox.ts:223-229",
+        "apps/web/src/components/Sidebar.tsx:384-386",
+        "apps/web/src/components/Sidebar.tsx:519-525",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:58-60"
+      ],
+      "equivalent_path": "Previous tracker stamped a return time immediately on the first observation where a thread stopped working, with no hold and no timer; callers computed placement with isThreadWorking directly.",
+      "before_after": "Before: stop-working observation put the thread in Active at once and stamped returnedAt. After: observe() keeps working=true until a deadline (kept across repeated observes via previous.deadline), unless the thread is actionable, moved, or excluded (archived/deleted/pinned/settled/effectively snoozed). A single timer is rescheduled to the earliest deadline; on firing it clears working, stamps returns, bumps version and notifies subscribers, which re-render (Sidebar useSyncExternalStore at Sidebar.tsx:384, mobile useThreadListV2.ts:58) and re-observe.",
+      "visible_effect": "Threads no longer flicker Working→Active→Working during orchestrator continuation; after 2s without another shell event the thread moves to Active and sorts by the stamped return time.",
+      "failure_mode": "If the timer is delayed (backgrounded tab or mobile), the thread stays in Working until the timer or the next shell observation, whichever comes first; the observe path also expires the deadline itself (deadline > at check), so it self-heals on any shell event. A throwing listener would skip later listeners, but schedule() has already run so the tracker stays consistent. observe(null) clears the timer and state, and removed threads drop their state, so nothing leaks across a disabled shelf.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The tracker calls effectiveSnoozed with the observation time to decide whether a held thread is excluded from grace",
+      "location": "packages/client-runtime/src/state/threadInbox.ts:212",
+      "status": "closed",
+      "evidence": [
+        "packages/client-runtime/src/state/threadSettled.ts:136-145",
+        "packages/client-runtime/src/state/threadSettled.ts:85-96",
+        "packages/client-runtime/src/state/threadInbox.test.ts:145-183"
+      ],
+      "equivalent_path": "Sidebar and mobile list builders call effectiveSnoozed(thread, { now }) to split snoozed vs settled parked threads.",
+      "before_after": "Same function and same ISO now format. The tracker's thread type is Partial for the snooze fields, so threads missing them are treated as not snoozed (snoozedUntil == null returns false).",
+      "visible_effect": "A thread with a still-future snooze, or a raised hand, is not held; an expired retained snooze still gets grace, which the test at threadInbox.test.ts:145 covers.",
+      "failure_mode": "None found. A future snooze with a raised hand makes effectiveSnoozed false, so the thread is held; this is intended.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 2.** I found no defects in this part and have one low-confidence performance question. I did not run any tests.\n\n- **Web gate:** I traced each case in `ThreadNotificationCoordinator.logic.test.ts` against `createThreadNotificationGate` by hand. They match the code.\n- **Server sweeps:** the per-thread sweep coalescing in `ThreadSettlementService.ts` is sound.\n- **Question:** the new `provider-thread.updated` case in `ThreadSettlementService.ts` starts a sweep on every update that holds no background work. That event is emitted from many sites, so it may be frequent. I could not confirm the rate.\n\nTwo things I looked at and left alone:\n\n- **Double read per close command:** `PullRequestSyncReactor.ts` now reads open links when a close command ends and again when the run ends. That is the intended `merge --auto` handling.\n- **Sidebar alias:** `isSidebarThreadWorking` in `Sidebar.logic.ts` is now used only by tests, since `Sidebar.tsx` imports `isThreadWorking` directly. I did not report it.\n\n**Batch 2 of 2.** I found no defects in either file. I traced the grace-period logic in `threadInbox.ts` by hand: the held deadline, the timer re-arm, and the removed-thread and `observe(null)` cleanup. I also checked the new tests' timing expectations against it, and they match. The one risk worth knowing is that a new module-level timer flips held threads to Active after 2s and notifies subscribers. If the timer is throttled in a background tab or on mobile, the next shell observation expires the hold itself.",
+  "batches": [
+    {
+      "label": "Batch 1 of 2",
+      "files": 12,
+      "lines": 974,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 28,
+      "costUsd": 0.7229152000000001
+    },
+    {
+      "label": "Batch 2 of 2",
+      "files": 2,
+      "lines": 350,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.22180850000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "c79ef8c454e1268ff79da5a9dcb74572e86f7861"
+  },
+  "execution": {
+    "costUsdEstimate": 0.9447237000000002,
+    "usage": {
+      "input": 40,
+      "output": 23914,
+      "cacheRead": 1335997,
+      "cacheWrite": 142976
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 37,
+    "durationMs": 230881,
+    "stop": "complete",
+    "notices": []
+  }
+}
