@@ -1,0 +1,148 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-19355.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+  "base_commit": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+  "wall_ms": 155127,
+  "cost_usd": 0.5497898,
+  "duration_ms": 154606,
+  "num_turns": 31,
+  "usage": {
+    "input_tokens": 48,
+    "cache_creation_input_tokens": 70508,
+    "cache_read_input_tokens": 1237305,
+    "output_tokens": 14340,
+    "output_tokens_details": {
+      "thinking_tokens": 7439
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 70508,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2639,
+        "cache_read_input_tokens": 77915,
+        "cache_creation_input_tokens": 1499,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1499
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5198,
+      "outputTokens": 23,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005313000000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 48,
+      "outputTokens": 14340,
+      "cacheReadInputTokens": 1237305,
+      "cacheCreationInputTokens": 70508,
+      "webSearchRequests": 0,
+      "costUSD": 0.5492585,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 7439,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 70508,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The roster read is the only step with no retry. If it fails, the failure is swallowed and the roster stays for good, so the thread stays Waiting. The clear also drops the tasks without the cancelled-work note that startup recovery records.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:782",
+      "scenario": "1. A Claude session holds a roster, for example a dev-server command. 2. The thread is settled or archived, so `detach` calls `releaseEntry` (ProviderSessionManager.ts:2528). 3. `removeLiveEntry` takes the entry out of the live map. 4. `readReleasedBackgroundTasks` (:1066) calls `projectionStore.getThreadRecords` and hits a transient storage error such as SQLITE_BUSY. 5. The `catchCause` at :483-488 logs a warning and returns `[]`. 6. `releasedBackgroundTasks` is empty, so `writeReleasedBackgroundWorkEvents` has nothing to do. 7. `retryReleaseRecords` only reruns the write with that same empty list, so it never re-reads. The entry is already gone from the map, so no later release finds it. 8. The persisted roster stays until the next server restart, and the thread shows Waiting, which is the bug this commit fixes. Write failures get the retry loop at :919-953. Read failures get none. Separately, startup recovery (ProviderRuntimeRecoveryService.ts:559-563 and :593) calls `recordCancelledBackgroundWork` and writes a note on the run for each dropped task. The release-time clear writes no note, so a settled thread silently loses its record that background work was cancelled.",
+      "consequence": "A transient read error at release leaves the thread permanently Waiting until restart, with only a warning in the log. Tasks cleared at release leave no cancelled-work note on the run.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:446-489",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-953",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1103",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:549-579",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:593-600"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "covered",
+      "summary": "The only hazard in this note is that the compare fails forever when the stored row does not round-trip through decode and encode. Finding 0 already states that. The compare and write share one transaction in the same `commitThenPublish` shape as the sibling writers.",
+      "covered_by": 0,
+      "evidence": [
+        "apps/server/src/orchestration-v2/EventSink.ts:257-279",
+        "apps/server/src/orchestration-v2/EventSink.ts:529-559",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2248"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "A non-multi-thread runtime can have only one attached app thread. On a detach-triggered release that thread is the detached one, so unioning in `detachedThreadId` covers every case the note worries about.",
+      "scenario": "I tried to build a Claude or Muse session with two app threads, or with a thread that detached earlier without releasing the session. In `open`, a second thread attaching to an existing entry is rejected when the runtime is not multi-thread. The entry is created with a single-element `attachedThreadIds`. A detach that leaves zero attached threads on a non-multi runtime releases the session immediately. So no earlier-detached thread can still hold a roster for a live session. Claude creates provider threads only per app thread: `appThreadId` is `threadInput.threadId` at ClaudeAdapterV2.ts:9119, and subagent rosters are not separate provider threads.",
+      "safe_line": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2176",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2172-2182",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2287-2296",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9112-9123",
+        "packages/provider-muse/src/server/adapter.ts:99"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "Release clears only `pendingBackgroundTasks`. The Waiting derivation also counts active background turn items, running native subagent records and `status === \"active\"` provider threads. The other dead-process cleanups end those too, and the release path does not.",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-883",
+      "scenario": "`derivePendingBackgroundWork` (packages/shared/src/orchestrationV2PendingBackgroundWork.ts:261-282) takes tasks from the roster and also from active `command_execution`, `dynamic_tool` and `subagent` turn items, deduped by task id. ProjectionStore.ts:599-610 also counts running provider-native subagent records and `providerThread.status === \"active\"`. The settle/stop path (Orchestrator.ts:8461-8590) and startup recovery (ProviderRuntimeRecoveryService.ts:524-579) end those turn items, subagent records, runless child root turns and the active status when the process is dead. The new release path writes only a provider-thread event with a shortened roster and an unchanged `status`. If a Claude background subagent or workflow member turn item is still `running` when its session is released, the thread would stay Waiting despite the empty roster. Whether Claude leaves such an item active after the root run settles is not visible from the tests or fixtures I read, since the new tests assert only roster contents. I could not confirm it.",
+      "consequence": "Possible: settled or idle-released Claude threads with background subagents still show Waiting, so the fix would be only partial.",
+      "evidence": [
+        "packages/shared/src/orchestrationV2PendingBackgroundWork.ts:186-203",
+        "packages/shared/src/orchestrationV2PendingBackgroundWork.ts:254-282",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:595-610",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:8461-8490",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:524-579"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The roster read is the only step with no retry. If it fails, the failure is swallowed and the roster stays for good, so the thread stays Waiting. The clear also drops the tasks without the cancelled-work note that startup recovery records.\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:782\",\"scenario\":\"1. A Claude session holds a roster, for example a dev-server command. 2. The thread is settled or archived, so `detach` calls `releaseEntry` (ProviderSessionManager.ts:2528). 3. `removeLiveEntry` takes the entry out of the live map. 4. `readReleasedBackgroundTasks` (:1066) calls `projectionStore.getThreadRecords` and hits a transient storage error such as SQLITE_BUSY. 5. The `catchCause` at :483-488 logs a warning and returns `[]`. 6. `releasedBackgroundTasks` is empty, so `writeReleasedBackgroundWorkEvents` has nothing to do. 7. `retryReleaseRecords` only reruns the write with that same empty list, so it never re-reads. The entry is already gone from the map, so no later release finds it. 8. The persisted roster stays until the next server restart, and the thread shows Waiting, which is the bug this commit fixes. Write failures get the retry loop at :919-953. Read failures get none. Separately, startup recovery (ProviderRuntimeRecoveryService.ts:559-563 and :593) calls `recordCancelledBackgroundWork` and writes a note on the run for each dropped task. The release-time clear writes no note, so a settled thread silently loses its record that background work was cancelled.\",\"consequence\":\"A transient read error at release leaves the thread permanently Waiting until restart, with only a warning in the log. Tasks cleared at release leave no cancelled-work note on the run.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:446-489\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:892-953\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1049-1103\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:549-579\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:593-600\"]},{\"note_index\":1,\"verdict\":\"covered\",\"summary\":\"The only hazard in this note is that the compare fails forever when the stored row does not round-trip through decode and encode. Finding 0 already states that. The compare and write share one transaction in the same `commitThenPublish` shape as the sibling writers.\",\"covered_by\":0,\"evidence\":[\"apps/server/src/orchestration-v2/EventSink.ts:257-279\",\"apps/server/src/orchestration-v2/EventSink.ts:529-559\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:2203-2248\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"A non-multi-thread runtime can have only one attached app thread. On a detach-triggered release that thread is the detached one, so unioning in `detachedThreadId` covers every case the note worries about.\",\"scenario\":\"I tried to build a Claude or Muse session with two app threads, or with a thread that detached earlier without releasing the session. In `open`, a second thread attaching to an existing entry is rejected when the runtime is not multi-thread. The entry is created with a single-element `attachedThreadIds`. A detach that leaves zero attached threads on a non-multi runtime releases the session immediately. So no earlier-detached thread can still hold a roster for a live session. Claude creates provider threads only per app thread: `appThreadId` is `threadInput.threadId` at ClaudeAdapterV2.ts:9119, and subagent rosters are not separate provider threads.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2176\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2172-2182\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2287-2296\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:270\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9112-9123\",\"packages/provider-muse/src/server/adapter.ts:99\"]},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"Release clears only `pendingBackgroundTasks`. The Waiting derivation also counts active background turn items, running native subagent records and `status === \\\"active\\\"` provider threads. The other dead-process cleanups end those too, and the release path does not.\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-883\",\"scenario\":\"`derivePendingBackgroundWork` (packages/shared/src/orchestrationV2PendingBackgroundWork.ts:261-282) takes tasks from the roster and also from active `command_execution`, `dynamic_tool` and `subagent` turn items, deduped by task id. ProjectionStore.ts:599-610 also counts running provider-native subagent records and `providerThread.status === \\\"active\\\"`. The settle/stop path (Orchestrator.ts:8461-8590) and startup recovery (ProviderRuntimeRecoveryService.ts:524-579) end those turn items, subagent records, runless child root turns and the active status when the process is dead. The new release path writes only a provider-thread event with a shortened roster and an unchanged `status`. If a Claude background subagent or workflow member turn item is still `running` when its session is released, the thread would stay Waiting despite the empty roster. Whether Claude leaves such an item active after the root run settles is not visible from the tests or fixtures I read, since the new tests assert only roster contents. I could not confirm it.\",\"consequence\":\"Possible: settled or idle-released Claude threads with background subagents still show Waiting, so the fix would be only partial.\",\"evidence\":[\"packages/shared/src/orchestrationV2PendingBackgroundWork.ts:186-203\",\"packages/shared/src/orchestrationV2PendingBackgroundWork.ts:254-282\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:595-610\",\"apps/server/src/orchestration-v2/Orchestrator.ts:8461-8490\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:524-579\"]}]}"
+}

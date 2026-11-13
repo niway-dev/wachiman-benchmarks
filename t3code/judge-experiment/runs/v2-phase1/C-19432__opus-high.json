@@ -1,0 +1,146 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-19432.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+  "base_commit": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+  "wall_ms": 77068,
+  "cost_usd": 0.4857392,
+  "duration_ms": 76587,
+  "num_turns": 8,
+  "usage": {
+    "input_tokens": 12,
+    "cache_creation_input_tokens": 40595,
+    "cache_read_input_tokens": 144942,
+    "output_tokens": 6572,
+    "output_tokens_details": {
+      "thinking_tokens": 3919
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 40595,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2729,
+        "cache_read_input_tokens": 42273,
+        "cache_creation_input_tokens": 3013,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3013
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4903,
+      "outputTokens": 25,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005028000000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 12,
+      "outputTokens": 6572,
+      "cacheReadInputTokens": 144942,
+      "cacheCreationInputTokens": 40595,
+      "webSearchRequests": 0,
+      "costUSD": 0.48523640000000007,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 3919,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 40595,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The note's only stated hazard is a wedged managed server that blocks every reconnect: line 720 waits 60s and line 722 exits 1 without replacing it. Finding 0 already reports this. A separate trigger for the same mechanism (a recycled PID) is added as a new hazard below.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:714",
+        "packages/ssh/src/tunnel.ts:773-793"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "For the node runner, the worst inner path is about 66s (2s adopt probe, about 2s pid wait, 2s external re-probe, 60s fresh-launch wait). That fits inside the 90s outer bound. The archive runner's 900s bound already covered the same 66s before this change. wait_ready stops at its deadline, so a hung probe cannot extend a wait by more than one 1s probe.",
+      "scenario": "Node runner, managed server adopted as a default-home server that then dies. Line 676 takes 2s, line 681 up to 2s, line 704 fails, line 706 re-probes for 2s, then pick_port, launch, and line 744 waits 60s. Also tried: a stopped managed server, with 2s at line 676 then 60s at line 720. Both stay under 90s.",
+      "safe_line": "packages/ssh/src/tunnel.ts:342",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:51-66",
+        "packages/ssh/src/tunnel.ts:304-344",
+        "packages/ssh/src/tunnel.ts:671-756",
+        "packages/ssh/src/tunnel.ts:914-919"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "summary": "If the reconnect fails after the stale entry is dropped, the manager no longer tracks the remote managed server. Quitting the app then leaves that server and its agents running. Before this change, closing the stale entry ran the remote stop.",
+      "scenario": "1. Connect, so the entry is in tunnels. 2. The forward goes stale, for example after a network blip, and a reconnect probe fails at line 1657. 3. Line 1676 deletes the entry and line 1677 closes it. The finalizer sees stopRemote=false (line 1587) and kills only the forward. 4. createTunnelEntry (line 1680) fails, either because the host is unreachable or because the launch script exits 1 at line 722. 5. The user quits. The manager finalizer (lines 1401-1408) walks an empty map, so stopRemoteServer never runs. The interruption gap is finding 1; this is the failure path, which finding 1 does not cover.",
+      "consequence": "The remote T3 server and its agents keep running after app shutdown until the next connect or an explicit Disconnect (line 1787 still runs the stop).",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1401-1408",
+        "packages/ssh/src/tunnel.ts:1579",
+        "packages/ssh/src/tunnel.ts:1584-1599",
+        "packages/ssh/src/tunnel.ts:1675-1692",
+        "packages/ssh/src/tunnel.ts:1780-1791"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "packages/ssh/src/tunnel.ts:720",
+      "summary": "If the PID in the managed pid file has been reused by an unrelated process, every reconnect now waits 60s and fails with 'the server was left running'. No T3 server exists in this case, so retrying never helps. Before this change, the script replaced it after a 2s probe.",
+      "scenario": "1. The managed server dies, for example on a remote reboot or crash, and its pid file and server-runtime.json stay in ~/.t3. 2. The OS gives that PID to an unrelated long-lived process. 3. On reconnect, resolve_default_runtime_port succeeds, because process.kill(pid,0) at line 650 sees the live process. DEFAULT_RUNTIME_PID equals REMOTE_PID, so line 671 takes the 'our own server' branch without probing. 4. Line 711: server_running passes because the process is not a zombie. RUNNER_CHANGED is 0. 5. Line 720: nothing on the port answers, so after 60s line 721 prints the error and exits 1. Every retry repeats this. The only escape is Disconnect, whose stop script (line 780-781) sends SIGTERM to the unrelated process. That kill is pre-existing, but the user is now pushed toward it. This is a different trigger from finding 0's wedged server: there is no server at all, so the message is false.",
+      "consequence": "Every connection attempt to that host fails after about 60s with a misleading message until the runner changes or the user disconnects. Disconnecting may then kill an unrelated process.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:625-630",
+        "packages/ssh/src/tunnel.ts:636-655",
+        "packages/ssh/src/tunnel.ts:657-673",
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:778-781"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The note's only stated hazard is a wedged managed server that blocks every reconnect: line 720 waits 60s and line 722 exits 1 without replacing it. Finding 0 already reports this. A separate trigger for the same mechanism (a recycled PID) is added as a new hazard below.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:714\",\"packages/ssh/src/tunnel.ts:773-793\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"For the node runner, the worst inner path is about 66s (2s adopt probe, about 2s pid wait, 2s external re-probe, 60s fresh-launch wait). That fits inside the 90s outer bound. The archive runner's 900s bound already covered the same 66s before this change. wait_ready stops at its deadline, so a hung probe cannot extend a wait by more than one 1s probe.\",\"scenario\":\"Node runner, managed server adopted as a default-home server that then dies. Line 676 takes 2s, line 681 up to 2s, line 704 fails, line 706 re-probes for 2s, then pick_port, launch, and line 744 waits 60s. Also tried: a stopped managed server, with 2s at line 676 then 60s at line 720. Both stay under 90s.\",\"safe_line\":\"packages/ssh/src/tunnel.ts:342\",\"evidence\":[\"packages/ssh/src/tunnel.ts:51-66\",\"packages/ssh/src/tunnel.ts:304-344\",\"packages/ssh/src/tunnel.ts:671-756\",\"packages/ssh/src/tunnel.ts:914-919\"]},{\"note_index\":2,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"packages/ssh/src/tunnel.ts:1676\",\"summary\":\"If the reconnect fails after the stale entry is dropped, the manager no longer tracks the remote managed server. Quitting the app then leaves that server and its agents running. Before this change, closing the stale entry ran the remote stop.\",\"scenario\":\"1. Connect, so the entry is in tunnels. 2. The forward goes stale, for example after a network blip, and a reconnect probe fails at line 1657. 3. Line 1676 deletes the entry and line 1677 closes it. The finalizer sees stopRemote=false (line 1587) and kills only the forward. 4. createTunnelEntry (line 1680) fails, either because the host is unreachable or because the launch script exits 1 at line 722. 5. The user quits. The manager finalizer (lines 1401-1408) walks an empty map, so stopRemoteServer never runs. The interruption gap is finding 1; this is the failure path, which finding 1 does not cover.\",\"consequence\":\"The remote T3 server and its agents keep running after app shutdown until the next connect or an explicit Disconnect (line 1787 still runs the stop).\",\"evidence\":[\"packages/ssh/src/tunnel.ts:1401-1408\",\"packages/ssh/src/tunnel.ts:1579\",\"packages/ssh/src/tunnel.ts:1584-1599\",\"packages/ssh/src/tunnel.ts:1675-1692\",\"packages/ssh/src/tunnel.ts:1780-1791\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"packages/ssh/src/tunnel.ts:720\",\"summary\":\"If the PID in the managed pid file has been reused by an unrelated process, every reconnect now waits 60s and fails with 'the server was left running'. No T3 server exists in this case, so retrying never helps. Before this change, the script replaced it after a 2s probe.\",\"scenario\":\"1. The managed server dies, for example on a remote reboot or crash, and its pid file and server-runtime.json stay in ~/.t3. 2. The OS gives that PID to an unrelated long-lived process. 3. On reconnect, resolve_default_runtime_port succeeds, because process.kill(pid,0) at line 650 sees the live process. DEFAULT_RUNTIME_PID equals REMOTE_PID, so line 671 takes the 'our own server' branch without probing. 4. Line 711: server_running passes because the process is not a zombie. RUNNER_CHANGED is 0. 5. Line 720: nothing on the port answers, so after 60s line 721 prints the error and exits 1. Every retry repeats this. The only escape is Disconnect, whose stop script (line 780-781) sends SIGTERM to the unrelated process. That kill is pre-existing, but the user is now pushed toward it. This is a different trigger from finding 0's wedged server: there is no server at all, so the message is false.\",\"consequence\":\"Every connection attempt to that host fails after about 60s with a misleading message until the runner changes or the user disconnects. Disconnecting may then kill an unrelated process.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:625-630\",\"packages/ssh/src/tunnel.ts:636-655\",\"packages/ssh/src/tunnel.ts:657-673\",\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:778-781\"]}]}"
+}

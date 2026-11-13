@@ -1,0 +1,130 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/local-refresh-writes-null-remote-21046.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "e677e9799df44fd33d96890cb80dc0ee64d1221d",
+  "base_commit": "e34067edef2eba03c1e40bca7d2b2d933ae12b85",
+  "wall_ms": 95099,
+  "cost_usd": 0.3099875,
+  "duration_ms": 93797,
+  "num_turns": 24,
+  "usage": {
+    "input_tokens": 28,
+    "cache_creation_input_tokens": 42350,
+    "cache_read_input_tokens": 452516,
+    "output_tokens": 9474,
+    "output_tokens_details": {
+      "thinking_tokens": 4143
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 42350,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3993,
+        "cache_read_input_tokens": 44451,
+        "cache_creation_input_tokens": 2514,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2514
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5264,
+      "outputTokens": 27,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005399,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 28,
+      "outputTokens": 9474,
+      "cacheReadInputTokens": 452516,
+      "cacheCreationInputTokens": 42350,
+      "webSearchRequests": 0,
+      "costUSD": 0.30944760000000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 4143,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 42350,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The before/after branch check compares like with like. `currentBranch` and the cached local `refName` are both the short branch name, or null when detached.",
+      "scenario": "I tried detached HEAD, an unborn branch, and a branch whose short name is also a tag name (`rev-parse --abbrev-ref` would give `heads/release`, but this path doesn't use it). Local status takes `refName` from porcelain `# branch.head`, which is null for `(detached)`. `currentBranch` runs `symbolic-ref --quiet HEAD`, exits 1 when detached (null), and strips `refs/heads/`. The two values agree in each case, so no spurious mismatch or refresh loop occurs. On a real switch, `readRemoteStatus` returns null. `updateCachedRemoteStatus` then stores `remote: null` rather than a value marker, because `undefined` never equals a branch name or null. The next poll or read therefore reloads the remote.",
+      "safe_line": "apps/server/src/vcs/GitVcsDriverCore.ts:2199",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:377-393",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:297",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:271",
+        "apps/server/src/git/GitWorkflowService.ts (currentBranch, diff lines 161-186)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2197-2199",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1941-1980"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "The remote write lock is held only for bounded work. The open question about what bounds a PR lookup is answered by the VcsProcess default timeout.",
+      "scenario": "I tried a hung `gh`/provider call holding the per-cwd lock so that `getStatus` and the full refresh queue behind it indefinitely. The source-control host runs its commands through `VcsProcess`, whose `spawn` applies `timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS` (30s) with `timeoutBehavior: \"error\"`. A stuck lookup therefore errors and releases the lock. `lookupStatusPr` also catches lookup errors and falls back to the last known PR. Publishing local status before the lock cannot deadlock, because `refreshLocalStatusCore` takes no lock. I did not open the gh adapter to confirm it passes no larger `timeoutMs`.",
+      "safe_line": "apps/server/src/vcs/VcsProcess.ts:214",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:483-524",
+        "apps/server/src/vcs/VcsProcess.ts:64",
+        "apps/server/src/vcs/VcsProcess.ts:214-218",
+        "apps/server/src/sourceControl/ServerSourceControlHost.ts:8-14",
+        "apps/server/src/git/GitManager.ts:1333-1365"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "`refreshLocalStatusCore` now runs outside the remote lock for every `refreshStatus`. Two concurrent refreshes could write local status out of order, so an older snapshot is published after a newer one.",
+      "scenario": "The web branch selector sends `refreshStatus({localOnly:true})` (BranchToolbarBranchSelector.tsx:511) while a turn-end full refresh is in flight. Both call `invalidateLocalStatus`, then `localStatus`, then `updateCachedLocalStatus`. The final write is one atomic `Ref.modify`, but its order follows read completion, not read start. If the earlier-started read finishes last, it overwrites the newer local snapshot and publishes `localUpdated` with the older value. Before this change the lock serialized `refreshStatus` calls. I did not read `localStatusResultCache` and its invalidate/in-flight semantics, so I cannot confirm this ordering is reachable. The effect would be small and self-heals on the next refresh.",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:266-290",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:362-368",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:488",
+        "apps/web/src/components/BranchToolbarBranchSelector.tsx:511",
+        "apps/server/src/git/GitManager.ts:2350-2353"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The before/after branch check compares like with like. `currentBranch` and the cached local `refName` are both the short branch name, or null when detached.\",\"scenario\":\"I tried detached HEAD, an unborn branch, and a branch whose short name is also a tag name (`rev-parse --abbrev-ref` would give `heads/release`, but this path doesn't use it). Local status takes `refName` from porcelain `# branch.head`, which is null for `(detached)`. `currentBranch` runs `symbolic-ref --quiet HEAD`, exits 1 when detached (null), and strips `refs/heads/`. The two values agree in each case, so no spurious mismatch or refresh loop occurs. On a real switch, `readRemoteStatus` returns null. `updateCachedRemoteStatus` then stores `remote: null` rather than a value marker, because `undefined` never equals a branch name or null. The next poll or read therefore reloads the remote.\",\"safe_line\":\"apps/server/src/vcs/GitVcsDriverCore.ts:2199\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:377-393\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:297\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:271\",\"apps/server/src/git/GitWorkflowService.ts (currentBranch, diff lines 161-186)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2197-2199\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1941-1980\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"The remote write lock is held only for bounded work. The open question about what bounds a PR lookup is answered by the VcsProcess default timeout.\",\"scenario\":\"I tried a hung `gh`/provider call holding the per-cwd lock so that `getStatus` and the full refresh queue behind it indefinitely. The source-control host runs its commands through `VcsProcess`, whose `spawn` applies `timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS` (30s) with `timeoutBehavior: \\\"error\\\"`. A stuck lookup therefore errors and releases the lock. `lookupStatusPr` also catches lookup errors and falls back to the last known PR. Publishing local status before the lock cannot deadlock, because `refreshLocalStatusCore` takes no lock. I did not open the gh adapter to confirm it passes no larger `timeoutMs`.\",\"safe_line\":\"apps/server/src/vcs/VcsProcess.ts:214\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:483-524\",\"apps/server/src/vcs/VcsProcess.ts:64\",\"apps/server/src/vcs/VcsProcess.ts:214-218\",\"apps/server/src/sourceControl/ServerSourceControlHost.ts:8-14\",\"apps/server/src/git/GitManager.ts:1333-1365\"]},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"`refreshLocalStatusCore` now runs outside the remote lock for every `refreshStatus`. Two concurrent refreshes could write local status out of order, so an older snapshot is published after a newer one.\",\"scenario\":\"The web branch selector sends `refreshStatus({localOnly:true})` (BranchToolbarBranchSelector.tsx:511) while a turn-end full refresh is in flight. Both call `invalidateLocalStatus`, then `localStatus`, then `updateCachedLocalStatus`. The final write is one atomic `Ref.modify`, but its order follows read completion, not read start. If the earlier-started read finishes last, it overwrites the newer local snapshot and publishes `localUpdated` with the older value. Before this change the lock serialized `refreshStatus` calls. I did not read `localStatusResultCache` and its invalidate/in-flight semantics, so I cannot confirm this ordering is reachable. The effect would be small and self-heals on the next refresh.\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:266-290\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:362-368\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:488\",\"apps/web/src/components/BranchToolbarBranchSelector.tsx:511\",\"apps/server/src/git/GitManager.ts:2350-2353\"]}]}"
+}

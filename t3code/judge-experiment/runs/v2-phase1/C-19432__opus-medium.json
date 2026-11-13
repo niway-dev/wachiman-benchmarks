@@ -1,0 +1,152 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-19432.json",
+  "config": "opus-medium",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "36f91c45687f97fc8e12ff89eaa8cff6f23abe8b",
+  "base_commit": "737192594f47d87f28b5f5a3fda3ef792a0d7972",
+  "wall_ms": 73718,
+  "cost_usd": 0.4166428,
+  "duration_ms": 73186,
+  "num_turns": 10,
+  "usage": {
+    "input_tokens": 14,
+    "cache_creation_input_tokens": 34536,
+    "cache_read_input_tokens": 174380,
+    "output_tokens": 5246,
+    "output_tokens_details": {
+      "thinking_tokens": 2430
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 34536,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1773,
+        "cache_read_input_tokens": 37197,
+        "cache_creation_input_tokens": 2030,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2030
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4903,
+      "outputTokens": 25,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005028000000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 14,
+      "outputTokens": 5246,
+      "cacheReadInputTokens": 174380,
+      "cacheCreationInputTokens": 34536,
+      "webSearchRequests": 0,
+      "costUSD": 0.41614000000000007,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 2430,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 34536,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The note's hazard (a live but wedged managed server blocks every reconnect after a 60s wait plus exit 1) is the same as finding 0.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:773-793"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "No new path goes past the 90s node-runner bound. The new managed-wait path takes about 62s, which is shorter than the old kill-and-relaunch path.",
+      "scenario": "Worst node-runner path: the 2s adopt probe at line 676 succeeds, the kill wait at line 681 takes 2s, the adopted server exits so server_running at line 704 fails, the 2s reprobe at line 706 fails, the fresh-launch wait at line 744 takes 60s and then the kill wait at line 752 takes 2s. That is about 68s plus node spawns. The new branch takes 2s (probe at 676 fails) plus 60s (wait at 720), about 62s, against a 90s bound.",
+      "safe_line": "packages/ssh/src/tunnel.ts:55",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:51-66",
+        "packages/ssh/src/tunnel.ts:671-757",
+        "packages/ssh/src/tunnel.ts:914-919"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "covered",
+      "covered_by": 1,
+      "summary": "The note's only failure mode is the delete and close not being atomic against interruption, which is finding 1. A related leak on a failed recreate is reported separately below.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1675-1677",
+        "packages/ssh/src/tunnel.ts:1780-1786"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "packages/ssh/src/tunnel.ts:1676",
+      "summary": "If a stale forward is dropped and the relaunch then fails, the map no longer tracks the target, so quitting the app never stops the managed remote server.",
+      "scenario": "1) The user is connected with a managed server. 2) The forward goes stale, the user reconnects, and ensureTunnelEntry deletes the entry at line 1676. The entry's finalizer then sees it is no longer the map's entry, so it skips the remote stop (lines 1587-1599). 3) createTunnelEntry fails, for example through the new exit 1 at line 721 because the server is busy for more than 60s, or because SSH is unreachable. 4) The user quits the app. The manager finalizer at lines 1401-1408 closes only the entries in `tunnels`, and there are none. Entry scopes are separate from the manager scope (line 1558).",
+      "consequence": "The managed t3 server and its agents keep running on the remote after the app exits. With a healthy tunnel, quitting stops them. Before this change, closing the stale entry ran the remote stop. Recovery needs the user to reconnect and then disconnect.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:1401-1409",
+        "packages/ssh/src/tunnel.ts:1558",
+        "packages/ssh/src/tunnel.ts:1584-1599",
+        "packages/ssh/src/tunnel.ts:1675-1692"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "packages/ssh/src/tunnel.ts:720",
+      "summary": "If the managed server's PID has been reused by an unrelated process, every reconnect now waits 60s and fails, where before the server was relaunched.",
+      "scenario": "1) The managed server dies, for example in an OOM or a container restart with a persistent HOME. Its pid file and server-runtime.json still name PID N. 2) An unrelated process owned by the same user now has PID N. 3) On reconnect, resolve_default_runtime_port succeeds because process.kill(N,0) works (line 650), so DEFAULT_RUNTIME_PID equals REMOTE_PID and the branch at line 671 is taken. 4) server_running(N) is true because the process is live and not a zombie (lines 625-630). The runner is unchanged, so the script waits up to 60s on a port with no listener (line 720), prints 'still running ... Retry the connection' and exits 1. 5) Every retry repeats this, because nothing rewrites the pid or runtime files. The old code relaunched after a 2s probe failed.",
+      "consequence": "The remote environment cannot be reached until the user explicitly disconnects or the runner changes. The error message is misleading. The disconnect stop script (line 780) then kills the unrelated process, which is older behaviour.",
+      "evidence": [
+        "packages/ssh/src/tunnel.ts:636-656",
+        "packages/ssh/src/tunnel.ts:671-673",
+        "packages/ssh/src/tunnel.ts:711-723",
+        "packages/ssh/src/tunnel.ts:780-781"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The note's hazard (a live but wedged managed server blocks every reconnect after a 60s wait plus exit 1) is the same as finding 0.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:773-793\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"No new path goes past the 90s node-runner bound. The new managed-wait path takes about 62s, which is shorter than the old kill-and-relaunch path.\",\"scenario\":\"Worst node-runner path: the 2s adopt probe at line 676 succeeds, the kill wait at line 681 takes 2s, the adopted server exits so server_running at line 704 fails, the 2s reprobe at line 706 fails, the fresh-launch wait at line 744 takes 60s and then the kill wait at line 752 takes 2s. That is about 68s plus node spawns. The new branch takes 2s (probe at 676 fails) plus 60s (wait at 720), about 62s, against a 90s bound.\",\"safe_line\":\"packages/ssh/src/tunnel.ts:55\",\"evidence\":[\"packages/ssh/src/tunnel.ts:51-66\",\"packages/ssh/src/tunnel.ts:671-757\",\"packages/ssh/src/tunnel.ts:914-919\"]},{\"note_index\":2,\"verdict\":\"covered\",\"covered_by\":1,\"summary\":\"The note's only failure mode is the delete and close not being atomic against interruption, which is finding 1. A related leak on a failed recreate is reported separately below.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:1675-1677\",\"packages/ssh/src/tunnel.ts:1780-1786\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"packages/ssh/src/tunnel.ts:1676\",\"summary\":\"If a stale forward is dropped and the relaunch then fails, the map no longer tracks the target, so quitting the app never stops the managed remote server.\",\"scenario\":\"1) The user is connected with a managed server. 2) The forward goes stale, the user reconnects, and ensureTunnelEntry deletes the entry at line 1676. The entry's finalizer then sees it is no longer the map's entry, so it skips the remote stop (lines 1587-1599). 3) createTunnelEntry fails, for example through the new exit 1 at line 721 because the server is busy for more than 60s, or because SSH is unreachable. 4) The user quits the app. The manager finalizer at lines 1401-1408 closes only the entries in `tunnels`, and there are none. Entry scopes are separate from the manager scope (line 1558).\",\"consequence\":\"The managed t3 server and its agents keep running on the remote after the app exits. With a healthy tunnel, quitting stops them. Before this change, closing the stale entry ran the remote stop. Recovery needs the user to reconnect and then disconnect.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:1401-1409\",\"packages/ssh/src/tunnel.ts:1558\",\"packages/ssh/src/tunnel.ts:1584-1599\",\"packages/ssh/src/tunnel.ts:1675-1692\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"packages/ssh/src/tunnel.ts:720\",\"summary\":\"If the managed server's PID has been reused by an unrelated process, every reconnect now waits 60s and fails, where before the server was relaunched.\",\"scenario\":\"1) The managed server dies, for example in an OOM or a container restart with a persistent HOME. Its pid file and server-runtime.json still name PID N. 2) An unrelated process owned by the same user now has PID N. 3) On reconnect, resolve_default_runtime_port succeeds because process.kill(N,0) works (line 650), so DEFAULT_RUNTIME_PID equals REMOTE_PID and the branch at line 671 is taken. 4) server_running(N) is true because the process is live and not a zombie (lines 625-630). The runner is unchanged, so the script waits up to 60s on a port with no listener (line 720), prints 'still running ... Retry the connection' and exits 1. 5) Every retry repeats this, because nothing rewrites the pid or runtime files. The old code relaunched after a 2s probe failed.\",\"consequence\":\"The remote environment cannot be reached until the user explicitly disconnects or the runner changes. The error message is misleading. The disconnect stop script (line 780) then kills the unrelated process, which is older behaviour.\",\"evidence\":[\"packages/ssh/src/tunnel.ts:636-656\",\"packages/ssh/src/tunnel.ts:671-673\",\"packages/ssh/src/tunnel.ts:711-723\",\"packages/ssh/src/tunnel.ts:780-781\"]}]}"
+}

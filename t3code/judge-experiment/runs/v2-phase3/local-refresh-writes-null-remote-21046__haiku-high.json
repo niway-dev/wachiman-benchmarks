@@ -1,0 +1,130 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/local-refresh-writes-null-remote-21046.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "e677e9799df44fd33d96890cb80dc0ee64d1221d",
+  "base_commit": "e34067edef2eba03c1e40bca7d2b2d933ae12b85",
+  "wall_ms": 261569,
+  "cost_usd": 0.12499494000000001,
+  "duration_ms": 260712,
+  "num_turns": 22,
+  "usage": {
+    "input_tokens": 28,
+    "cache_creation_input_tokens": 115908,
+    "cache_read_input_tokens": 919544,
+    "output_tokens": 58404,
+    "output_tokens_details": {
+      "thinking_tokens": 50651
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 115908,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2270,
+        "cache_read_input_tokens": 110846,
+        "cache_creation_input_tokens": 10480,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 10480
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5292,
+      "outputTokens": 58433,
+      "cacheReadInputTokens": 919544,
+      "cacheCreationInputTokens": 115908,
+      "webSearchRequests": 0,
+      "costUSD": 0.12499494000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 50651,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 115908,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": false,
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:381-392",
+      "summary": "The before/after branch check does not catch an A→B→A bounce inside one lookup. The value is accepted and tagged with the wrong branch.",
+      "scenario": "1) refreshStatus (full) takes the lock. VcsStatusBroadcaster.ts:381 reads currentBranch = A. 2) GitManager.ts:1372 statusDetailsRemote runs while HEAD is B, so the PR lookup and ahead/behind values are for B. 3) Before line 385 the user checks out A again, so currentBranch = A. 4) Line 390-391: branch === currentBranch, so the B data is returned as {branch: A, value: B's data}. 5) Line 297 accepts it because the cached local is still A.",
+      "consequence": "A's cached PR, ahead and behind show B's values until the next remote read. With automatic fetch disabled, that is only a full refresh. The local refresh does not repair it because local is already A.",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:381-392",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:271",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:297",
+        "apps/server/src/git/GitManager.ts:1372-1374",
+        "apps/server/src/git/GitManager.ts:2358-2361",
+        "apps/server/src/git/GitWorkflowService.ts:336-361",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2197-2199"
+      ],
+      "missing": "Not checked: whether Effect's Cache re-inserts an in-flight pre-invalidation result after invalidate. The checkout has no node_modules, so that race cannot be read here."
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:487-497",
+      "summary": "The localOnly path reads `previous` before its local refresh and before taking the per-cwd lock. A remote load that finishes in between is overwritten with a null marker.",
+      "scenario": "1) Cache is (A, PR_A). An RPC vcsRefreshStatus{localOnly} (ws.ts:2922) runs line 487 and captures previous = (A, PR_A). 2) The user checks out B before the git status call at line 488 returns, so local = B. The cache is set to (B, remote null). 3) A getStatus for B, or a full refresh, gets the lock first, reads B's PR, and caches (B, PR_B). 4) The localOnly call gets the lock. Line 493 compares previous.refName A with local.refName B, which differs, so line 497 writes {branch: B, value: null} and publishes remoteUpdated null.",
+      "consequence": "PR_B is replaced by a 'no PR' marker. getStatus (line 345) and refreshPullRequestStatus (line 533) then return null without a lookup. The marker is cleared only by a full refreshStatus or a poller pass (fetch enabled). The UI hides B's PR until then.",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:487-497",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:345",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:533",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:478",
+        "apps/server/src/ws.ts:2922",
+        "/tmp/t3code-judge/diffs/e677e9799df4.diff:1005"
+      ],
+      "missing": "none. Parent code read `previous` inside the lock (diff line 1005). The unbounded lock wait and remoteStatus timeout the open question asks about are pre-existing and not added here."
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:565-568",
+      "summary": "The visible_effect claim that 'the next refresh or poll reloads the remote' is wrong when automatic fetch is disabled (interval zero). The discarded state is not reloaded by the poller.",
+      "scenario": "1) Automatic fetch interval is zero, and a stream is open. The first successful poll sets needsInitialRefresh to false (line 591). 2) A branch switch lands during a getStatus remote read, so readRemoteStatus returns null (line 390-392). The cached remote becomes null (line 478/547). 3) On each later tick, line 566 returns early because needsInitialRefresh is false. Nothing re-reads. 4) Only getStatus, refreshPullRequestStatus, a full refreshStatus, or a new streamStatus subscription recovers it (line 731 sets refreshImmediately when remote is null).",
+      "consequence": "The new branch's PR, ahead and behind stay absent on an open stream until a turn-end or explicit refresh. Before this change the stale previous branch's PR stayed, so this is a narrower failure. The wording of the note is inaccurate.",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:565-568",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:586-594",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:615-622",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:478",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:731",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:533"
+      ],
+      "missing": "none. Added hazard, not in the findings. It matches the design of the localOnly switch path, which also leaves the new branch unloaded until a full refresh."
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":false,\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:381-392\",\"summary\":\"The before/after branch check does not catch an A→B→A bounce inside one lookup. The value is accepted and tagged with the wrong branch.\",\"scenario\":\"1) refreshStatus (full) takes the lock. VcsStatusBroadcaster.ts:381 reads currentBranch = A. 2) GitManager.ts:1372 statusDetailsRemote runs while HEAD is B, so the PR lookup and ahead/behind values are for B. 3) Before line 385 the user checks out A again, so currentBranch = A. 4) Line 390-391: branch === currentBranch, so the B data is returned as {branch: A, value: B's data}. 5) Line 297 accepts it because the cached local is still A.\",\"consequence\":\"A's cached PR, ahead and behind show B's values until the next remote read. With automatic fetch disabled, that is only a full refresh. The local refresh does not repair it because local is already A.\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:381-392\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:271\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:297\",\"apps/server/src/git/GitManager.ts:1372-1374\",\"apps/server/src/git/GitManager.ts:2358-2361\",\"apps/server/src/git/GitWorkflowService.ts:336-361\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2197-2199\"],\"missing\":\"Not checked: whether Effect's Cache re-inserts an in-flight pre-invalidation result after invalidate. The checkout has no node_modules, so that race cannot be read here.\"},{\"note_index\":1,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:487-497\",\"summary\":\"The localOnly path reads `previous` before its local refresh and before taking the per-cwd lock. A remote load that finishes in between is overwritten with a null marker.\",\"scenario\":\"1) Cache is (A, PR_A). An RPC vcsRefreshStatus{localOnly} (ws.ts:2922) runs line 487 and captures previous = (A, PR_A). 2) The user checks out B before the git status call at line 488 returns, so local = B. The cache is set to (B, remote null). 3) A getStatus for B, or a full refresh, gets the lock first, reads B's PR, and caches (B, PR_B). 4) The localOnly call gets the lock. Line 493 compares previous.refName A with local.refName B, which differs, so line 497 writes {branch: B, value: null} and publishes remoteUpdated null.\",\"consequence\":\"PR_B is replaced by a 'no PR' marker. getStatus (line 345) and refreshPullRequestStatus (line 533) then return null without a lookup. The marker is cleared only by a full refreshStatus or a poller pass (fetch enabled). The UI hides B's PR until then.\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:487-497\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:345\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:533\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:478\",\"apps/server/src/ws.ts:2922\",\"/tmp/t3code-judge/diffs/e677e9799df4.diff:1005\"],\"missing\":\"none. Parent code read `previous` inside the lock (diff line 1005). The unbounded lock wait and remoteStatus timeout the open question asks about are pre-existing and not added here.\"},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:565-568\",\"summary\":\"The visible_effect claim that 'the next refresh or poll reloads the remote' is wrong when automatic fetch is disabled (interval zero). The discarded state is not reloaded by the poller.\",\"scenario\":\"1) Automatic fetch interval is zero, and a stream is open. The first successful poll sets needsInitialRefresh to false (line 591). 2) A branch switch lands during a getStatus remote read, so readRemoteStatus returns null (line 390-392). The cached remote becomes null (line 478/547). 3) On each later tick, line 566 returns early because needsInitialRefresh is false. Nothing re-reads. 4) Only getStatus, refreshPullRequestStatus, a full refreshStatus, or a new streamStatus subscription recovers it (line 731 sets refreshImmediately when remote is null).\",\"consequence\":\"The new branch's PR, ahead and behind stay absent on an open stream until a turn-end or explicit refresh. Before this change the stale previous branch's PR stayed, so this is a narrower failure. The wording of the note is inaccurate.\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:565-568\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:586-594\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:615-622\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:478\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:731\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:533\"],\"missing\":\"none. Added hazard, not in the findings. It matches the design of the localOnly switch path, which also leaves the new branch unloaded until a full refresh.\"}]}"
+}

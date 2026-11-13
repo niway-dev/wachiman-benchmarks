@@ -1,0 +1,109 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/settle-after-run-dropped-by-new-run-17145.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "37eaf5d293ef83ce86d2ce9a1583792696c82bbc",
+  "base_commit": "85975585579188be20f46d96b4972ce46c33f4bc",
+  "wall_ms": 210701,
+  "cost_usd": 0.09339780999999998,
+  "duration_ms": 210060,
+  "num_turns": 44,
+  "usage": {
+    "input_tokens": 70,
+    "cache_creation_input_tokens": 101479,
+    "cache_read_input_tokens": 2047305,
+    "output_tokens": 45042,
+    "output_tokens_details": {
+      "thinking_tokens": 34639
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 101479,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1763,
+        "cache_read_input_tokens": 103792,
+        "cache_creation_input_tokens": 3105,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3105
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4915,
+      "outputTokens": 45063,
+      "cacheReadInputTokens": 2047305,
+      "cacheCreationInputTokens": 101479,
+      "webSearchRequests": 0,
+      "costUSD": 0.09339780999999998,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 34639,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 101479,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ThreadManagementService.ts:771-777; apps/server/src/orchestration-v2/Orchestrator.ts:2585-2591, 2623-2633, 7567-7577",
+      "summary": "A deferred settle can cancel and dispose a subagent completion that was queued behind the agent's own turn. The agent is never woken with the child result, and the thread settles anyway.",
+      "scenario": "1) Agent run R1 is running. The agent calls t3_thread_organize settle on its own thread. settleThread forks settleAfterRun and returns settlesWhenTurnEnds (ThreadManagementService.ts:771-777). 2) A background subagent of the thread finishes during R1. Its completion is queued behind R1 as an automatic run (Orchestrator.ts:6774-6790 'queues behind that run'; the settle comment at 2574-2576 says the same). 3) R1 completes. The forked listener (Orchestrator.ts:10662-10680, handleTerminalRun at 10613-10637) and the settle waiter both wake on the same run.updated event, in separate fibers. 4) If the settle dispatch takes the thread lock first, thread.settle skips the automatic queued run (2585-2591) and cancels it (2623-2633). For a delegated completion that calls disposeDelegatedCompletionCohort with disposition 'disposed' (7567-7577). The parent is never woken with the child result, and the thread is settled. 5) If the listener wins, the queued run starts, and settle is refused because preparing/running counts as active (2588-2591). That refusal is finding 0, not this hazard.",
+      "consequence": "A child task's completion is never delivered to the agent that delegated it, and the thread shows as settled. The agent's reply had said the settle would apply at turn end, with no mention of the dropped completion. The code's own comment (Orchestrator.ts:6778-6780) accepts a missed wake on a settled parent, but before this commit an agent could not reach that path during its own turn.",
+      "missing": "Lock ordering between the listener and the settle dispatch is nondeterministic from the code read; I did not verify it with a runtime test.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:771-777",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:2574-2576",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:2585-2591",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:2623-2633",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6774-6790",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:7567-7577",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10613-10637",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10662-10680",
+        "apps/server/src/mcp/toolkits/thread/handlers.ts:297-300"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "covered",
+      "covered_by": 0,
+      "summary": "The 24h wait is bounded by Effect.timeoutOption, and the resulting silent non-settle is the unreported-outcome hazard already in finding 0. I found no separate leak or missed-event path.",
+      "scenario": "Run stays non-terminal beyond 24h (e.g. waiting on an approval). timeoutOption fires at ThreadManagementService.ts:734, the final read at 740-751 returns a non-terminal run, timedOut is true, and settleAfterRun returns at 759 without settling. This is the same silent outcome finding 0 describes. I also checked that a missed event cannot hang the wait: the subscribe happens before the highWater read (EventSink.ts:741-757, ThreadManagementService.ts:676-678), so an event committed in that window is replayed. Subscription scopes are closed on interrupt (LiveStreamBudget.ts:298-309, EventSink.ts:309), so the 24h timeout does not leak streams. Each settle call holds one fiber and two subscriptions until the timeout fires or the run ends.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:676-678",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:700-752",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:758-759",
+        "apps/server/src/orchestration-v2/EventSink.ts:741-757",
+        "apps/server/src/orchestration-v2/LiveStreamBudget.ts:298-309",
+        "apps/server/src/orchestration-v2/EventSink.ts:309"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ThreadManagementService.ts:771-777; apps/server/src/orchestration-v2/Orchestrator.ts:2585-2591, 2623-2633, 7567-7577\",\"summary\":\"A deferred settle can cancel and dispose a subagent completion that was queued behind the agent's own turn. The agent is never woken with the child result, and the thread settles anyway.\",\"scenario\":\"1) Agent run R1 is running. The agent calls t3_thread_organize settle on its own thread. settleThread forks settleAfterRun and returns settlesWhenTurnEnds (ThreadManagementService.ts:771-777). 2) A background subagent of the thread finishes during R1. Its completion is queued behind R1 as an automatic run (Orchestrator.ts:6774-6790 'queues behind that run'; the settle comment at 2574-2576 says the same). 3) R1 completes. The forked listener (Orchestrator.ts:10662-10680, handleTerminalRun at 10613-10637) and the settle waiter both wake on the same run.updated event, in separate fibers. 4) If the settle dispatch takes the thread lock first, thread.settle skips the automatic queued run (2585-2591) and cancels it (2623-2633). For a delegated completion that calls disposeDelegatedCompletionCohort with disposition 'disposed' (7567-7577). The parent is never woken with the child result, and the thread is settled. 5) If the listener wins, the queued run starts, and settle is refused because preparing/running counts as active (2588-2591). That refusal is finding 0, not this hazard.\",\"consequence\":\"A child task's completion is never delivered to the agent that delegated it, and the thread shows as settled. The agent's reply had said the settle would apply at turn end, with no mention of the dropped completion. The code's own comment (Orchestrator.ts:6778-6780) accepts a missed wake on a settled parent, but before this commit an agent could not reach that path during its own turn.\",\"missing\":\"Lock ordering between the listener and the settle dispatch is nondeterministic from the code read; I did not verify it with a runtime test.\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadManagementService.ts:771-777\",\"apps/server/src/orchestration-v2/Orchestrator.ts:2574-2576\",\"apps/server/src/orchestration-v2/Orchestrator.ts:2585-2591\",\"apps/server/src/orchestration-v2/Orchestrator.ts:2623-2633\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6774-6790\",\"apps/server/src/orchestration-v2/Orchestrator.ts:7567-7577\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10613-10637\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10662-10680\",\"apps/server/src/mcp/toolkits/thread/handlers.ts:297-300\"]},{\"note_index\":1,\"verdict\":\"covered\",\"covered_by\":0,\"summary\":\"The 24h wait is bounded by Effect.timeoutOption, and the resulting silent non-settle is the unreported-outcome hazard already in finding 0. I found no separate leak or missed-event path.\",\"scenario\":\"Run stays non-terminal beyond 24h (e.g. waiting on an approval). timeoutOption fires at ThreadManagementService.ts:734, the final read at 740-751 returns a non-terminal run, timedOut is true, and settleAfterRun returns at 759 without settling. This is the same silent outcome finding 0 describes. I also checked that a missed event cannot hang the wait: the subscribe happens before the highWater read (EventSink.ts:741-757, ThreadManagementService.ts:676-678), so an event committed in that window is replayed. Subscription scopes are closed on interrupt (LiveStreamBudget.ts:298-309, EventSink.ts:309), so the 24h timeout does not leak streams. Each settle call holds one fiber and two subscriptions until the timeout fires or the run ends.\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadManagementService.ts:676-678\",\"apps/server/src/orchestration-v2/ThreadManagementService.ts:700-752\",\"apps/server/src/orchestration-v2/ThreadManagementService.ts:758-759\",\"apps/server/src/orchestration-v2/EventSink.ts:741-757\",\"apps/server/src/orchestration-v2/LiveStreamBudget.ts:298-309\",\"apps/server/src/orchestration-v2/EventSink.ts:309\"]}]}"
+}

@@ -1,0 +1,155 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-22107.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+  "base_commit": "48745ffba50d8c00e430fc3d06244b4317690227",
+  "wall_ms": 300683,
+  "cost_usd": 0.15762167,
+  "duration_ms": 300087,
+  "num_turns": 33,
+  "usage": {
+    "input_tokens": 48,
+    "cache_creation_input_tokens": 118562,
+    "cache_read_input_tokens": 1651923,
+    "output_tokens": 61841,
+    "output_tokens_details": {
+      "thinking_tokens": 50873
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 118562,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3074,
+        "cache_read_input_tokens": 117300,
+        "cache_creation_input_tokens": 6680,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 6680
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4682,
+      "outputTokens": 61870,
+      "cacheReadInputTokens": 1651923,
+      "cacheCreationInputTokens": 118562,
+      "webSearchRequests": 0,
+      "costUSD": 0.15762167,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 50873,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 118562,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The status waiter is bounded at 5s, the fetch is detached and survives waiter cancellation, and the cooldown gate and failure bookkeeping hold. The starvation it does not mention is listed separately below.",
+      "safe_line": "apps/server/src/vcs/GitVcsDriverCore.ts:1314",
+      "scenario": "Tried: (a) fetch hangs and the waiter returns: Fiber.join+timeoutOption gives None after 5s, the function returns success, and the cache TTL is 15s (1314-1321). (b) waiter interrupted: the fiber is forked into serviceScope with uninterruptible:false (1308), and the forkIn finalizer is removed when the fiber completes (effect-smol internal/effect.ts:5624-5629), so no leak and the fetch keeps running. (c) cooldown: the check at 1279-1280 returns before any join, so the call succeeds, matching the 15s TTL. (d) failure after the waiter already returned: recordStatusRemoteRefreshFailure runs inside the fiber (1300) and sets retryAt, so the next gated read does not refetch. (e) concurrent poll on the same key: dedup through statusFetches at 1283-1284. No break found on the note's own claims.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1258-1322",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1288",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1300-1316",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1545-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1028-1038",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/internal/effect.ts:5622-5635"
+      ],
+      "consequence": "",
+      "covered_by": null,
+      "introduced_by_change": false,
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1314",
+      "missing": "",
+      "severity": "none"
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "Auto-pull runs inside the per-repo remote write lock. The pull's unbounded Fiber.await therefore holds that lock for the whole stalled fetch, blocking status reads and refreshes for that repo. This is a consumer the note did not check.",
+      "scenario": "1) Remote is unreachable and the repo is behind per cached refs. Auto-pull is on, the branch is the default, and the tree is clean. 2) refreshRemoteStatus(cwd) takes withRemoteWriteLock(cwd) (VcsStatusBroadcaster.ts:481-483). 3) statusDetailsRemote starts fetch F and returns after 5s (GitVcsDriverCore.ts:1314-1321). 4) remote.behindCount>0 from stale refs, so maybeAutoPull (VcsStatusBroadcaster.ts:492) calls workflow.pullCurrentBranch (447). 5) The pull reaches Fiber.await(pending) at GitVcsDriverCore.ts:2670 and waits for F: up to 5 min plus the permit queue. 6) Meanwhile getStatus with an empty cache waits on the same lock (VcsStatusBroadcaster.ts:388-389), so status for that repo does not load. Before this commit the pull's own waits were bounded by about 5s+30s, not minutes.",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:249-250",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:388-389",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:422-447",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:481-492",
+        "apps/server/src/git/GitManager.ts:1351",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1314-1321",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670"
+      ],
+      "consequence": "With auto-pull enabled and a dead remote, a repo's status and refresh calls stall for several minutes, and the auto-pull fails only after that. This adds to finding 0 by extending the same unbounded wait into the remote write lock path.",
+      "covered_by": null,
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:447 (via GitVcsDriverCore.ts:2670)",
+      "missing": "",
+      "severity": "medium"
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "One shared 4-permit status-fetch semaphore with a 5-minute hold time lets hung fetches on other repos starve a healthy repo's background refresh. Each status read for that repo then waits 5s.",
+      "scenario": "1) Four repos whose remote is unreachable (for example the same dead host) each start a status fetch. Each holds one of the 4 statusFetchProcesses permits for up to 5 min plus 1s force kill, and cooldown lets them re-take slots (GitVcsDriverCore.ts:925, 1291-1292, 1302). 2) A healthy repo H's fetch is forked (1308) but waits in the semaphore queue. 3) H's status read returns after 5s with success (1314-1321), and the cache holds it for 15s. 4) Each cache expiry repeats the 5s wait. H's remote refs and ahead/behind counts stay stale until a permit frees, which can take minutes. Before this commit, status fetches had a 5s timeout and shared the 8-permit gitProcesses pool (GitVcsDriverCore.ts:54, 1080-1082), so one stall held a slot for at most 5s.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:54",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:925",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1302",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1308-1321"
+      ],
+      "consequence": "Healthy repos on other remotes get stale ahead/behind and auto-pull decisions for minutes at a time. Their status reads take about 5s extra every 15s. Pulls on those repos also wait in the queue (finding 0).",
+      "covered_by": null,
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:925",
+      "missing": "",
+      "severity": "medium"
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Pull awaits only the fetch that is pending at the moment it checks. A status fetch that starts after that point can overlap the pull's own fetch and take the same ref locks.",
+      "scenario": "1) Status fetch F on key K finishes at T. Pull P passes the check at 2667-2670 and awaits F. 2) After the cache TTL (15s from F's success, GitVcsDriverCore.ts:1552-1553) expires, a status poll starts fetch G on K (1283-1288) because nothing is pending. 3) P runs git pull, which fetches the same remote. If G and P hit the same ref update, P's fetch fails on a lock, and the single retry may also collide. 4) P returns 'could not update a local reference'.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1288",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1552-1553",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2687-2692"
+      ],
+      "consequence": "A rare spurious pull failure when a status poll overlaps a slow pull. The window is narrow and the collision is pre-existing, so the change narrows it rather than adding it.",
+      "covered_by": null,
+      "introduced_by_change": false,
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2670",
+      "missing": "",
+      "severity": "low"
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The status waiter is bounded at 5s, the fetch is detached and survives waiter cancellation, and the cooldown gate and failure bookkeeping hold. The starvation it does not mention is listed separately below.\",\"safe_line\":\"apps/server/src/vcs/GitVcsDriverCore.ts:1314\",\"scenario\":\"Tried: (a) fetch hangs and the waiter returns: Fiber.join+timeoutOption gives None after 5s, the function returns success, and the cache TTL is 15s (1314-1321). (b) waiter interrupted: the fiber is forked into serviceScope with uninterruptible:false (1308), and the forkIn finalizer is removed when the fiber completes (effect-smol internal/effect.ts:5624-5629), so no leak and the fetch keeps running. (c) cooldown: the check at 1279-1280 returns before any join, so the call succeeds, matching the 15s TTL. (d) failure after the waiter already returned: recordStatusRemoteRefreshFailure runs inside the fiber (1300) and sets retryAt, so the next gated read does not refetch. (e) concurrent poll on the same key: dedup through statusFetches at 1283-1284. No break found on the note's own claims.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1258-1322\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1278-1288\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1300-1316\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1545-1557\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1028-1038\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/internal/effect.ts:5622-5635\"],\"consequence\":\"\",\"covered_by\":null,\"introduced_by_change\":false,\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:1314\",\"missing\":\"\",\"severity\":\"none\"},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"Auto-pull runs inside the per-repo remote write lock. The pull's unbounded Fiber.await therefore holds that lock for the whole stalled fetch, blocking status reads and refreshes for that repo. This is a consumer the note did not check.\",\"scenario\":\"1) Remote is unreachable and the repo is behind per cached refs. Auto-pull is on, the branch is the default, and the tree is clean. 2) refreshRemoteStatus(cwd) takes withRemoteWriteLock(cwd) (VcsStatusBroadcaster.ts:481-483). 3) statusDetailsRemote starts fetch F and returns after 5s (GitVcsDriverCore.ts:1314-1321). 4) remote.behindCount>0 from stale refs, so maybeAutoPull (VcsStatusBroadcaster.ts:492) calls workflow.pullCurrentBranch (447). 5) The pull reaches Fiber.await(pending) at GitVcsDriverCore.ts:2670 and waits for F: up to 5 min plus the permit queue. 6) Meanwhile getStatus with an empty cache waits on the same lock (VcsStatusBroadcaster.ts:388-389), so status for that repo does not load. Before this commit the pull's own waits were bounded by about 5s+30s, not minutes.\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:249-250\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:388-389\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:422-447\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:481-492\",\"apps/server/src/git/GitManager.ts:1351\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1314-1321\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670\"],\"consequence\":\"With auto-pull enabled and a dead remote, a repo's status and refresh calls stall for several minutes, and the auto-pull fails only after that. This adds to finding 0 by extending the same unbounded wait into the remote write lock path.\",\"covered_by\":null,\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:447 (via GitVcsDriverCore.ts:2670)\",\"missing\":\"\",\"severity\":\"medium\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"One shared 4-permit status-fetch semaphore with a 5-minute hold time lets hung fetches on other repos starve a healthy repo's background refresh. Each status read for that repo then waits 5s.\",\"scenario\":\"1) Four repos whose remote is unreachable (for example the same dead host) each start a status fetch. Each holds one of the 4 statusFetchProcesses permits for up to 5 min plus 1s force kill, and cooldown lets them re-take slots (GitVcsDriverCore.ts:925, 1291-1292, 1302). 2) A healthy repo H's fetch is forked (1308) but waits in the semaphore queue. 3) H's status read returns after 5s with success (1314-1321), and the cache holds it for 15s. 4) Each cache expiry repeats the 5s wait. H's remote refs and ahead/behind counts stay stale until a permit frees, which can take minutes. Before this commit, status fetches had a 5s timeout and shared the 8-permit gitProcesses pool (GitVcsDriverCore.ts:54, 1080-1082), so one stall held a slot for at most 5s.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:54\",\"apps/server/src/vcs/GitVcsDriverCore.ts:925\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1291-1292\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1302\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1308-1321\"],\"consequence\":\"Healthy repos on other remotes get stale ahead/behind and auto-pull decisions for minutes at a time. Their status reads take about 5s extra every 15s. Pulls on those repos also wait in the queue (finding 0).\",\"covered_by\":null,\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:925\",\"missing\":\"\",\"severity\":\"medium\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Pull awaits only the fetch that is pending at the moment it checks. A status fetch that starts after that point can overlap the pull's own fetch and take the same ref locks.\",\"scenario\":\"1) Status fetch F on key K finishes at T. Pull P passes the check at 2667-2670 and awaits F. 2) After the cache TTL (15s from F's success, GitVcsDriverCore.ts:1552-1553) expires, a status poll starts fetch G on K (1283-1288) because nothing is pending. 3) P runs git pull, which fetches the same remote. If G and P hit the same ref update, P's fetch fails on a lock, and the single retry may also collide. 4) P returns 'could not update a local reference'.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1278-1288\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1552-1553\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2687-2692\"],\"consequence\":\"A rare spurious pull failure when a status poll overlaps a slow pull. The window is narrow and the collision is pre-existing, so the change narrows it rather than adding it.\",\"covered_by\":null,\"introduced_by_change\":false,\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:2670\",\"missing\":\"\",\"severity\":\"low\"}]}"
+}

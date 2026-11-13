@@ -1,0 +1,157 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/live-buffer-charged-before-coalescing-9715.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "108f295cc3672716c3cb8291ce487846df5ce098",
+  "base_commit": "d536b0580d044967dc644498d8c5a6e96464f767",
+  "wall_ms": 332352,
+  "cost_usd": 0.14772021999999999,
+  "duration_ms": 331341,
+  "num_turns": 30,
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 113422,
+    "cache_read_input_tokens": 1296282,
+    "output_tokens": 74309,
+    "output_tokens_details": {
+      "thinking_tokens": 63252
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 113422,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3085,
+        "cache_read_input_tokens": 102614,
+        "cache_creation_input_tokens": 16226,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 16226
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5046,
+      "outputTokens": 74334,
+      "cacheReadInputTokens": 1296282,
+      "cacheCreationInputTokens": 113422,
+      "webSearchRequests": 0,
+      "costUSD": 0.14772021999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 63252,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 113422,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "Overflow handling and the producer/close ordering hold. The gap is that the thread live buffer is charged for the whole catch-up replay and snapshot phase, while nothing drains it. A busy healthy subscriber can overflow there and get a spurious stream error.",
+      "location": "apps/server/src/ws.ts:1627-1651 (catch-up not drained through deliver); producer at ws.ts:1588-1595",
+      "scenario": "Thread subscription under heavy live traffic while the catch-up replay is slow: the producer started at ws.ts:1588 retains every live event into the output queue via offerAll, but the replay at ws.ts:1627-1642 is concatenated ahead of liveBuffer.stream (ws.ts:1651) and never goes through deliver, so nothing is released until the replay ends. If more than 1000 items (or 8 MiB) accumulate in that window, retain fails at LiveStreamBudget.ts:87, close() clears output, and the first pull after replay fails at LiveStreamBudget.ts:134. The same applies to the snapshot path at ws.ts:1658-1698.",
+      "evidence": [
+        "apps/server/src/ws.ts:1588-1596",
+        "apps/server/src/ws.ts:1620-1652",
+        "apps/server/src/ws.ts:1658-1698",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:58-67",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:84-92",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        "packages/client-runtime/src/state/threads.ts:640-642",
+        "packages/client-runtime/src/rpc/client.ts:255-268"
+      ],
+      "consequence": "Spurious OrchestrationGetSnapshotError and reconnect for a healthy-but-catching-up subscriber. Converges via cursor resume.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "Replay throughput and live event rate under load, which are runtime properties and not in the checkout."
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The shell side has the same gap. The live producer starts before the catch-up replay, and the replay (ws.ts:1522-1537) is not wrapped in deliver. Live events from all threads are charged against the 1000-item cap during the replay. The 'harmless close race' part of the note checks out.",
+      "location": "apps/server/src/ws.ts:1434-1448 (producer, startImmediately) and ws.ts:1522-1537 (unbudgeted catch-up) ahead of synchronizedThenLive at ws.ts:1477-1491",
+      "scenario": "Shell resume with afterSequence where the gap is up to SHELL_RESUME_MAX_GAP (1000, ws.ts:334). The replay is streamed at the client's pace while other threads' domain events keep arriving through the producer at ws.ts:1435-1441, which retains each one. Once more than 1000 items or 8 MiB are buffered, overflow fires and the error surfaces when synchronizedThenLive is first pulled (LiveStreamBudget.ts:134), after the replay finishes.",
+      "evidence": [
+        "apps/server/src/ws.ts:334",
+        "apps/server/src/ws.ts:1417-1448",
+        "apps/server/src/ws.ts:1477-1491",
+        "apps/server/src/ws.ts:1499-1538",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:58-67",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:84-92",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        "packages/client-runtime/src/state/shell.ts:249-250"
+      ],
+      "consequence": "Spurious shell stream error and reconnect. Converges via afterSequence.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "Event rate and replay throughput at runtime."
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "Tried the window-vs-offerAll, window-vs-close, and window-overflow orderings. Every path revalidates generation under the mutex, and the failing window fiber releases its permit. No deadlock or double flush.",
+      "location": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156, 160-203, 205-229",
+      "scenario": "(a) Window gen 5 has fired and is blocked on mutex.withPermits while offerAll holds the permit and gets a non-update event. offerAll calls cancelWindow (interrupts the waiting fiber, :188 then :116-123) and bumps windowGeneration (:189) before flushPending. If the window reacquires, the generation check at :145 fails and it does nothing. (b) close() runs while a window is pending. It bumps the generation (:212) and cancels the window (:213) under the same mutex. (c) Overflow inside flushPending in flushWindow: replace fails, :155 catchTags absorbs it, :148-154 clears windowFiber, and the forked close at :226-229 waits for the mutex, which is released when the failing fiber returns.",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-123",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:125-139",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184"
+      ],
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145",
+      "missing": ""
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Thread live buffer charges the raw activity event before projection, so a large raw completed-tool payload that projects to a tiny summary still overflows the live stream.",
+      "location": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:170 (retain without a projected payload) and apps/server/src/orchestration/LiveStreamBudget.ts:84-87",
+      "scenario": "A tool.completed (kind tool.completed, persisted with full data at ProviderRuntimeIngestion.ts:879-897, no cap in this path) with a raw JSON over 8 MiB is appended on a thread with a live subscriber. retain at ThreadLiveEventCoalescer.ts:170 charges the raw bytes because no payload override is passed, and LiveStreamBudget.ts:87 fails before projection. projectActivityEvent (ActivityPayloadProjection.ts:589-600, projectRawOutput at :296-330) would have reduced it to a short summary. The stream errors, and the client reconnects with its cursor, so the replay (unbudgeted, ws.ts:1627-1642) delivers the projected event.",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:167-173",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:79-94",
+        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts:840-850",
+        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts:879-897",
+        "apps/server/src/orchestration/ActivityPayloadProjection.ts:296-330",
+        "apps/server/src/orchestration/ActivityPayloadProjection.ts:589-600",
+        "apps/server/src/ws.ts:1627-1642",
+        "packages/client-runtime/src/rpc/client.ts:255-268"
+      ],
+      "consequence": "One spurious stream error and reconnect per subscriber, then recovery via replay.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "Whether provider adapters cap tool output before the event is appended. That code is not in the files I read, so reachability of an over-8 MiB raw payload is unconfirmed."
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"Overflow handling and the producer/close ordering hold. The gap is that the thread live buffer is charged for the whole catch-up replay and snapshot phase, while nothing drains it. A busy healthy subscriber can overflow there and get a spurious stream error.\",\"location\":\"apps/server/src/ws.ts:1627-1651 (catch-up not drained through deliver); producer at ws.ts:1588-1595\",\"scenario\":\"Thread subscription under heavy live traffic while the catch-up replay is slow: the producer started at ws.ts:1588 retains every live event into the output queue via offerAll, but the replay at ws.ts:1627-1642 is concatenated ahead of liveBuffer.stream (ws.ts:1651) and never goes through deliver, so nothing is released until the replay ends. If more than 1000 items (or 8 MiB) accumulate in that window, retain fails at LiveStreamBudget.ts:87, close() clears output, and the first pull after replay fails at LiveStreamBudget.ts:134. The same applies to the snapshot path at ws.ts:1658-1698.\",\"evidence\":[\"apps/server/src/ws.ts:1588-1596\",\"apps/server/src/ws.ts:1620-1652\",\"apps/server/src/ws.ts:1658-1698\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:58-67\",\"apps/server/src/orchestration/LiveStreamBudget.ts:84-92\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\",\"packages/client-runtime/src/state/threads.ts:640-642\",\"packages/client-runtime/src/rpc/client.ts:255-268\"],\"consequence\":\"Spurious OrchestrationGetSnapshotError and reconnect for a healthy-but-catching-up subscriber. Converges via cursor resume.\",\"severity\":\"low\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"Replay throughput and live event rate under load, which are runtime properties and not in the checkout.\"},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The shell side has the same gap. The live producer starts before the catch-up replay, and the replay (ws.ts:1522-1537) is not wrapped in deliver. Live events from all threads are charged against the 1000-item cap during the replay. The 'harmless close race' part of the note checks out.\",\"location\":\"apps/server/src/ws.ts:1434-1448 (producer, startImmediately) and ws.ts:1522-1537 (unbudgeted catch-up) ahead of synchronizedThenLive at ws.ts:1477-1491\",\"scenario\":\"Shell resume with afterSequence where the gap is up to SHELL_RESUME_MAX_GAP (1000, ws.ts:334). The replay is streamed at the client's pace while other threads' domain events keep arriving through the producer at ws.ts:1435-1441, which retains each one. Once more than 1000 items or 8 MiB are buffered, overflow fires and the error surfaces when synchronizedThenLive is first pulled (LiveStreamBudget.ts:134), after the replay finishes.\",\"evidence\":[\"apps/server/src/ws.ts:334\",\"apps/server/src/ws.ts:1417-1448\",\"apps/server/src/ws.ts:1477-1491\",\"apps/server/src/ws.ts:1499-1538\",\"apps/server/src/orchestration/LiveStreamBudget.ts:58-67\",\"apps/server/src/orchestration/LiveStreamBudget.ts:84-92\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\",\"packages/client-runtime/src/state/shell.ts:249-250\"],\"consequence\":\"Spurious shell stream error and reconnect. Converges via afterSequence.\",\"severity\":\"low\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"Event rate and replay throughput at runtime.\"},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"Tried the window-vs-offerAll, window-vs-close, and window-overflow orderings. Every path revalidates generation under the mutex, and the failing window fiber releases its permit. No deadlock or double flush.\",\"location\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156, 160-203, 205-229\",\"scenario\":\"(a) Window gen 5 has fired and is blocked on mutex.withPermits while offerAll holds the permit and gets a non-update event. offerAll calls cancelWindow (interrupts the waiting fiber, :188 then :116-123) and bumps windowGeneration (:189) before flushPending. If the window reacquires, the generation check at :145 fails and it does nothing. (b) close() runs while a window is pending. It bumps the generation (:212) and cancels the window (:213) under the same mutex. (c) Overflow inside flushPending in flushWindow: replace fails, :155 catchTags absorbs it, :148-154 clears windowFiber, and the forked close at :226-229 waits for the mutex, which is released when the failing fiber returns.\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:116-123\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:125-139\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\"],\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145\",\"missing\":\"\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Thread live buffer charges the raw activity event before projection, so a large raw completed-tool payload that projects to a tiny summary still overflows the live stream.\",\"location\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:170 (retain without a projected payload) and apps/server/src/orchestration/LiveStreamBudget.ts:84-87\",\"scenario\":\"A tool.completed (kind tool.completed, persisted with full data at ProviderRuntimeIngestion.ts:879-897, no cap in this path) with a raw JSON over 8 MiB is appended on a thread with a live subscriber. retain at ThreadLiveEventCoalescer.ts:170 charges the raw bytes because no payload override is passed, and LiveStreamBudget.ts:87 fails before projection. projectActivityEvent (ActivityPayloadProjection.ts:589-600, projectRawOutput at :296-330) would have reduced it to a short summary. The stream errors, and the client reconnects with its cursor, so the replay (unbudgeted, ws.ts:1627-1642) delivers the projected event.\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:167-173\",\"apps/server/src/orchestration/LiveStreamBudget.ts:79-94\",\"apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts:840-850\",\"apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts:879-897\",\"apps/server/src/orchestration/ActivityPayloadProjection.ts:296-330\",\"apps/server/src/orchestration/ActivityPayloadProjection.ts:589-600\",\"apps/server/src/ws.ts:1627-1642\",\"packages/client-runtime/src/rpc/client.ts:255-268\"],\"consequence\":\"One spurious stream error and reconnect per subscriber, then recovery via replay.\",\"severity\":\"low\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"Whether provider adapters cap tool output before the event is appended. That code is not in the files I read, so reachability of an over-8 MiB raw payload is unconfirmed.\"}]}"
+}

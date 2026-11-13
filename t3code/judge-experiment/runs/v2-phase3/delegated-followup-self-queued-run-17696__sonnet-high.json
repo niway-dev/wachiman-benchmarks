@@ -1,0 +1,198 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/delegated-followup-self-queued-run-17696.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "c572cb71d2711d8cdb4ff7e0ba88af5e9a23aa81",
+  "base_commit": "fa9f936ef5cbbe4bd4f9890b638766fc92f45075",
+  "wall_ms": 397344,
+  "cost_usd": 1.2348445000000001,
+  "duration_ms": 396835,
+  "num_turns": 45,
+  "usage": {
+    "input_tokens": 68,
+    "cache_creation_input_tokens": 135991,
+    "cache_read_input_tokens": 2884881,
+    "output_tokens": 40143,
+    "output_tokens_details": {
+      "thinking_tokens": 30173
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 135991,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 4358,
+        "cache_read_input_tokens": 137489,
+        "cache_creation_input_tokens": 3117,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3117
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 8124,
+      "outputTokens": 28,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0008264,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 68,
+      "outputTokens": 40143,
+      "cacheReadInputTokens": 2884881,
+      "cacheCreationInputTokens": 135991,
+      "webSearchRequests": 0,
+      "costUSD": 1.2340181000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 30173,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 135991,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Tried writing parent events from a child command without the parent lock, and a retry creating a second task. The lock guard matches the follow-up guard, and receipts replay the stored result.",
+      "scenario": "(a) A user or MCP message.dispatch reaches recordSubagentFollowup and writes node/subagent/turn-item events on the parent without holding the parent lock. (b) A retry with the same commandId derives a second task.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:10867",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10856-10869 (the lock guard is the same createdBy/creationSource test as the early return in recordSubagentFollowup)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10653-10704 (an existing receipt returns before dispatchOnce)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6754-6900 (recordSubagentFollowup only writes when original.result !== null and the run has no delegatedTaskId)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6481-6749 (dispatchDelegatedTaskRequest builds the equivalent records)"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Looked for a path that takes the child lock and then the parent lock, or holds the parent lock while dispatching to its child. Every withLock site takes locks sequentially or one at a time.",
+      "scenario": "Deadlock: thread A holds the child lock and waits for the parent lock, while a user or MCP message.dispatch to the child holds the parent lock and waits for the child lock. I checked every withLock site for nesting.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:10906",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10881-10907 (child lock, then child lock, then parent lock, never nested)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10956 and 11063 (the parent lock only, around finalize)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:1881 (child lock only)",
+        "apps/server/src/orchestration-v2/ProviderEventIngestor.ts:421 and CheckpointRollbackService.ts:283 (they use the same keyed lock with a single thread id and dispatch nothing inside)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11084 (dispatchWithReceipt is the only public dispatch)"
+      ]
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The SQL clause only lists a child while a tracked terminal run's task has a null result. Finalize sets a string result, so the child drops out of later sweeps.",
+      "scenario": "A settled follow-up stays in the recovery list on every startup, or the SQL and in-memory predicates disagree about which tasks count.",
+      "safe_line": "apps/server/src/orchestration-v2/ProjectionStore.ts:3601",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3593-3614",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:557-581",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9856-9863 (finalize writes result: result.text, a string, so json_extract result is not NULL afterwards)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10946-10957"
+      ]
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "summary": "thread_send reads the run after the dispatch has committed, so a follow-up's delegatedTaskId is present in the result. A queued send also gets a run immediately.",
+      "scenario": "taskId missing or stale because the run was read before the follow-up's run.updated event, or because a queued message has no run yet.",
+      "safe_line": "apps/server/src/orchestration-v2/ThreadManagementService.ts:636",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:622-665 (the projection is read after orchestrator.dispatch returns, and it errors if there is no run)",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10653-10704 (a retry replays the stored result, so the same taskId comes back)"
+      ]
+    },
+    {
+      "note_index": 4,
+      "verdict": "safe",
+      "summary": "The settled-task case is unchanged: with no live or newer child run, or no thread shell, the agent is returned as before. An unparseable timestamp gives NaN, the comparison is false, and the task data is used.",
+      "scenario": "A settled task wrongly loses its result and progress because of the timestamp comparison, a missing shell, or an unparseable date.",
+      "safe_line": "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:187",
+      "evidence": [
+        "apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176-206",
+        "packages/client-runtime/src/state/subagentRuntime.ts:121-153 (startedAt and completedAt are ISO strings from formatIso)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1478-1486 (the shell's latestRun* fields come from the latest run)",
+        "packages/client-runtime/src/state/threadRelationships.ts:100-109"
+      ]
+    },
+    {
+      "note_index": 5,
+      "verdict": "safe",
+      "summary": "The SQL and memory predicates match for the history the test drives: an untracked later run, a tracked terminal run followed by a running run, and settlement of the task.",
+      "scenario": "The two layers diverge for tracked-but-unresolved tasks, untracked history, or a null result.",
+      "safe_line": "apps/server/src/orchestration-v2/ProjectionStore.ts:3601",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3616",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:554-583",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 (needsRecovery has one caller, the in-memory layer, and it passes the parent projection)",
+        "apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:79-114 and the new test at 302-383"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "t3_thread_send_attachments also sends from a parent to its child, so it now creates a tracked follow-up task, but its result drops taskId.",
+      "scenario": "1) A parent agent calls t3_thread_send_attachments to its published child. 2) The command is createdBy agent, creationSource mcp, senderThreadId set to the caller, so recordSubagentFollowup creates a fresh task with completionWake always. 3) The handler returns only threadId/messageId/runId/status. 4) The agent cannot poll task_status for that task, yet the parent will be woken when it completes.",
+      "location": "apps/server/src/mcp/toolkits/attachment/handlers.ts:117",
+      "consequence": "An attachment follow-up creates a hidden task with a wake and no task id for the agent to track. This is inconsistent with t3_thread_send, whose description promises taskId.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "evidence": [
+        "apps/server/src/mcp/toolkits/attachment/handlers.ts:96-122",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6754-6900",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Cancelling a tracked queued follow-up wakes the parent agent, and editing it leaves the task prompt stale.",
+      "scenario": "1) A user sends a follow-up to a child while its run is active with dispatchMode queue_after_active, so a queued run and a parent task are created. 2) The user dispatches queued-run.cancel for that run. 3) dispatchQueuedRunCancel keeps delegatedTaskId on the run and sets its status to cancelled. 4) handleTerminalRun calls finalizeAppOwnedSubagent, which finalizes the task as cancelled with completionWake always, and the parent is offered a continuation. For queued-run.edit, the task and turn item keep the original prompt.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:7778",
+      "consequence": "The parent agent is woken for a user dismissing their own queued message. After an edit, the parent's task list shows the old prompt.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:7730-7791",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:7824-7895",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:584-602 (cancelled is a terminal task status)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10928-10937",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:9547-9640 (the wake is planned whatever the terminal status)"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Tried writing parent events from a child command without the parent lock, and a retry creating a second task. The lock guard matches the follow-up guard, and receipts replay the stored result.\",\"scenario\":\"(a) A user or MCP message.dispatch reaches recordSubagentFollowup and writes node/subagent/turn-item events on the parent without holding the parent lock. (b) A retry with the same commandId derives a second task.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:10867\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:10856-10869 (the lock guard is the same createdBy/creationSource test as the early return in recordSubagentFollowup)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10653-10704 (an existing receipt returns before dispatchOnce)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6754-6900 (recordSubagentFollowup only writes when original.result !== null and the run has no delegatedTaskId)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6481-6749 (dispatchDelegatedTaskRequest builds the equivalent records)\"]},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Looked for a path that takes the child lock and then the parent lock, or holds the parent lock while dispatching to its child. Every withLock site takes locks sequentially or one at a time.\",\"scenario\":\"Deadlock: thread A holds the child lock and waits for the parent lock, while a user or MCP message.dispatch to the child holds the parent lock and waits for the child lock. I checked every withLock site for nesting.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:10906\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:10881-10907 (child lock, then child lock, then parent lock, never nested)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10956 and 11063 (the parent lock only, around finalize)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:1881 (child lock only)\",\"apps/server/src/orchestration-v2/ProviderEventIngestor.ts:421 and CheckpointRollbackService.ts:283 (they use the same keyed lock with a single thread id and dispatch nothing inside)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:11084 (dispatchWithReceipt is the only public dispatch)\"]},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The SQL clause only lists a child while a tracked terminal run's task has a null result. Finalize sets a string result, so the child drops out of later sweeps.\",\"scenario\":\"A settled follow-up stays in the recovery list on every startup, or the SQL and in-memory predicates disagree about which tasks count.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3601\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3593-3614\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:557-581\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9856-9863 (finalize writes result: result.text, a string, so json_extract result is not NULL afterwards)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10946-10957\"]},{\"note_index\":3,\"verdict\":\"safe\",\"summary\":\"thread_send reads the run after the dispatch has committed, so a follow-up's delegatedTaskId is present in the result. A queued send also gets a run immediately.\",\"scenario\":\"taskId missing or stale because the run was read before the follow-up's run.updated event, or because a queued message has no run yet.\",\"safe_line\":\"apps/server/src/orchestration-v2/ThreadManagementService.ts:636\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadManagementService.ts:622-665 (the projection is read after orchestrator.dispatch returns, and it errors if there is no run)\",\"apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10653-10704 (a retry replays the stored result, so the same taskId comes back)\"]},{\"note_index\":4,\"verdict\":\"safe\",\"summary\":\"The settled-task case is unchanged: with no live or newer child run, or no thread shell, the agent is returned as before. An unparseable timestamp gives NaN, the comparison is false, and the task data is used.\",\"scenario\":\"A settled task wrongly loses its result and progress because of the timestamp comparison, a missing shell, or an unparseable date.\",\"safe_line\":\"apps/web/src/components/chat/ThreadRelationshipsControl.tsx:187\",\"evidence\":[\"apps/web/src/components/chat/ThreadRelationshipsControl.tsx:176-206\",\"packages/client-runtime/src/state/subagentRuntime.ts:121-153 (startedAt and completedAt are ISO strings from formatIso)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:1478-1486 (the shell's latestRun* fields come from the latest run)\",\"packages/client-runtime/src/state/threadRelationships.ts:100-109\"]},{\"note_index\":5,\"verdict\":\"safe\",\"summary\":\"The SQL and memory predicates match for the history the test drives: an untracked later run, a tracked terminal run followed by a running run, and settlement of the task.\",\"scenario\":\"The two layers diverge for tracked-but-unresolved tasks, untracked history, or a null result.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3601\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3586-3616\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:554-583\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 (needsRecovery has one caller, the in-memory layer, and it passes the parent projection)\",\"apps/server/src/orchestration-v2/ProjectionRecovery.test.ts:79-114 and the new test at 302-383\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"t3_thread_send_attachments also sends from a parent to its child, so it now creates a tracked follow-up task, but its result drops taskId.\",\"scenario\":\"1) A parent agent calls t3_thread_send_attachments to its published child. 2) The command is createdBy agent, creationSource mcp, senderThreadId set to the caller, so recordSubagentFollowup creates a fresh task with completionWake always. 3) The handler returns only threadId/messageId/runId/status. 4) The agent cannot poll task_status for that task, yet the parent will be woken when it completes.\",\"location\":\"apps/server/src/mcp/toolkits/attachment/handlers.ts:117\",\"consequence\":\"An attachment follow-up creates a hidden task with a wake and no task id for the agent to track. This is inconsistent with t3_thread_send, whose description promises taskId.\",\"severity\":\"low\",\"introduced_by_change\":true,\"evidence\":[\"apps/server/src/mcp/toolkits/attachment/handlers.ts:96-122\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6754-6900\",\"apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479\"]},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Cancelling a tracked queued follow-up wakes the parent agent, and editing it leaves the task prompt stale.\",\"scenario\":\"1) A user sends a follow-up to a child while its run is active with dispatchMode queue_after_active, so a queued run and a parent task are created. 2) The user dispatches queued-run.cancel for that run. 3) dispatchQueuedRunCancel keeps delegatedTaskId on the run and sets its status to cancelled. 4) handleTerminalRun calls finalizeAppOwnedSubagent, which finalizes the task as cancelled with completionWake always, and the parent is offered a continuation. For queued-run.edit, the task and turn item keep the original prompt.\",\"location\":\"apps/server/src/orchestration-v2/Orchestrator.ts:7778\",\"consequence\":\"The parent agent is woken for a user dismissing their own queued message. After an edit, the parent's task list shows the old prompt.\",\"severity\":\"low\",\"introduced_by_change\":true,\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:7730-7791\",\"apps/server/src/orchestration-v2/Orchestrator.ts:7824-7895\",\"apps/server/src/orchestration-v2/Orchestrator.ts:584-602 (cancelled is a terminal task status)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10928-10937\",\"apps/server/src/orchestration-v2/Orchestrator.ts:9547-9640 (the wake is planned whatever the terminal status)\"]}]}"
+}

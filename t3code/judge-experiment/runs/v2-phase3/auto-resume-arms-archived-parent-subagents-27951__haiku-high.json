@@ -1,0 +1,131 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/auto-resume-arms-archived-parent-subagents-27951.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "95414cf1ad5af17ddb6e710218579a23ceee4bfa",
+  "base_commit": "709cfb3a1f5053b975f983d8fee0515bddf5e93f",
+  "wall_ms": 78271,
+  "cost_usd": 0.02185203,
+  "duration_ms": 77693,
+  "num_turns": 18,
+  "usage": {
+    "input_tokens": 22,
+    "cache_creation_input_tokens": 49781,
+    "cache_read_input_tokens": 281563,
+    "output_tokens": 17442,
+    "output_tokens_details": {
+      "thinking_tokens": 10558
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 49781,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2218,
+        "cache_read_input_tokens": 43637,
+        "cache_creation_input_tokens": 6144,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 6144
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 3457,
+      "outputTokens": 17469,
+      "cacheReadInputTokens": 281563,
+      "cacheCreationInputTokens": 49781,
+      "webSearchRequests": 0,
+      "costUSD": 0.02185203,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 10558,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 49781,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The new parent clause is only on the fresh-arm branch. A child already armed before its parent settled still resumes at reset. The note's visible_effect ('no longer auto-armed or auto-resumed') is false for that case, and the fix's own comment says resuming would wake the parent.",
+      "evidence": [
+        "ProjectionStore.ts:3957-3967: first OR branch (limitRecovery.runId/resetAt match, autoResume=1, reset passed, not snoozed) has no settledOverride or parent check",
+        "ProjectionStore.ts:3977-3983: new NOT EXISTS parent clause sits only inside the second OR branch (3968-3984)",
+        "ProjectionStore.ts:3977: comment 'A subagent of a settled parent is abandoned work; resuming it would wake the parent.'",
+        "UsageLimitRecoveryWorker.ts:29: limitRecoveryCommand checks only the thread's own settledOverride; the armed child passes (recovery matches, resetMs <= nowMs, snoozedUntil null) and returns message.dispatch at 108-141 (threads.dispatch at 131)",
+        "Orchestrator.ts:5413-5429: resume dispatch guard checks only projection.thread.settledOverride (5429), not the parent, so the child's limit-resume is accepted",
+        "/tmp/t3code-judge/diffs/95414cf1ad5a.diff:157-190: the test asserts the armed-before-settle child still resumes, i.e. the behaviour is deliberate but contradicts the note's visible_effect and the 3977 comment"
+      ],
+      "scenario": "1) Parent P is unsettled. Child C (subagent of P) hits a usage_limit failure with resetAt = now+1h. 2) Sweep arms C: limitRecovery={runId, resetAt, autoResume:true} (allowed, P unsettled). 3) User settles P (settledOverride='settled') before the reset. 4) At reset, getLimitRecoveryCandidates returns C via the first OR branch with no parent check (3957-3967). limitRecoveryCommand returns message.dispatch 'Continue where you left off.' 5) Orchestrator.ts:5418-5433 passes because C itself is not settled. C resumes and wakes the settled parent, the same symptom the fix targets.",
+      "consequence": "A settled parent is woken by an automatic 'Continue where you left off' message from a child that was armed before the parent settled. Manual settle is reachable at any time. Medium: wrong behaviour on a realistic path, and the fix's stated purpose is not achieved for this path. Either the clause should also gate the armed branch, or the note's claim and comment should be corrected to say pre-armed children still resume.",
+      "severity": "medium",
+      "location": "apps/server/src/orchestration-v2/ProjectionStore.ts:3957-3967",
+      "introduced_by_change": false,
+      "covered_by": null,
+      "safe_line": "",
+      "missing": ""
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "The parent check looks only one level up. A grandchild whose direct parent is unsettled, under a settled root, is still armed and resumed, although the code comment says resuming such work is abandoned.",
+      "evidence": [
+        "ProjectionStore.ts:3978-3983: NOT EXISTS checks only parent.thread_id = lineage.parentThreadId with settledOverride='settled' (one join, no recursion)",
+        "ProjectionStore.ts:3977: comment says a subagent of a settled parent is abandoned work",
+        "UsageLimitRecoveryWorker.ts:29: the candidate's own settledOverride is the only per-thread check",
+        "Orchestrator.ts:5418-5433: dispatch guard checks only the child's settledOverride, not any ancestor"
+      ],
+      "scenario": "1) Root R is settled. 2) A is a subagent of R, not settled. A is not armed because its direct parent R is settled (new clause). 3) B is a subagent of A, hits a usage limit, and is armed normally because A is unsettled. 4) At reset, B passes the candidate filter and the dispatch guard, so B resumes. Whether R is woken depends on how B's completion is routed to A, which I did not read (delegated-completion/subagent-result paths are in other files).",
+      "consequence": "Work under a settled root keeps resuming one level down, which is the class of work the new comment says should stop. The severity depends on whether the routing reaches R. Low confidence in the user-visible consequence.",
+      "severity": "low",
+      "location": "apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "safe_line": "",
+      "missing": "Routing of B's completion from A to R (delegated-completion / subagent-result reactors) was not read, so the wake-up of R is not confirmed."
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Race between candidate read and dispatch. The sweep reads candidates, the parent is settled, and then the resume is dispatched. The dispatch guard does not look at the parent, so the resume is accepted.",
+      "evidence": [
+        "UsageLimitRecoveryWorker.ts:108-121: candidates read once, then each candidate is acted on in sequence",
+        "UsageLimitRecoveryWorker.ts:131: threads.dispatch(command) for message.dispatch",
+        "Orchestrator.ts:5418-5429: resume guard checks only the child's settledOverride, not the parent",
+        "ProjectionStore.ts:3977-3983: the parent check is only in the SQL candidate read, not repeated at dispatch"
+      ],
+      "scenario": "1) Sweep reads candidate C (child of unsettled P, reset passed) into its list. 2) Before the loop reaches C (or during dispatch of an earlier candidate), the user settles P. 3) The loop reaches C and calls threads.dispatch with the resume command. 4) Orchestrator.ts:5429 passes (C not settled), so C resumes and wakes P.",
+      "consequence": "A small window where a settled parent is woken, the same symptom as the fix target. Low: needs a settle to land between the read and the dispatch.",
+      "severity": "low",
+      "location": "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:108-131",
+      "introduced_by_change": false,
+      "covered_by": null,
+      "safe_line": "",
+      "missing": ""
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The new parent clause is only on the fresh-arm branch. A child already armed before its parent settled still resumes at reset. The note's visible_effect ('no longer auto-armed or auto-resumed') is false for that case, and the fix's own comment says resuming would wake the parent.\",\"evidence\":[\"ProjectionStore.ts:3957-3967: first OR branch (limitRecovery.runId/resetAt match, autoResume=1, reset passed, not snoozed) has no settledOverride or parent check\",\"ProjectionStore.ts:3977-3983: new NOT EXISTS parent clause sits only inside the second OR branch (3968-3984)\",\"ProjectionStore.ts:3977: comment 'A subagent of a settled parent is abandoned work; resuming it would wake the parent.'\",\"UsageLimitRecoveryWorker.ts:29: limitRecoveryCommand checks only the thread's own settledOverride; the armed child passes (recovery matches, resetMs <= nowMs, snoozedUntil null) and returns message.dispatch at 108-141 (threads.dispatch at 131)\",\"Orchestrator.ts:5413-5429: resume dispatch guard checks only projection.thread.settledOverride (5429), not the parent, so the child's limit-resume is accepted\",\"/tmp/t3code-judge/diffs/95414cf1ad5a.diff:157-190: the test asserts the armed-before-settle child still resumes, i.e. the behaviour is deliberate but contradicts the note's visible_effect and the 3977 comment\"],\"scenario\":\"1) Parent P is unsettled. Child C (subagent of P) hits a usage_limit failure with resetAt = now+1h. 2) Sweep arms C: limitRecovery={runId, resetAt, autoResume:true} (allowed, P unsettled). 3) User settles P (settledOverride='settled') before the reset. 4) At reset, getLimitRecoveryCandidates returns C via the first OR branch with no parent check (3957-3967). limitRecoveryCommand returns message.dispatch 'Continue where you left off.' 5) Orchestrator.ts:5418-5433 passes because C itself is not settled. C resumes and wakes the settled parent, the same symptom the fix targets.\",\"consequence\":\"A settled parent is woken by an automatic 'Continue where you left off' message from a child that was armed before the parent settled. Manual settle is reachable at any time. Medium: wrong behaviour on a realistic path, and the fix's stated purpose is not achieved for this path. Either the clause should also gate the armed branch, or the note's claim and comment should be corrected to say pre-armed children still resume.\",\"severity\":\"medium\",\"location\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3957-3967\",\"introduced_by_change\":false,\"covered_by\":null,\"safe_line\":\"\",\"missing\":\"\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"The parent check looks only one level up. A grandchild whose direct parent is unsettled, under a settled root, is still armed and resumed, although the code comment says resuming such work is abandoned.\",\"evidence\":[\"ProjectionStore.ts:3978-3983: NOT EXISTS checks only parent.thread_id = lineage.parentThreadId with settledOverride='settled' (one join, no recursion)\",\"ProjectionStore.ts:3977: comment says a subagent of a settled parent is abandoned work\",\"UsageLimitRecoveryWorker.ts:29: the candidate's own settledOverride is the only per-thread check\",\"Orchestrator.ts:5418-5433: dispatch guard checks only the child's settledOverride, not any ancestor\"],\"scenario\":\"1) Root R is settled. 2) A is a subagent of R, not settled. A is not armed because its direct parent R is settled (new clause). 3) B is a subagent of A, hits a usage limit, and is armed normally because A is unsettled. 4) At reset, B passes the candidate filter and the dispatch guard, so B resumes. Whether R is woken depends on how B's completion is routed to A, which I did not read (delegated-completion/subagent-result paths are in other files).\",\"consequence\":\"Work under a settled root keeps resuming one level down, which is the class of work the new comment says should stop. The severity depends on whether the routing reaches R. Low confidence in the user-visible consequence.\",\"severity\":\"low\",\"location\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983\",\"introduced_by_change\":true,\"covered_by\":null,\"safe_line\":\"\",\"missing\":\"Routing of B's completion from A to R (delegated-completion / subagent-result reactors) was not read, so the wake-up of R is not confirmed.\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Race between candidate read and dispatch. The sweep reads candidates, the parent is settled, and then the resume is dispatched. The dispatch guard does not look at the parent, so the resume is accepted.\",\"evidence\":[\"UsageLimitRecoveryWorker.ts:108-121: candidates read once, then each candidate is acted on in sequence\",\"UsageLimitRecoveryWorker.ts:131: threads.dispatch(command) for message.dispatch\",\"Orchestrator.ts:5418-5429: resume guard checks only the child's settledOverride, not the parent\",\"ProjectionStore.ts:3977-3983: the parent check is only in the SQL candidate read, not repeated at dispatch\"],\"scenario\":\"1) Sweep reads candidate C (child of unsettled P, reset passed) into its list. 2) Before the loop reaches C (or during dispatch of an earlier candidate), the user settles P. 3) The loop reaches C and calls threads.dispatch with the resume command. 4) Orchestrator.ts:5429 passes (C not settled), so C resumes and wakes P.\",\"consequence\":\"A small window where a settled parent is woken, the same symptom as the fix target. Low: needs a settle to land between the read and the dispatch.\",\"severity\":\"low\",\"location\":\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:108-131\",\"introduced_by_change\":false,\"covered_by\":null,\"safe_line\":\"\",\"missing\":\"\"}]}"
+}

@@ -1,0 +1,133 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-22107.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v1",
+  "prompt_sha256": "97dd94d569c15cb557ab1e611bb604407219beab4382e08d61b5bafd701e624a",
+  "reviewed_commit": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+  "base_commit": "48745ffba50d8c00e430fc3d06244b4317690227",
+  "wall_ms": 107013,
+  "cost_usd": 0.32065179999999993,
+  "duration_ms": 106443,
+  "num_turns": 16,
+  "usage": {
+    "input_tokens": 16,
+    "cache_creation_input_tokens": 46045,
+    "cache_read_input_tokens": 249469,
+    "output_tokens": 11094,
+    "output_tokens_details": {
+      "thinking_tokens": 6786
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 46045,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3162,
+        "cache_read_input_tokens": 47879,
+        "cache_creation_input_tokens": 2781,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2781
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5384,
+      "outputTokens": 29,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005528999999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 16,
+      "outputTokens": 11094,
+      "cacheReadInputTokens": 249469,
+      "cacheCreationInputTokens": 46045,
+      "webSearchRequests": 0,
+      "costUSD": 0.32009889999999996,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 6786,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 46045,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The status waiter is bounded at 5s and the forked fetch stays interruptible, so the 5 min limit and force-kill do apply. I could not build a failing case.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1303-1305 (Fiber.join wrapped in Effect.timeoutOption(5s); the timeout interrupts only the join, not the fetch fiber)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1054-1066 (executeRaw times out the scoped execution after 5 min)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082 (timeout over DEFAULT_TIMEOUT_MS skips gitProcesses, so only statusFetchProcesses limits it)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1297 (forkIn uses uninterruptible:false)",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/internal/effect.ts:5522-5526 (false makes the child fiber interruptible, so the executeRaw timeout can fire inside it)",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484-491 (SIGKILL escalation when forceKillAfter is set)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1520-1557 (the failure count and retryAt are written before the cache computes its TTL)"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The pull checks for a pending status fetch once, before it runs. A status poll can start a new fetch of the same remote during the pull's 30s window, and nothing excludes it. That fetch can take the ref locks the pull needs.",
+      "scenario": "1. Pull runs `statusFetches.get(key)` at line 2667 and finds nothing pending, so it skips the wait. 2. A status poll from another client or tab then calls `statusDetailsRemote`, which calls `refreshStatusUpstreamIfStale` (line 1559). 3. The 15s cache TTL has expired, so `fetchRemoteForStatus` registers a new fetch in `statusFetches` and forks it. 4. The pull's `git pull --ff-only` fetch and the background `git fetch origin` now both update `refs/remotes/origin/*`, and one hits 'cannot lock ref'. 5. If the pull loses, the fallback `pull -- remote mergeRef` at line 2698 runs once more, and it can collide with the same still-running fetch. It then fails with the 'could not update a local reference' error. The retry also writes the same remote-tracking ref, so it does not escape the contention. The pull holds no marker that makes status polls skip fetching. A second, unconfirmed risk is that the pull's key is built from `branch.<ref>.remote`, while the status key comes from `@{upstream}` parsing at lines 1236-1256. For slash-named remotes or `remote=.` the two may differ, and the pull would then skip the wait. I did not confirm that case.",
+      "severity": "low",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2741",
+      "introduced_by_change": false,
+      "consequence": "An occasional pull fails with a ref-lock error and the user has to click Pull again. No data is lost.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671 (single point-in-time check of statusFetches)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1281-1301 (any status poll registers a new fetch for the same key)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1559-1572 (status polling reaches fetchRemoteForStatus)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1236-1256 (the status key comes from upstream parsing, not from the config value)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2678-2735 (the pull's two attempts, no exclusion)"
+      ],
+      "missing": "A pull-in-progress marker that makes fetchRemoteForStatus skip while a pull is running for that key.",
+      "covered_by": null
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "`forceKillAfterMs` is only forwarded when set, and the spawner accepts the number. Only the status fetch sets it.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:966-969 (`forceKillAfter: input.forceKillAfterMs`, undefined for other callers)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109 (only forwarded when defined)",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484-491 (undefined keeps the old grace-only path)",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:550-559 (the finalizer reads cmd.options, so the option reaches it)",
+        "/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/Duration.ts:404,788-791 (a number is read as milliseconds)"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The status waiter is bounded at 5s and the forked fetch stays interruptible, so the 5 min limit and force-kill do apply. I could not build a failing case.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1303-1305 (Fiber.join wrapped in Effect.timeoutOption(5s); the timeout interrupts only the join, not the fetch fiber)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1054-1066 (executeRaw times out the scoped execution after 5 min)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082 (timeout over DEFAULT_TIMEOUT_MS skips gitProcesses, so only statusFetchProcesses limits it)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1297 (forkIn uses uninterruptible:false)\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/internal/effect.ts:5522-5526 (false makes the child fiber interruptible, so the executeRaw timeout can fire inside it)\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484-491 (SIGKILL escalation when forceKillAfter is set)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1520-1557 (the failure count and retryAt are written before the cache computes its TTL)\"]},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The pull checks for a pending status fetch once, before it runs. A status poll can start a new fetch of the same remote during the pull's 30s window, and nothing excludes it. That fetch can take the ref locks the pull needs.\",\"scenario\":\"1. Pull runs `statusFetches.get(key)` at line 2667 and finds nothing pending, so it skips the wait. 2. A status poll from another client or tab then calls `statusDetailsRemote`, which calls `refreshStatusUpstreamIfStale` (line 1559). 3. The 15s cache TTL has expired, so `fetchRemoteForStatus` registers a new fetch in `statusFetches` and forks it. 4. The pull's `git pull --ff-only` fetch and the background `git fetch origin` now both update `refs/remotes/origin/*`, and one hits 'cannot lock ref'. 5. If the pull loses, the fallback `pull -- remote mergeRef` at line 2698 runs once more, and it can collide with the same still-running fetch. It then fails with the 'could not update a local reference' error. The retry also writes the same remote-tracking ref, so it does not escape the contention. The pull holds no marker that makes status polls skip fetching. A second, unconfirmed risk is that the pull's key is built from `branch.<ref>.remote`, while the status key comes from `@{upstream}` parsing at lines 1236-1256. For slash-named remotes or `remote=.` the two may differ, and the pull would then skip the wait. I did not confirm that case.\",\"severity\":\"low\",\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2741\",\"introduced_by_change\":false,\"consequence\":\"An occasional pull fails with a ref-lock error and the user has to click Pull again. No data is lost.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671 (single point-in-time check of statusFetches)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1281-1301 (any status poll registers a new fetch for the same key)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1559-1572 (status polling reaches fetchRemoteForStatus)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1236-1256 (the status key comes from upstream parsing, not from the config value)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2678-2735 (the pull's two attempts, no exclusion)\"],\"missing\":\"A pull-in-progress marker that makes fetchRemoteForStatus skip while a pull is running for that key.\",\"covered_by\":null},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"`forceKillAfterMs` is only forwarded when set, and the spawner accepts the number. Only the status fetch sets it.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:966-969 (`forceKillAfter: input.forceKillAfterMs`, undefined for other callers)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109 (only forwarded when defined)\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484-491 (undefined keeps the old grace-only path)\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:550-559 (the finalizer reads cmd.options, so the option reaches it)\",\"/tmp/t3code-judge/wt-3fdcef099449/.repos/effect-smol/packages/effect/src/Duration.ts:404,788-791 (a number is read as milliseconds)\"]}]}"
+}

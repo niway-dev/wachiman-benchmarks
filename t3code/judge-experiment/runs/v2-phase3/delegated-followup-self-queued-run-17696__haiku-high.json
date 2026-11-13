@@ -1,0 +1,165 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/delegated-followup-self-queued-run-17696.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "c572cb71d2711d8cdb4ff7e0ba88af5e9a23aa81",
+  "base_commit": "fa9f936ef5cbbe4bd4f9890b638766fc92f45075",
+  "wall_ms": 492586,
+  "cost_usd": 0.5965464299999998,
+  "duration_ms": 492080,
+  "num_turns": 74,
+  "usage": {
+    "input_tokens": 90,
+    "cache_creation_input_tokens": 227363,
+    "cache_read_input_tokens": 5359741,
+    "output_tokens": 98057,
+    "output_tokens_details": {
+      "thinking_tokens": 79855
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 227363,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 4,
+        "output_tokens": 3381,
+        "cache_read_input_tokens": 19576,
+        "cache_creation_input_tokens": 2727,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2727
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 12509,
+      "outputTokens": 106999,
+      "cacheReadInputTokens": 5571395,
+      "cacheCreationInputTokens": 229307,
+      "webSearchRequests": 0,
+      "costUSD": 0.5965464299999998,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 79855,
+      "cacheCreationEphemeral5mInputTokens": 1944,
+      "cacheCreationEphemeral1hInputTokens": 227363,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "A steer into an already-running untracked run attaches delegatedTaskId to that run, but the run's terminal write drops the link, so the follow-up task never finalizes and the parent is never woken.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6878-6883 recordSubagentFollowup emits run.updated {...run, delegatedTaskId: taskId} on the existing running run",
+        "apps/server/src/orchestration-v2/RunExecutionService.ts:642-650 terminal finalizedRun is built from input.run (start snapshot) and strips only delegatedCompletion",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService.ts:1225-1236 startRootRun receives runningRun as the start snapshot",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:634-649 preserveRunRecordedFields keeps delegatedCompletion and restartCancelledBackgroundWork but not delegatedTaskId",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1886-1890 SQL run upsert writes the terminal payload without preservation"
+      ],
+      "consequence": "The follow-up subagent task stays pending or running forever. The parent is not woken with the completion. Restart recovery keys off task status, so it does not repair this.",
+      "location": "apps/server/src/orchestration-v2/RunExecutionService.ts:642-650",
+      "scenario": "Monitor-notification wake run R starts. A follow-up steer is then delivered into R, so R gets delegatedTaskId=T. R completes; the terminal run.updated is built from the start snapshot without T, and projection apply does not preserve T. T is never matched by delegatedTaskRun at finalization.",
+      "severity": "high",
+      "introduced_by_change": true,
+      "missing": "Terminal run writes should preserve delegatedTaskId from the stored run, or the start snapshot should be refreshed before the terminal write."
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Lock acquisition order is consistent. Parent then child for message.dispatch, sequential (never nested) for terminal handling, and parent-only for recovery. No path reaches the locking dispatch while a thread lock is held, so the non-reentrant lock cannot self-deadlock.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10850-10870 dispatchWithReceipt takes P then C",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10872-10916 handleTerminalRun takes child and parent locks sequentially",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:10956 and 11063 recovery takes only the parent lock",
+        "apps/server/src/orchestration-v2/EffectWorker.ts:188-254 dispatch calls hold no lock",
+        "apps/server/src/orchestration-v2/RestartContinuation.ts:156-169 dispatch is reached from EffectWorker.ts:113 with no lock held"
+      ],
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:10872-10916",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The SQL and in-memory recovery predicates for subagent-results match, so restart recovery sees the same set of threads in both stores.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:537-583 in-memory needsRecovery",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3576-3616 SQL getRecoveryThreadIds clause for subagent-results",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 memory recovery call site"
+      ],
+      "safe_line": "apps/server/src/orchestration-v2/ProjectionStore.ts:537-583",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "summary": "The thread_send taskId is read from the projection after the dispatch commits, so the response carries the committed delegatedTaskId rather than a pre-commit guess.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:636-644 re-reads the run after orchestrator.dispatch",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479 taskId taken from result.run.delegatedTaskId",
+        "apps/server/src/mcp/OrchestratorMcpService.ts:351-365 delegatedTaskRun prefers delegatedTaskId match"
+      ],
+      "safe_line": "apps/server/src/orchestration-v2/ThreadManagementService.ts:636-644",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 4,
+      "verdict": "cannot_tell",
+      "summary": "The web and client-runtime edge status derivation looks consistent, but the restart-hold case is unresolved. There, the child's latest run is cancelled, so whether activityRunStatus is null depends on isActivityRunForShell, which I did not read.",
+      "evidence": [
+        "packages/client-runtime/src/state/threadRelationships.ts:92-94 thread edge status = activityRunStatus ?? status",
+        "packages/client-runtime/src/state/threadRelationships.ts:97-110 subagent edge status = child?.activityRunStatus ?? (latestRunId != null ? child.status : subagent.status)",
+        "packages/client-runtime/src/state/subagentRuntime.ts:133 projectedSubagentsToRuntime status passthrough",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:1409-1412 activityRun filters with isActivityRunForShell (definition not read)"
+      ],
+      "missing": "Definition of isActivityRunForShell and the restart-hold shell state, to confirm the edge status shown for a held child.",
+      "safe_line": "packages/client-runtime/src/state/threadRelationships.ts:97-110",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 5,
+      "verdict": "cannot_tell",
+      "summary": "My earlier review only recorded this note as looking safe. I did not re-verify its specific claim against the code in this pass, so this verdict is low confidence.",
+      "evidence": [],
+      "missing": "Re-check note 5's text against the cited code before relying on a verdict.",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Extra hazard: a queued follow-up's subagent task and turn item stay pending until the run is terminal, because nothing syncs task status when the run starts. This is a cosmetic UI issue, not a correctness break.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6828 status is pending while queued",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:6987 and 10207 are the only subagent.updated writers for delivery and terminal state",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:1290-1330 startNextQueuedRun does not sync task status"
+      ],
+      "consequence": "The subagent card shows pending while the child is actually running, until the run ends.",
+      "scenario": "A queued follow-up starts running. Its task and turn item remain pending until terminal.",
+      "location": "apps/server/src/orchestration-v2/Orchestrator.ts:6828",
+      "severity": "low",
+      "introduced_by_change": true
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"A steer into an already-running untracked run attaches delegatedTaskId to that run, but the run's terminal write drops the link, so the follow-up task never finalizes and the parent is never woken.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:6878-6883 recordSubagentFollowup emits run.updated {...run, delegatedTaskId: taskId} on the existing running run\",\"apps/server/src/orchestration-v2/RunExecutionService.ts:642-650 terminal finalizedRun is built from input.run (start snapshot) and strips only delegatedCompletion\",\"apps/server/src/orchestration-v2/ProviderTurnStartService.ts:1225-1236 startRootRun receives runningRun as the start snapshot\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:634-649 preserveRunRecordedFields keeps delegatedCompletion and restartCancelledBackgroundWork but not delegatedTaskId\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:1886-1890 SQL run upsert writes the terminal payload without preservation\"],\"consequence\":\"The follow-up subagent task stays pending or running forever. The parent is not woken with the completion. Restart recovery keys off task status, so it does not repair this.\",\"location\":\"apps/server/src/orchestration-v2/RunExecutionService.ts:642-650\",\"scenario\":\"Monitor-notification wake run R starts. A follow-up steer is then delivered into R, so R gets delegatedTaskId=T. R completes; the terminal run.updated is built from the start snapshot without T, and projection apply does not preserve T. T is never matched by delegatedTaskRun at finalization.\",\"severity\":\"high\",\"introduced_by_change\":true,\"missing\":\"Terminal run writes should preserve delegatedTaskId from the stored run, or the start snapshot should be refreshed before the terminal write.\"},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Lock acquisition order is consistent. Parent then child for message.dispatch, sequential (never nested) for terminal handling, and parent-only for recovery. No path reaches the locking dispatch while a thread lock is held, so the non-reentrant lock cannot self-deadlock.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:10850-10870 dispatchWithReceipt takes P then C\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10872-10916 handleTerminalRun takes child and parent locks sequentially\",\"apps/server/src/orchestration-v2/Orchestrator.ts:10956 and 11063 recovery takes only the parent lock\",\"apps/server/src/orchestration-v2/EffectWorker.ts:188-254 dispatch calls hold no lock\",\"apps/server/src/orchestration-v2/RestartContinuation.ts:156-169 dispatch is reached from EffectWorker.ts:113 with no lock held\"],\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:10872-10916\",\"introduced_by_change\":false},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The SQL and in-memory recovery predicates for subagent-results match, so restart recovery sees the same set of threads in both stores.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:537-583 in-memory needsRecovery\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:3576-3616 SQL getRecoveryThreadIds clause for subagent-results\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:6139-6150 memory recovery call site\"],\"safe_line\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:537-583\",\"introduced_by_change\":false},{\"note_index\":3,\"verdict\":\"safe\",\"summary\":\"The thread_send taskId is read from the projection after the dispatch commits, so the response carries the committed delegatedTaskId rather than a pre-commit guess.\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadManagementService.ts:636-644 re-reads the run after orchestrator.dispatch\",\"apps/server/src/mcp/OrchestratorMcpService.ts:2470-2479 taskId taken from result.run.delegatedTaskId\",\"apps/server/src/mcp/OrchestratorMcpService.ts:351-365 delegatedTaskRun prefers delegatedTaskId match\"],\"safe_line\":\"apps/server/src/orchestration-v2/ThreadManagementService.ts:636-644\",\"introduced_by_change\":false},{\"note_index\":4,\"verdict\":\"cannot_tell\",\"summary\":\"The web and client-runtime edge status derivation looks consistent, but the restart-hold case is unresolved. There, the child's latest run is cancelled, so whether activityRunStatus is null depends on isActivityRunForShell, which I did not read.\",\"evidence\":[\"packages/client-runtime/src/state/threadRelationships.ts:92-94 thread edge status = activityRunStatus ?? status\",\"packages/client-runtime/src/state/threadRelationships.ts:97-110 subagent edge status = child?.activityRunStatus ?? (latestRunId != null ? child.status : subagent.status)\",\"packages/client-runtime/src/state/subagentRuntime.ts:133 projectedSubagentsToRuntime status passthrough\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:1409-1412 activityRun filters with isActivityRunForShell (definition not read)\"],\"missing\":\"Definition of isActivityRunForShell and the restart-hold shell state, to confirm the edge status shown for a held child.\",\"safe_line\":\"packages/client-runtime/src/state/threadRelationships.ts:97-110\",\"introduced_by_change\":false},{\"note_index\":5,\"verdict\":\"cannot_tell\",\"summary\":\"My earlier review only recorded this note as looking safe. I did not re-verify its specific claim against the code in this pass, so this verdict is low confidence.\",\"evidence\":[],\"missing\":\"Re-check note 5's text against the cited code before relying on a verdict.\",\"introduced_by_change\":false},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Extra hazard: a queued follow-up's subagent task and turn item stay pending until the run is terminal, because nothing syncs task status when the run starts. This is a cosmetic UI issue, not a correctness break.\",\"evidence\":[\"apps/server/src/orchestration-v2/Orchestrator.ts:6828 status is pending while queued\",\"apps/server/src/orchestration-v2/Orchestrator.ts:6987 and 10207 are the only subagent.updated writers for delivery and terminal state\",\"apps/server/src/orchestration-v2/Orchestrator.ts:1290-1330 startNextQueuedRun does not sync task status\"],\"consequence\":\"The subagent card shows pending while the child is actually running, until the run ends.\",\"scenario\":\"A queued follow-up starts running. Its task and turn item remain pending until terminal.\",\"location\":\"apps/server/src/orchestration-v2/Orchestrator.ts:6828\",\"severity\":\"low\",\"introduced_by_change\":true}]}"
+}

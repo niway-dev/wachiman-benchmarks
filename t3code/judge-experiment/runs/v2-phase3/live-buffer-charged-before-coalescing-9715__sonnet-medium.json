@@ -1,0 +1,126 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/live-buffer-charged-before-coalescing-9715.json",
+  "config": "sonnet-medium",
+  "model": "claude-sonnet-5-5",
+  "effort": "medium",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "108f295cc3672716c3cb8291ce487846df5ce098",
+  "base_commit": "d536b0580d044967dc644498d8c5a6e96464f767",
+  "wall_ms": 37068,
+  "cost_usd": 0.1047454,
+  "duration_ms": 36507,
+  "num_turns": 5,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 15300,
+    "cache_read_input_tokens": 28625,
+    "output_tokens": 4016,
+    "output_tokens_details": {
+      "thinking_tokens": 2608
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 15300,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 3103,
+        "cache_read_input_tokens": 14881,
+        "cache_creation_input_tokens": 5034,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 5034
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5004,
+      "outputTokens": 21,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005109,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 6,
+      "outputTokens": 4016,
+      "cacheReadInputTokens": 28625,
+      "cacheCreationInputTokens": 15300,
+      "webSearchRequests": 0,
+      "costUSD": 0.1042345,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 2608,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 15300,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Overflow in the thread path fails the output queue and stops the producer. Queued items are cleared first and the error is then delivered. The marker is queued in the same ordered output queue.",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:131-184",
+        "apps/server/src/ws.ts:1587-1596"
+      ],
+      "scenario": "A slow client leaves an unacked batch while 1000+ events arrive, so retain overflows. I checked that the producer stops, the output queue fails with the error rather than only being shut down, and the unacked batch stays charged until the scope closes. A marker offered after an earlier batch cannot overtake it, because both go through the mutex into the same queue.",
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:216-218"
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "Shell retain, offer and close can race, but the only effect is a charged item that is released when the scope closes. The buffer is already failed by then.",
+      "evidence": [
+        "apps/server/src/ws.ts:1411-1459",
+        "apps/server/src/ws.ts:1477-1491",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:96-129"
+      ],
+      "scenario": "closeLiveBuffer runs between retain and Queue.offer. The offer hits a shut-down queue and the item stays in `retained`. It is only released by the budget finalizer. The stream has already failed, so no delivery is affected. The marker path's takeAll on a failed queue surfaces the same error.",
+      "safe_line": "apps/server/src/ws.ts:1423"
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "The window flush, offerAll and close are serialized by one mutex. A stale window fiber re-checks its generation after getting the permit, so it cannot flush after a newer batch or after close.",
+      "evidence": [
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203",
+        "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229",
+        "apps/server/src/orchestration/LiveStreamBudget.ts:60-77"
+      ],
+      "scenario": "The window timer fires while offerAll holds the mutex and then bumps windowGeneration. The flush fiber waits, then sees a stale generation and does nothing. If offerAll overflows, the overflow effect fails and returns the permit, so the forked close that waits on the mutex proceeds and there is no deadlock.",
+      "safe_line": "apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145"
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Overflow in the thread path fails the output queue and stops the producer. Queued items are cleared first and the error is then delivered. The marker is queued in the same ordered output queue.\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:131-184\",\"apps/server/src/ws.ts:1587-1596\"],\"scenario\":\"A slow client leaves an unacked batch while 1000+ events arrive, so retain overflows. I checked that the producer stops, the output queue fails with the error rather than only being shut down, and the unacked batch stays charged until the scope closes. A marker offered after an earlier batch cannot overtake it, because both go through the mutex into the same queue.\",\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:216-218\"},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"Shell retain, offer and close can race, but the only effect is a charged item that is released when the scope closes. The buffer is already failed by then.\",\"evidence\":[\"apps/server/src/ws.ts:1411-1459\",\"apps/server/src/ws.ts:1477-1491\",\"apps/server/src/orchestration/LiveStreamBudget.ts:96-129\"],\"scenario\":\"closeLiveBuffer runs between retain and Queue.offer. The offer hits a shut-down queue and the item stays in `retained`. It is only released by the budget finalizer. The stream has already failed, so no delivery is affected. The marker path's takeAll on a failed queue surfaces the same error.\",\"safe_line\":\"apps/server/src/ws.ts:1423\"},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"The window flush, offerAll and close are serialized by one mutex. A stale window fiber re-checks its generation after getting the permit, so it cannot flush after a newer batch or after close.\",\"evidence\":[\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:141-156\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:160-203\",\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:205-229\",\"apps/server/src/orchestration/LiveStreamBudget.ts:60-77\"],\"scenario\":\"The window timer fires while offerAll holds the mutex and then bumps windowGeneration. The flush fiber waits, then sees a stale generation and does nothing. If offerAll overflows, the overflow effect fails and returns the permit, so the forked close that waits on the mutex proceeds and there is no deadlock.\",\"safe_line\":\"apps/server/src/orchestration/ThreadLiveEventCoalescer.ts:145\"}]}"
+}

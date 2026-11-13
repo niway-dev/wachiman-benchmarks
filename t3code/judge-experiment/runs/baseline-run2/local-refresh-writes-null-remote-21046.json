@@ -1,0 +1,150 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "commit e677e97 of t3code-fork against its parent (e34067e)",
+    "repository": {
+      "name": "t3code-fork"
+    },
+    "base": {
+      "sha": "e34067edef2eba03c1e40bca7d2b2d933ae12b85",
+      "ref": "e34067e"
+    },
+    "head": {
+      "sha": "e677e9799df44fd33d96890cb80dc0ee64d1221d",
+      "ref": "e677e97"
+    },
+    "title": "fix(server): publish local git status before remote lookup (#21046)",
+    "description": "fix(server): publish local git status before remote lookup (#21046)",
+    "author": "Yannic Charlon"
+  },
+  "engine": {
+    "version": "1.14.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.321",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "apps/server/src/git/GitManager.test.ts",
+      "apps/server/src/git/GitWorkflowService.ts",
+      "apps/server/src/vcs/VcsStatusBroadcaster.test.ts",
+      "apps/server/src/vcs/VcsStatusBroadcaster.ts"
+    ],
+    "reviewed": [
+      "apps/server/src/git/GitWorkflowService.ts",
+      "apps/server/src/vcs/VcsStatusBroadcaster.ts",
+      "apps/server/src/git/GitManager.test.ts",
+      "apps/server/src/vcs/VcsStatusBroadcaster.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "apps/server/src/vcs/VcsStatusBroadcaster.ts",
+      "line": 493,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "localOnly refresh with no cached remote now stores a null-valued remote that blocks later remote loads",
+      "body": "The condition `|| !previous?.remote` is new. When the cache holds local but no remote (the state `updateCachedLocalStatus` leaves after a branch change, or after `readRemoteStatus` discards a read), a same-branch `localOnly` refresh now writes `{ branch, value: null }` into the remote slot. After that, `getStatus` returns early at line 345 (`cached.local && cached.remote`) without ever loading the remote, so no PR or ahead/behind is shown. `refreshPullRequestStatus` also returns null at line 533 (`cached.remote?.value === null`), so the turn-end refresh cannot recover it either. Only the poller (when a subscriber with `includeRemote` exists) or a full refresh repairs it, and the poller waits a full interval first. Before this change, the same-branch case left the remote slot empty, so `getStatus` would load it. The new test 'recovers a discarded branch lookup on the next permitted turn-end refresh' relies on that slot being empty, but it does not cover a `localOnly` refresh in between (`ws.ts:2922` exposes `localOnly` to clients). Suggest writing the null-valued remote only when the branch changed, and leaving the slot empty when `previous.remote` was already absent on the same branch.",
+      "anchor": "diff"
+    },
+    {
+      "path": "apps/server/src/vcs/VcsStatusBroadcaster.test.ts",
+      "line": 808,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Interleaving test is coupled to an internal span name and a patched scheduler",
+      "body": "The parameterised test forces its ordering by overriding `Scheduler.shouldYield` and by ending a tracer span whose name must equal `\"VcsStatusBroadcaster.updateCachedRemoteStatus\"` (line 818). If that `Effect.fn` is renamed, `writeCompleted` is never signalled. The local-refresh fiber then waits forever, and `Fiber.join(localRefresh)` at line 835 hangs instead of failing with a clear assertion. The test also depends on the internals of `Tracer.NativeSpan` and `MixedScheduler`. A hang is the failure mode, and the repo's test rules ask for deterministic Deferred-based milestones. Consider adding a test seam, such as the existing `beforeRemoteStatus` hook or a hook in the mock around the cache write, or at least bounding the wait with an explicit failure message.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Publish local status before the remote lookup in refreshStatus; remote reads under the per-cwd lock now go through readRemoteStatus",
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:488",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:483-524",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:362-368",
+        "apps/server/src/vcs/VcsStatusBroadcaster.test.ts:696-756"
+      ],
+      "equivalent_path": "Old refreshStatus took the lock first, then read remote, then local, then published one snapshot via updateCachedStatus.",
+      "before_after": "Before: nothing published until remote returned, and a remote failure left the cache unchanged. After: refreshLocalStatusCore at line 488 runs outside the lock and publishes localUpdated, and the remote read then runs under the lock (line 506) with separate remoteUpdated events. The new GitManager and broadcaster tests cover the held-lookup and remote-error cases.",
+      "visible_effect": "Working-tree changes appear in the stream while a slow PR lookup or fetch is still running. Remote data arrives later as a separate remoteUpdated event.",
+      "failure_mode": "If the remote read fails, the refresh still fails to the caller, but the published local state is kept. The tests assert this.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bound on the whole remote wait: readRemoteStatus sequences currentBranch, invalidate, remoteStatus, currentBranch and optionally a local refresh, all under the per-cwd lock",
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:377",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/git/GitWorkflowService.ts:336-361",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:377-393",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:586-612"
+      ],
+      "equivalent_path": "Old code held the same lock around one remoteStatus call.",
+      "before_after": "currentBranch has a 5s timeout per call (GitWorkflowService.ts:345), so up to 10s of extra worst-case waiting per read. The remoteStatus fetch keeps its own limits in GitManager. Lock waiters (getStatus, full refreshStatus, refreshPullRequestStatus) still queue behind a slow fetch, as before. Only local publishing is now independent of the lock.",
+      "visible_effect": "The local snapshot is no longer delayed. The remote part, and the return of getStatus or refreshStatus, can still wait on a slow fetch.",
+      "failure_mode": "A hung git spawn in currentBranch ends in a GitCommandError after 5s and fails the refresh. The poller applies its backoff.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cache the remote part keyed by branch, and invalidate remote status on every read (also getStatus and refreshPullRequestStatus)",
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:381",
+      "status": "closed",
+      "evidence": [
+        "apps/server/src/git/GitManager.ts:1401-1408",
+        "apps/server/src/git/GitManager.ts:2355-2363",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:297",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:533"
+      ],
+      "equivalent_path": "GitManager.remoteStatus bypasses its own TTL cache when refreshUpstream===false or refreshMissingPullRequest (GitManager.ts:2358) and otherwise uses remoteStatusResultCache keyed by cwd.",
+      "before_after": "Before: invalidation only when refreshUpstream !== false. After: invalidation is unconditional, so the cwd-keyed TTL cache cannot serve a previous branch's result. The tests now expect extra invalidateRemoteStatus calls.",
+      "visible_effect": "No stale PR from the previous branch after a checkout. The cost is two extra git spawns per remote read and no TTL-cache hits through the broadcaster.",
+      "failure_mode": "The discarded-read path returns null, and the next permitted refresh or poll recovers it. The localOnly path can block that recovery (see the finding at line 493).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change publishes local status before the remote lookup and ties the cached remote to the checked-out branch. I found one bug: a `localOnly` refresh can cache a null-valued remote on an unchanged branch, which blocks `getStatus` and `refreshPullRequestStatus` from loading the remote until the poller or a full refresh runs. The new interleaving test is fragile, because it depends on a span name and patched scheduler internals, and renaming the span would make it hang. I did not run anything (read-only review).",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 718,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 21,
+      "costUsd": 0.5370427
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e34067edef2eba03c1e40bca7d2b2d933ae12b85"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5370427,
+    "usage": {
+      "input": 24,
+      "output": 16135,
+      "cacheRead": 711527,
+      "cacheWrite": 76123
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 21,
+    "durationMs": 147817,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-19355.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+  "base_commit": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+  "wall_ms": 442191,
+  "cost_usd": 0.5299673300000001,
+  "duration_ms": 441706,
+  "num_turns": 83,
+  "usage": {
+    "input_tokens": 124,
+    "cache_creation_input_tokens": 181718,
+    "cache_read_input_tokens": 6648251,
+    "output_tokens": 80631,
+    "output_tokens_details": {
+      "thinking_tokens": 60368
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 181718,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2302,
+        "cache_read_input_tokens": 184819,
+        "cache_creation_input_tokens": 2317,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2317
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4868,
+      "outputTokens": 80655,
+      "cacheReadInputTokens": 6648251,
+      "cacheCreationInputTokens": 181718,
+      "webSearchRequests": 0,
+      "costUSD": 0.5299673300000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 60368,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 181718,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The release roster clear can be undone by a provider_thread.updated snapshot queued before release and ingested after the compare-and-set commits. The read runs before endSubscribers (Queue.end drains queued items), and nothing waits for the run consumer to finish draining before the CAS write.",
+      "scenario": "1) Claude run is active. The adapter emits provider_thread.updated with roster [T1]. The run consumer has not yet ingested it. 2) Release (manual close, archive, or runtime_error): readReleasedBackgroundTasks captures {T1} at ProviderSessionManager.ts:1066, then endSubscribers Queue.end at :1076-1085. Queued items stay takeable (effect-smol Queue.ts:1006, :1017). 3) closeScopeWithin finishes; writeReleasedBackgroundWorkEvents re-reads [T1] and commits [] via CAS (ProviderSessionManager.ts:857). 4) The run consumer, still draining, ingests the stale [T1] snapshot (RunExecutionService.ts:1227-1248). It writes the whole provider-thread row with writeIfRunCurrent or writeIfProviderThreadOwner. Those guards check run and attempt state, not roster content, so the write lands and roster [T1] is restored. The thread stays Waiting (#15239) until restart. The window opens only when the consumer lags behind closeScopeWithin, so it is narrow.",
+      "consequence": "Waiting stays on a thread whose background process is gone, until server restart. This is the symptom the change is meant to fix, but only in this race.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:607-613 (endSubscribers uses Queue.end, leaving queued items)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066-1099 (read, endSubscribers, closeScope, write order)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-886 (CAS write re-reads only; no barrier on consumer drain)",
+        "apps/server/src/orchestration-v2/RunExecutionService.ts:1227-1264 (consumer ingests provider_thread.updated with whole-row write guards)",
+        "apps/server/src/orchestration-v2/ProviderEventIngestor.ts:577-583 (provider_thread.updated payload is the adapter's roster snapshot)",
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:3986-4011 (roster snapshot emitted by adapter)",
+        ".repos/effect-smol/packages/effect/src/Queue.ts:1006,1017 (end lets takers drain existing items)"
+      ],
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066",
+      "covered_by": null
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "closeScopeWithin times out, but writeReleaseRecords still runs and clears the roster while the process may still be alive with its background work running.",
+      "scenario": "1) Claude session has roster [T1]. 2) Manual close: Scope.close does not finish within RELEASE_SCOPE_CLOSE_TIMEOUT_MS (wedged finalizer, the case the comment at ProviderSessionManager.ts:1010-1011 describes). 3) closeScopeWithin returns None after logging a warning (:1026-1030). 4) releaseEntry still runs writeReleaseRecords (:1097-1099), and writeReleasedBackgroundWorkEvents clears T1. The closeExit failure check at :1104 applies only when closeExit is Some. 5) If the wedged process is still alive and T1 still runs, the thread shows not Waiting and BackgroundWorkStop can no longer see the task. Whether T1 is still running depends on the runtime, which I cannot read from this checkout.",
+      "consequence": "The UI reports the thread idle while a background task may still run, and nothing tracks it. Before the change, the roster stayed and the thread stayed Waiting.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1014-1047 (closeScopeWithin timeout path)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086-1106 (writes run regardless of close timeout)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:910 (roster write inside writeReleaseRecords)"
+      ],
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086",
+      "covered_by": null
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "The flag backgroundTasksEndWithProcess: true for Claude assumes every background task the runtime lists dies when its process is closed. This premise for clearing the roster cannot be verified in this checkout.",
+      "scenario": "Claude background Bash, monitor, agent, or workflow task outlives CLI process exit. Roster is cleared while the work still runs, and BackgroundWorkStop loses the roster.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9068 (flag set)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:793 (gate is !== true)",
+        "packages/provider-muse/src/server/adapter.ts:1663-1692 (Muse host created in acquireRelease inside session scope; this half holds)"
+      ],
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9068",
+      "covered_by": null,
+      "missing": "The Claude Code CLI runtime behaviour (background tasks dying with the CLI process) is not vendored in the checkout. Only the code that consumes the flag can be read."
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The release roster clear can be undone by a provider_thread.updated snapshot queued before release and ingested after the compare-and-set commits. The read runs before endSubscribers (Queue.end drains queued items), and nothing waits for the run consumer to finish draining before the CAS write.\",\"scenario\":\"1) Claude run is active. The adapter emits provider_thread.updated with roster [T1]. The run consumer has not yet ingested it. 2) Release (manual close, archive, or runtime_error): readReleasedBackgroundTasks captures {T1} at ProviderSessionManager.ts:1066, then endSubscribers Queue.end at :1076-1085. Queued items stay takeable (effect-smol Queue.ts:1006, :1017). 3) closeScopeWithin finishes; writeReleasedBackgroundWorkEvents re-reads [T1] and commits [] via CAS (ProviderSessionManager.ts:857). 4) The run consumer, still draining, ingests the stale [T1] snapshot (RunExecutionService.ts:1227-1248). It writes the whole provider-thread row with writeIfRunCurrent or writeIfProviderThreadOwner. Those guards check run and attempt state, not roster content, so the write lands and roster [T1] is restored. The thread stays Waiting (#15239) until restart. The window opens only when the consumer lags behind closeScopeWithin, so it is narrow.\",\"consequence\":\"Waiting stays on a thread whose background process is gone, until server restart. This is the symptom the change is meant to fix, but only in this race.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:607-613 (endSubscribers uses Queue.end, leaving queued items)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066-1099 (read, endSubscribers, closeScope, write order)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:839-886 (CAS write re-reads only; no barrier on consumer drain)\",\"apps/server/src/orchestration-v2/RunExecutionService.ts:1227-1264 (consumer ingests provider_thread.updated with whole-row write guards)\",\"apps/server/src/orchestration-v2/ProviderEventIngestor.ts:577-583 (provider_thread.updated payload is the adapter's roster snapshot)\",\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:3986-4011 (roster snapshot emitted by adapter)\",\".repos/effect-smol/packages/effect/src/Queue.ts:1006,1017 (end lets takers drain existing items)\"],\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1066\",\"covered_by\":null},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"closeScopeWithin times out, but writeReleaseRecords still runs and clears the roster while the process may still be alive with its background work running.\",\"scenario\":\"1) Claude session has roster [T1]. 2) Manual close: Scope.close does not finish within RELEASE_SCOPE_CLOSE_TIMEOUT_MS (wedged finalizer, the case the comment at ProviderSessionManager.ts:1010-1011 describes). 3) closeScopeWithin returns None after logging a warning (:1026-1030). 4) releaseEntry still runs writeReleaseRecords (:1097-1099), and writeReleasedBackgroundWorkEvents clears T1. The closeExit failure check at :1104 applies only when closeExit is Some. 5) If the wedged process is still alive and T1 still runs, the thread shows not Waiting and BackgroundWorkStop can no longer see the task. Whether T1 is still running depends on the runtime, which I cannot read from this checkout.\",\"consequence\":\"The UI reports the thread idle while a background task may still run, and nothing tracks it. Before the change, the roster stayed and the thread stayed Waiting.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1014-1047 (closeScopeWithin timeout path)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086-1106 (writes run regardless of close timeout)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:910 (roster write inside writeReleaseRecords)\"],\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:1086\",\"covered_by\":null},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"The flag backgroundTasksEndWithProcess: true for Claude assumes every background task the runtime lists dies when its process is closed. This premise for clearing the roster cannot be verified in this checkout.\",\"scenario\":\"Claude background Bash, monitor, agent, or workflow task outlives CLI process exit. Roster is cleared while the work still runs, and BackgroundWorkStop loses the roster.\",\"evidence\":[\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9068 (flag set)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:793 (gate is !== true)\",\"packages/provider-muse/src/server/adapter.ts:1663-1692 (Muse host created in acquireRelease inside session scope; this half holds)\"],\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts:9068\",\"covered_by\":null,\"missing\":\"The Claude Code CLI runtime behaviour (background tasks dying with the CLI process) is not vendored in the checkout. Only the code that consumes the flag can be read.\"}]}"
+}

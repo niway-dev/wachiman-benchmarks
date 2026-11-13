@@ -1,0 +1,121 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/auto-resume-arms-archived-parent-subagents-27951.json",
+  "config": "opus-medium",
+  "model": "claude-opus-5-5",
+  "effort": "medium",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "95414cf1ad5af17ddb6e710218579a23ceee4bfa",
+  "base_commit": "709cfb3a1f5053b975f983d8fee0515bddf5e93f",
+  "wall_ms": 55884,
+  "cost_usd": 0.34898159999999995,
+  "duration_ms": 55438,
+  "num_turns": 12,
+  "usage": {
+    "input_tokens": 18,
+    "cache_creation_input_tokens": 29340,
+    "cache_read_input_tokens": 160068,
+    "output_tokens": 4091,
+    "output_tokens_details": {
+      "thinking_tokens": 1394
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 29340,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1461,
+        "cache_read_input_tokens": 32882,
+        "cache_creation_input_tokens": 1149,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1149
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 3435,
+      "outputTokens": 25,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00035600000000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 18,
+      "outputTokens": 4091,
+      "cacheReadInputTokens": 160068,
+      "cacheCreationInputTokens": 29340,
+      "webSearchRequests": 0,
+      "costUSD": 0.34862560000000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 1394,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 29340,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The clause handles the one-level case correctly. The first OR branch (already armed) does not use it, which matches the test and the commit's intent. The wake-hint query only reads threads that are already armed, so an excluded child does not cause a hot re-sweep. A thread.* event on the parent invalidates the due hint.",
+      "scenario": "I tried four cases. (1) The parent settles after the child failed but before it was armed: the next sweep reads the parent's override and does not arm the child. (2) The parent is later unsettled (override 'active'): '= settled' is false, so the child is armed again if the reset is no more than 24h overdue (MAX_OVERDUE_ARM_MS). (3) The wake-hint query might keep returning the excluded child's past resetAt and loop: it only selects limitRecovery.autoResume=1, so an unarmed child is ignored. (4) Malformed or missing lineage: json_extract gives NULL, the EXISTS subquery is false, and the child is armed as before.",
+      "safe_line": "apps/server/src/orchestration-v2/ProjectionStore.ts:3982",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3943-3989",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:4022-4041",
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:17-79",
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:82-88",
+        "apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:102-146",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:3485-3504",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:3509-3555"
+      ],
+      "introduced_by_change": false,
+      "severity": "none"
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "The check looks only at the direct parent. A grandchild subagent whose root ancestor is settled is still auto-armed and resumed if its own parent (a subagent) is not settled.",
+      "scenario": "1. Root R has subagent M, and M has subagent G. 2. R is settled. thread.settle does not cascade to subagents (Orchestrator.ts:3485-3504), so M keeps settledOverride null. 3. G hits a usage limit. Its parent M is not settled, so the NOT EXISTS clause at ProjectionStore.ts:3978-3983 passes and G is armed. 4. At reset, G is resumed and finishes. If delivering G's result starts a run on M, and M's completion is delivered to R, then R wakes. That is the same abandoned-work wake-up this commit is meant to prevent.",
+      "missing": "I did not trace whether delivering a subagent result to M (the getRecoveryThreadIds 'subagent-results' / delegated-completion path, ProjectionStore.ts:4071-4099) starts a new run on M, or whether M's completion then reaches the settled root R.",
+      "location": "apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:4071-4099",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:3485-3504"
+      ],
+      "introduced_by_change": false,
+      "severity": "low"
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The clause handles the one-level case correctly. The first OR branch (already armed) does not use it, which matches the test and the commit's intent. The wake-hint query only reads threads that are already armed, so an excluded child does not cause a hot re-sweep. A thread.* event on the parent invalidates the due hint.\",\"scenario\":\"I tried four cases. (1) The parent settles after the child failed but before it was armed: the next sweep reads the parent's override and does not arm the child. (2) The parent is later unsettled (override 'active'): '= settled' is false, so the child is armed again if the reset is no more than 24h overdue (MAX_OVERDUE_ARM_MS). (3) The wake-hint query might keep returning the excluded child's past resetAt and loop: it only selects limitRecovery.autoResume=1, so an unarmed child is ignored. (4) Malformed or missing lineage: json_extract gives NULL, the EXISTS subquery is false, and the child is armed as before.\",\"safe_line\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3982\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3943-3989\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:4022-4041\",\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:17-79\",\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:82-88\",\"apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts:102-146\",\"apps/server/src/orchestration-v2/Orchestrator.ts:3485-3504\",\"apps/server/src/orchestration-v2/Orchestrator.ts:3509-3555\"],\"introduced_by_change\":false,\"severity\":\"none\"},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"The check looks only at the direct parent. A grandchild subagent whose root ancestor is settled is still auto-armed and resumed if its own parent (a subagent) is not settled.\",\"scenario\":\"1. Root R has subagent M, and M has subagent G. 2. R is settled. thread.settle does not cascade to subagents (Orchestrator.ts:3485-3504), so M keeps settledOverride null. 3. G hits a usage limit. Its parent M is not settled, so the NOT EXISTS clause at ProjectionStore.ts:3978-3983 passes and G is armed. 4. At reset, G is resumed and finishes. If delivering G's result starts a run on M, and M's completion is delivered to R, then R wakes. That is the same abandoned-work wake-up this commit is meant to prevent.\",\"missing\":\"I did not trace whether delivering a subagent result to M (the getRecoveryThreadIds 'subagent-results' / delegated-completion path, ProjectionStore.ts:4071-4099) starts a new run on M, or whether M's completion then reaches the settled root R.\",\"location\":\"apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983\",\"evidence\":[\"apps/server/src/orchestration-v2/ProjectionStore.ts:3978-3983\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:4071-4099\",\"apps/server/src/orchestration-v2/Orchestrator.ts:3485-3504\"],\"introduced_by_change\":false,\"severity\":\"low\"}]}"
+}

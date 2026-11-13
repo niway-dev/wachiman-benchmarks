@@ -1,0 +1,116 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/checkpoint-ignore-probe-drops-untracked-14892.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "6d266ea683ecc46c17aed5d68a093221be093862",
+  "base_commit": "a3de2ae057b93c9097cf5abef0e581b4302bc0b7",
+  "wall_ms": 293171,
+  "cost_usd": 0.13401254,
+  "duration_ms": 292769,
+  "num_turns": 31,
+  "usage": {
+    "input_tokens": 50,
+    "cache_creation_input_tokens": 110092,
+    "cache_read_input_tokens": 1529514,
+    "output_tokens": 63598,
+    "output_tokens_details": {
+      "thinking_tokens": 57127
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 110092,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 8710,
+        "cache_read_input_tokens": 114300,
+        "cache_creation_input_tokens": 1210,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1210
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4673,
+      "outputTokens": 63621,
+      "cacheReadInputTokens": 1529514,
+      "cacheCreationInputTokens": 110092,
+      "webSearchRequests": 0,
+      "costUSD": 0.13401254,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 57127,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 110092,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "cannot_tell",
+      "summary": "The note's mechanics check out in the code I read: the temp index is isolated (GitVcsDriver.ts:832-839, 1007, 1014, 1151), `-u` is used only when the probe says ignored (1038), the no-tracked-entries case raises VcsUnsupportedOperationError (1018-1024), and `ls-files` with maxOutputBytes 1 in truncate mode still yields non-empty stdout when there is output (collectStreamText.ts:49-66). Restore is safe: `clean -fd` does not remove ignored files (GitVcsDriver.ts:1208-1213). The unresolved point is whether `git check-ignore --no-index` answers for the repo-root path '.'. Git source is not in the checkout, so I cannot settle it.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:693-738",
+        "apps/server/src/vcs/GitVcsDriver.ts:969-970",
+        "apps/server/src/vcs/GitVcsDriver.ts:973-1009",
+        "apps/server/src/vcs/GitVcsDriver.ts:1010-1024",
+        "apps/server/src/vcs/GitVcsDriver.ts:1038",
+        "apps/server/src/vcs/GitVcsDriver.ts:832-839",
+        "apps/server/src/vcs/GitVcsDriver.ts:1151",
+        "apps/server/src/vcs/GitVcsDriver.ts:1208-1213",
+        "packages/provider-core/src/server/collectStreamText.ts:49-66",
+        "apps/server/src/vcs/GitVcsDriver.test.ts:132-151",
+        "apps/server/src/vcs/testing/VcsDriverContractHarness.ts:147-153"
+      ],
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:969",
+      "scenario": "Repo whose root .gitignore is `*` + `!.gitignore` + `!src/` + `!src/**`, with tracked files, and cwd = repo root. The probe runs `check-ignore --no-index -z --stdin` with '.'. If git matches the empty root path against `*` and echoes the input '.', workspaceIgnored becomes true, `add -u` is used, and new untracked files under src/ are dropped from every turn checkpoint. If git instead echoes a normalized path, the probe is inert here. The new subdirectory test only passes if git echoes the input, because otherwise the 'ignored project' expectation cannot hold; that makes the root case live if git matches the empty path. Existing tests never capture from a root with a `*` ignore.",
+      "missing": "Git's behaviour for `check-ignore --no-index` on the path '.' at the repo root (empty normalized path vs. `*`) and whether the output echoes the input string or the normalized path. Settle it with: in a repo whose root .gitignore is `*\\n!src/\\n!src/**`, run `printf '.' | git check-ignore --no-index -z --stdin | od -c` from the root and from a subdirectory. A repo-root capture test with that .gitignore would also settle it.",
+      "consequence": "If it reproduces: turn checkpoints for such repos silently omit new untracked files, so turn file lists miss them. Possibly no checkpoints at all if there are no tracked files (status missing).",
+      "severity": "medium",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Changing the workspace's ignore state between two turns makes the later turn's checkpoint diff against an earlier ready checkpoint that holds a different file set. This produces spurious deletions or additions in that turn's file list. Before this change, an ignored turn had no ref, so the next turn's previousExists was false and the file list was empty.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:969-970 (probe on each capture)",
+        "apps/server/src/vcs/GitVcsDriver.ts:1038 (-u when ignored)",
+        "apps/server/src/orchestration-v2/CheckpointService.ts:403-436 (ignored turn reaches status ready if tracked entries exist)",
+        "apps/server/src/orchestration-v2/CheckpointService.ts:438-466 (previousExists -> diffCheckpoints numstat + listAuthoredPaths)",
+        "apps/server/src/orchestration-v2/CheckpointService.ts:479-484 (every numstat record mapped to kind 'modified' with additions/deletions)",
+        "apps/server/src/vcs/GitVcsDriver.ts:1282-1294 (tree-to-tree diff, no pathspec, so deletions of untracked files appear)",
+        "apps/server/src/checkpointing/Diffs.ts:8-30 (deletion-only numstat rows are kept)",
+        "apps/server/src/checkpointing/CheckpointStore.ts:64-67 (null from listAuthoredPaths means every changed path belongs to the turn, so no filter applies)"
+      ],
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:1038 and apps/server/src/orchestration-v2/CheckpointService.ts:458-466",
+      "scenario": "1) Thread cwd = parent/sub, not ignored. Turn 1 captures with add -A, so untracked sub/notes.md (created by the agent) is in ref T1's tree. 2) The user adds `sub/` to the parent .gitignore. 3) Turn 2: the probe says ignored, so add -u runs and notes.md is not staged. Tree T2 lacks it. Status is ready if sub has tracked files. 4) CheckpointService.capture: previousExists is true, so diffCheckpoints(T1→T2) numstat lists sub/notes.md with deletions, and turn 2's files list shows it as 'modified' with -N counts. Reverse case: ignored at T1 (tracked-only tree), un-ignored at T2. The -A capture then adds every untracked non-ignored file that existed before, and T1→T2 reports them as additions in turn 2.",
+      "consequence": "Wrong per-turn file list and +/- counts. Files look changed by a turn that did not change them. No file content is lost, because restore is not triggered by this path. Trigger needs an ignore-rule edit during a thread, or the workspace's ignore state changing.",
+      "severity": "medium",
+      "introduced_by_change": true
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"cannot_tell\",\"summary\":\"The note's mechanics check out in the code I read: the temp index is isolated (GitVcsDriver.ts:832-839, 1007, 1014, 1151), `-u` is used only when the probe says ignored (1038), the no-tracked-entries case raises VcsUnsupportedOperationError (1018-1024), and `ls-files` with maxOutputBytes 1 in truncate mode still yields non-empty stdout when there is output (collectStreamText.ts:49-66). Restore is safe: `clean -fd` does not remove ignored files (GitVcsDriver.ts:1208-1213). The unresolved point is whether `git check-ignore --no-index` answers for the repo-root path '.'. Git source is not in the checkout, so I cannot settle it.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriver.ts:693-738\",\"apps/server/src/vcs/GitVcsDriver.ts:969-970\",\"apps/server/src/vcs/GitVcsDriver.ts:973-1009\",\"apps/server/src/vcs/GitVcsDriver.ts:1010-1024\",\"apps/server/src/vcs/GitVcsDriver.ts:1038\",\"apps/server/src/vcs/GitVcsDriver.ts:832-839\",\"apps/server/src/vcs/GitVcsDriver.ts:1151\",\"apps/server/src/vcs/GitVcsDriver.ts:1208-1213\",\"packages/provider-core/src/server/collectStreamText.ts:49-66\",\"apps/server/src/vcs/GitVcsDriver.test.ts:132-151\",\"apps/server/src/vcs/testing/VcsDriverContractHarness.ts:147-153\"],\"location\":\"apps/server/src/vcs/GitVcsDriver.ts:969\",\"scenario\":\"Repo whose root .gitignore is `*` + `!.gitignore` + `!src/` + `!src/**`, with tracked files, and cwd = repo root. The probe runs `check-ignore --no-index -z --stdin` with '.'. If git matches the empty root path against `*` and echoes the input '.', workspaceIgnored becomes true, `add -u` is used, and new untracked files under src/ are dropped from every turn checkpoint. If git instead echoes a normalized path, the probe is inert here. The new subdirectory test only passes if git echoes the input, because otherwise the 'ignored project' expectation cannot hold; that makes the root case live if git matches the empty path. Existing tests never capture from a root with a `*` ignore.\",\"missing\":\"Git's behaviour for `check-ignore --no-index` on the path '.' at the repo root (empty normalized path vs. `*`) and whether the output echoes the input string or the normalized path. Settle it with: in a repo whose root .gitignore is `*\\\\n!src/\\\\n!src/**`, run `printf '.' | git check-ignore --no-index -z --stdin | od -c` from the root and from a subdirectory. A repo-root capture test with that .gitignore would also settle it.\",\"consequence\":\"If it reproduces: turn checkpoints for such repos silently omit new untracked files, so turn file lists miss them. Possibly no checkpoints at all if there are no tracked files (status missing).\",\"severity\":\"medium\",\"introduced_by_change\":true},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Changing the workspace's ignore state between two turns makes the later turn's checkpoint diff against an earlier ready checkpoint that holds a different file set. This produces spurious deletions or additions in that turn's file list. Before this change, an ignored turn had no ref, so the next turn's previousExists was false and the file list was empty.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriver.ts:969-970 (probe on each capture)\",\"apps/server/src/vcs/GitVcsDriver.ts:1038 (-u when ignored)\",\"apps/server/src/orchestration-v2/CheckpointService.ts:403-436 (ignored turn reaches status ready if tracked entries exist)\",\"apps/server/src/orchestration-v2/CheckpointService.ts:438-466 (previousExists -> diffCheckpoints numstat + listAuthoredPaths)\",\"apps/server/src/orchestration-v2/CheckpointService.ts:479-484 (every numstat record mapped to kind 'modified' with additions/deletions)\",\"apps/server/src/vcs/GitVcsDriver.ts:1282-1294 (tree-to-tree diff, no pathspec, so deletions of untracked files appear)\",\"apps/server/src/checkpointing/Diffs.ts:8-30 (deletion-only numstat rows are kept)\",\"apps/server/src/checkpointing/CheckpointStore.ts:64-67 (null from listAuthoredPaths means every changed path belongs to the turn, so no filter applies)\"],\"location\":\"apps/server/src/vcs/GitVcsDriver.ts:1038 and apps/server/src/orchestration-v2/CheckpointService.ts:458-466\",\"scenario\":\"1) Thread cwd = parent/sub, not ignored. Turn 1 captures with add -A, so untracked sub/notes.md (created by the agent) is in ref T1's tree. 2) The user adds `sub/` to the parent .gitignore. 3) Turn 2: the probe says ignored, so add -u runs and notes.md is not staged. Tree T2 lacks it. Status is ready if sub has tracked files. 4) CheckpointService.capture: previousExists is true, so diffCheckpoints(T1→T2) numstat lists sub/notes.md with deletions, and turn 2's files list shows it as 'modified' with -N counts. Reverse case: ignored at T1 (tracked-only tree), un-ignored at T2. The -A capture then adds every untracked non-ignored file that existed before, and T1→T2 reports them as additions in turn 2.\",\"consequence\":\"Wrong per-turn file list and +/- counts. Files look changed by a turn that did not change them. No file content is lost, because restore is not triggered by this path. Trigger needs an ignore-rule edit during a thread, or the workspace's ignore state changing.\",\"severity\":\"medium\",\"introduced_by_change\":true}]}"
+}

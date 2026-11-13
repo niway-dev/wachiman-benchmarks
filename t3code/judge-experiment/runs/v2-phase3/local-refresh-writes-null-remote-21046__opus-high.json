@@ -1,0 +1,131 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/local-refresh-writes-null-remote-21046.json",
+  "config": "opus-high",
+  "model": "claude-opus-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "e677e9799df44fd33d96890cb80dc0ee64d1221d",
+  "base_commit": "e34067edef2eba03c1e40bca7d2b2d933ae12b85",
+  "wall_ms": 124501,
+  "cost_usd": 0.7687503000000001,
+  "duration_ms": 124075,
+  "num_turns": 19,
+  "usage": {
+    "input_tokens": 22,
+    "cache_creation_input_tokens": 59358,
+    "cache_read_input_tokens": 502292,
+    "output_tokens": 9640,
+    "output_tokens_details": {
+      "thinking_tokens": 5253
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 59358,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2740,
+        "cache_read_input_tokens": 63477,
+        "cache_creation_input_tokens": 572,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 572
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5264,
+      "outputTokens": 27,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0005399,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 22,
+      "outputTokens": 9640,
+      "cacheReadInputTokens": 502292,
+      "cacheCreationInputTokens": 59358,
+      "webSearchRequests": 0,
+      "costUSD": 0.7682104000000001,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 5253,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 59358,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The branch guard only compares the branch names before and after the read. If the checkout goes A→B→A while the PR lookup runs, B's remote status is cached under branch A.",
+      "scenario": "1) Cache holds local A. A poller or getStatus calls readRemoteStatus: currentBranch returns A (VcsStatusBroadcaster.ts:381). 2) An agent runs `git checkout B`. GitManager.readRemoteStatus then calls statusDetailsRemote, which resolves branch B (GitManager.ts:1372-1373) and starts a slow gh lookup for B (GitManager.ts:1380-1391). 3) The agent runs `git checkout A` before the lookup returns. 4) The second currentBranch returns A (line 385). branch === currentBranch, so line 390 returns {branch:'A', value: B's PR, ahead/behind}. 5) updateCachedRemoteStatus accepts it because the branch matches local A (line 297) and publishes it. getStatus then serves it from cache (line 345).",
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:390",
+      "consequence": "The UI shows branch B's PR and B's ahead/behind counts for branch A until the next full refresh or poll. The new guard was meant to rule this out.",
+      "severity": "low",
+      "introduced_by_change": false,
+      "missing": "",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:377-393",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:293-311",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:345",
+        "apps/server/src/git/GitManager.ts:1368-1400",
+        "apps/server/src/git/GitManager.ts:2355-2363",
+        "apps/server/src/git/GitWorkflowService.ts:336-361",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2199"
+      ]
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The localOnly path now reads `previous` (line 487) before it takes the remote lock. When it gets the lock, it acts on that stale snapshot and overwrites a remote status that a lock holder has just loaded with the null 'no PR' marker.",
+      "scenario": "1) A user opens a project. streamStatus starts the poller with refreshImmediately=true (line 731). refreshRemoteStatus takes the lock and starts a slow gh lookup; the cache holds local A with remote null. 2) The user opens the branch menu, which sends vcsRefreshStatus {localOnly:true} (BranchToolbarBranchSelector.tsx:511). refreshStatus reads previous={local A, remote null} at line 487, publishes local at line 488, then waits for the lock at line 490. 3) The poller finishes, writes remote {branch A, PR #N} and publishes it (line 478), then releases the lock. needsInitialRefresh is set to false (line 591). 4) The localOnly section runs. `!previous?.remote` is true from the stale snapshot (line 493), so it writes the null marker for branch A (lines 495-499). The fingerprint differs, so it publishes remoteUpdated null. 5) getStatus returns the cached null (line 345). refreshPullRequestStatus returns null because value===null (line 533). With interval 0 the poller never reads again (line 566). The same happens when the branch changed before the call and a lock holder already loaded the new branch's remote. Before this change `previous` was read inside the lock, so this could not happen. Finding 0's 'no remote cached yet' case is different: here the remote was cached by the time the lock was taken. For the note's open question: git and VcsProcess default to a 30s timeout (VcsProcess.ts:214). I did not check that every provider's PR call goes through VcsProcess.",
+      "location": "apps/server/src/vcs/VcsStatusBroadcaster.ts:487",
+      "consequence": "The PR badge and ahead/behind counts that just loaded disappear when the user opens the branch menu. They stay gone until a full refresh, or one poll interval if automatic fetch is on (never on its own when the interval is 0).",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "missing": "",
+      "evidence": [
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:483-505",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:458-480",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:293-311",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:345",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:533",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:560-591",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:728-732",
+        "apps/web/src/components/BranchToolbarBranchSelector.tsx:508-512",
+        "apps/server/src/ws.ts:2922",
+        "apps/server/src/vcs/VcsProcess.ts:214"
+      ]
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The branch guard only compares the branch names before and after the read. If the checkout goes A→B→A while the PR lookup runs, B's remote status is cached under branch A.\",\"scenario\":\"1) Cache holds local A. A poller or getStatus calls readRemoteStatus: currentBranch returns A (VcsStatusBroadcaster.ts:381). 2) An agent runs `git checkout B`. GitManager.readRemoteStatus then calls statusDetailsRemote, which resolves branch B (GitManager.ts:1372-1373) and starts a slow gh lookup for B (GitManager.ts:1380-1391). 3) The agent runs `git checkout A` before the lookup returns. 4) The second currentBranch returns A (line 385). branch === currentBranch, so line 390 returns {branch:'A', value: B's PR, ahead/behind}. 5) updateCachedRemoteStatus accepts it because the branch matches local A (line 297) and publishes it. getStatus then serves it from cache (line 345).\",\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:390\",\"consequence\":\"The UI shows branch B's PR and B's ahead/behind counts for branch A until the next full refresh or poll. The new guard was meant to rule this out.\",\"severity\":\"low\",\"introduced_by_change\":false,\"missing\":\"\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:377-393\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:293-311\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:345\",\"apps/server/src/git/GitManager.ts:1368-1400\",\"apps/server/src/git/GitManager.ts:2355-2363\",\"apps/server/src/git/GitWorkflowService.ts:336-361\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2199\"]},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The localOnly path now reads `previous` (line 487) before it takes the remote lock. When it gets the lock, it acts on that stale snapshot and overwrites a remote status that a lock holder has just loaded with the null 'no PR' marker.\",\"scenario\":\"1) A user opens a project. streamStatus starts the poller with refreshImmediately=true (line 731). refreshRemoteStatus takes the lock and starts a slow gh lookup; the cache holds local A with remote null. 2) The user opens the branch menu, which sends vcsRefreshStatus {localOnly:true} (BranchToolbarBranchSelector.tsx:511). refreshStatus reads previous={local A, remote null} at line 487, publishes local at line 488, then waits for the lock at line 490. 3) The poller finishes, writes remote {branch A, PR #N} and publishes it (line 478), then releases the lock. needsInitialRefresh is set to false (line 591). 4) The localOnly section runs. `!previous?.remote` is true from the stale snapshot (line 493), so it writes the null marker for branch A (lines 495-499). The fingerprint differs, so it publishes remoteUpdated null. 5) getStatus returns the cached null (line 345). refreshPullRequestStatus returns null because value===null (line 533). With interval 0 the poller never reads again (line 566). The same happens when the branch changed before the call and a lock holder already loaded the new branch's remote. Before this change `previous` was read inside the lock, so this could not happen. Finding 0's 'no remote cached yet' case is different: here the remote was cached by the time the lock was taken. For the note's open question: git and VcsProcess default to a 30s timeout (VcsProcess.ts:214). I did not check that every provider's PR call goes through VcsProcess.\",\"location\":\"apps/server/src/vcs/VcsStatusBroadcaster.ts:487\",\"consequence\":\"The PR badge and ahead/behind counts that just loaded disappear when the user opens the branch menu. They stay gone until a full refresh, or one poll interval if automatic fetch is on (never on its own when the interval is 0).\",\"severity\":\"medium\",\"introduced_by_change\":true,\"missing\":\"\",\"evidence\":[\"apps/server/src/vcs/VcsStatusBroadcaster.ts:483-505\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:458-480\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:293-311\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:345\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:533\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:560-591\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:728-732\",\"apps/web/src/components/BranchToolbarBranchSelector.tsx:508-512\",\"apps/server/src/ws.ts:2922\",\"apps/server/src/vcs/VcsProcess.ts:214\"]}]}"
+}

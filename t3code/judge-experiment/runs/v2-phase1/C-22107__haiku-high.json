@@ -1,0 +1,193 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-22107.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+  "base_commit": "48745ffba50d8c00e430fc3d06244b4317690227",
+  "wall_ms": 397796,
+  "cost_usd": 0.34568795,
+  "duration_ms": 397396,
+  "num_turns": 50,
+  "usage": {
+    "input_tokens": 72,
+    "cache_creation_input_tokens": 144801,
+    "cache_read_input_tokens": 3521771,
+    "output_tokens": 78859,
+    "output_tokens_details": {
+      "thinking_tokens": 66574
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 144801,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 15158,
+        "cache_read_input_tokens": 149207,
+        "cache_creation_input_tokens": 1012,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1012
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 5604,
+      "outputTokens": 78888,
+      "cacheReadInputTokens": 3521771,
+      "cacheCreationInputTokens": 144801,
+      "webSearchRequests": 0,
+      "costUSD": 0.34568795,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 66574,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 144801,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "The status waiter cannot block past 5s. Fiber.join is only an observer of the forked fetch, so a queued or hung fetch does not hold the caller. Failures that land after the waiter returns still gate the next poll via retryAt.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1258-1322 (fetchRemoteForStatus, forked into serviceScope with startImmediately:false)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1280 (retryAt early return)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1295-1300 (success clears map, tapError records cooldown)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1303-1307 (onExit deletes statusFetches entry)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1049-1066 (executeRaw 5min timeout)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082 (timeouts over 30s skip gitProcesses)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557 (failure map and cache TTL)",
+        ".repos/effect-smol/packages/effect/src/internal/effect.ts:839-846 (fiberJoin observes only, does not interrupt target)",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:474-506 (poll under KeyedLock, bounded by the 5s waiter)"
+      ],
+      "consequence": "None for the status path. The poll returns after at most 5s, using the last fetched refs.",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:1314-1316",
+      "scenario": "Four stalled fetches saturate statusFetchProcesses, then a fifth status poll for a queued repo. The waiter times out at 1315 and returns None. The queued fiber keeps running and is not interrupted. Also tried: a fetch fails after the waiter returned. tapError at 1300 records retryAt, and the next poll returns early at 1280 until it passes. Both paths are consistent.",
+      "severity": "none",
+      "introduced_by_change": false,
+      "covered_by": null,
+      "missing": "",
+      "safe_line": "apps/server/src/vcs/GitVcsDriverCore.ts:1314"
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The unbounded Fiber.await at line 2670 runs while the pull still holds the per-repo KeyedLock remote write lock. A stalled background fetch therefore blocks every remote-status refresh for that cwd for the fetch's full lifetime, not just the pull's 30s.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670 (pending fetch awaited with no bound)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1258-1292 (fetch timeout 5min, forceKill 1s, forked and queued behind 4 permits)",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:432-446 (autopull needs behindCount>0, aheadCount==0, clean tree)",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:481-492 (refreshRemoteStatus holds withRemoteWriteLock and calls maybeAutoPull inside it)",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:514-523 (refreshStatus takes same lock and calls maybeAutoPull)",
+        "apps/server/src/vcs/VcsStatusBroadcaster.ts:248-250 (remoteWriteLocks.withLock)",
+        "packages/shared/src/KeyedLock.ts:47-53 (blocking semaphore per key, no try-lock)",
+        "apps/server/src/ws.ts:2755 (vcsRefreshStatus RPC awaits refreshStatus)"
+      ],
+      "consequence": "A user clicking Refresh status, or the turn-end PR refresh (RunFinalizationService.ts:111 calls refreshPullRequestStatus under the same lock), waits in the KeyedLock queue until the stalled fetch finishes or times out. That is up to about 5 min plus 2s, or more if the fetch was queued. Before the commit the pull did not wait on the fetch, so this lock hold was about 30s at most.",
+      "scenario": "1) Repo R is on its default branch, clean, with autoPull on. Local remote-tracking refs are already behind HEAD, for example after an earlier auto-pull failed on a ref lock. 2) The poll runs refreshRemoteStatus under the R lock. Its status fetch F starts and the remote hangs. The waiter returns at 5s (1314). 3) remote.behindCount>0 from stale refs, so maybeAutoPull calls pullCurrentBranch. 4) It reaches Fiber.await(F) at 2670 and blocks with the R lock held. 5) A user's vcsRefreshStatus RPC for R waits at VcsStatusBroadcaster.ts:514 until F ends.",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "",
+      "safe_line": ""
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "forceKillAfterMs passes unchanged to the spawner. The number is read as milliseconds, and undefined takes the old one-second path for every other caller.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:969 (forceKillAfter: input.forceKillAfterMs)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109 (forwarded only when defined)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1292 (1_000 set only for status fetch)",
+        ".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:479-493 (terminateProcessGroup reads options.forceKillAfter)",
+        ".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:550-559 (scope release calls terminateProcessGroup with cmd.options)",
+        ".repos/effect-smol/packages/effect/src/Duration.ts:172-174 (Input: number = millis)",
+        ".repos/effect-smol/packages/effect/src/Duration.ts:788-791 (toMillis of number is identity)",
+        ".repos/effect-smol/packages/effect/src/process/ChildProcess.ts:269 (forceKillAfter?: Duration.Input | undefined)"
+      ],
+      "consequence": "None. Other execute callers keep undefined, so they keep the one-second grace and no SIGKILL. The status fetch gets a 1s SIGTERM-to-SIGKILL window.",
+      "scenario": "Tried: a non-status caller with forceKillAfterMs undefined. ChildProcess.make receives forceKillAfter undefined, and the spawner takes the isUndefined branch. Tried: the number 1000 reaching Duration.toMillis, which is identity for a number.",
+      "severity": "none",
+      "introduced_by_change": false,
+      "covered_by": null,
+      "missing": "",
+      "safe_line": ".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484"
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "Retry guard depends on `symbolic-ref --short HEAD` equalling `refName`. If Git abbreviates the branch name because of an ambiguous ref, the lock retry is silently skipped and the pull fails. Low: the failure is loud and nothing is lost.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2703-2706 (currentBranch read with symbolic-ref --short)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2719-2721 (retry requires currentBranch === refName)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2642-2643 (refName comes from status porcelain branch.head, which is not abbreviated)"
+      ],
+      "consequence": "The pull reports the lock error and the retry against the upstream never runs, so the recovery path is lost for that repo.",
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2719-2721",
+      "scenario": "The repo has branch main and also a tag named main. `git symbolic-ref --short HEAD` returns `heads/main` when Git considers `main` ambiguous. That behaviour is Git's, not in this checkout, so this scenario depends on it. Then currentBranch !== refName, the retry is skipped, and the user sees the lock error.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "Git's --short disambiguation rules are outside the checkout.",
+      "safe_line": ""
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Manual pull (vcsPull) is not under the remote write lock, so a status fetch that starts after pullCurrentBranch's pending check is not awaited. The lock retry also does not wait, so the same ref-lock failure can recur.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670 (checks only fetches already in statusFetches)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2722-2728 (retry does not wait)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2241-2252 (statusDetails can start a fetch via refreshStatusUpstreamIfStale)",
+        "apps/server/src/ws.ts:2757-2763 (vcsPull calls gitWorkflow.pullCurrentBranch with no remote write lock)"
+      ],
+      "consequence": "The pull can fail with 'could not update a local reference' even though the fix was meant to recover from ref-lock collisions. The window is small because the lock is held briefly during ref update.",
+      "scenario": "Manual pull starts with no pending fetch. A statusDetails call on the same repo starts a fetch after the 2667 check, once the 15s cache has expired. Its ref update collides with the pull's fetch. The retry at 2722 runs without waiting and can collide again.",
+      "severity": "low",
+      "introduced_by_change": false,
+      "covered_by": null,
+      "missing": "",
+      "safe_line": ""
+    },
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "The dedupe check-then-set on statusFetches is not atomic. The runtime can yield between Map.get at line 1283 and Map.set at line 1310, so two concurrent callers can both start a fetch for one key. The first fiber's onExit can then delete the second's entry.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1281-1311 (get, yield* forkIn, then set, all inside Effect.uninterruptible)",
+        ".repos/effect-smol/packages/effect/src/internal/effect.ts:754 (maxOpsBeforeYield, runtime may yield mid-region)",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1303-1307 (onExit deletes by key, not by identity)"
+      ],
+      "consequence": "Two concurrent git fetch processes for one remote. One may fail on a ref lock and start a 30s cooldown. The pull's check at 2667 can miss the second fiber and run without waiting.",
+      "scenario": "Two status calls for the same repo and remote arrive together. Call A does get, then the runtime yields after its op budget before set. Call B does get, sees nothing, and forks. A then sets its fiber, overwriting B's entry. If B exits first, its onExit deletes A's entry. Probability is low because the window is a few ops.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "covered_by": null,
+      "missing": "",
+      "safe_line": ""
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"The status waiter cannot block past 5s. Fiber.join is only an observer of the forked fetch, so a queued or hung fetch does not hold the caller. Failures that land after the waiter returns still gate the next poll via retryAt.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1258-1322 (fetchRemoteForStatus, forked into serviceScope with startImmediately:false)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1280 (retryAt early return)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1295-1300 (success clears map, tapError records cooldown)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1303-1307 (onExit deletes statusFetches entry)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1049-1066 (executeRaw 5min timeout)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1080-1082 (timeouts over 30s skip gitProcesses)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1517-1557 (failure map and cache TTL)\",\".repos/effect-smol/packages/effect/src/internal/effect.ts:839-846 (fiberJoin observes only, does not interrupt target)\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:474-506 (poll under KeyedLock, bounded by the 5s waiter)\"],\"consequence\":\"None for the status path. The poll returns after at most 5s, using the last fetched refs.\",\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:1314-1316\",\"scenario\":\"Four stalled fetches saturate statusFetchProcesses, then a fifth status poll for a queued repo. The waiter times out at 1315 and returns None. The queued fiber keeps running and is not interrupted. Also tried: a fetch fails after the waiter returned. tapError at 1300 records retryAt, and the next poll returns early at 1280 until it passes. Both paths are consistent.\",\"severity\":\"none\",\"introduced_by_change\":false,\"covered_by\":null,\"missing\":\"\",\"safe_line\":\"apps/server/src/vcs/GitVcsDriverCore.ts:1314\"},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The unbounded Fiber.await at line 2670 runs while the pull still holds the per-repo KeyedLock remote write lock. A stalled background fetch therefore blocks every remote-status refresh for that cwd for the fetch's full lifetime, not just the pull's 30s.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670 (pending fetch awaited with no bound)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1258-1292 (fetch timeout 5min, forceKill 1s, forked and queued behind 4 permits)\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:432-446 (autopull needs behindCount>0, aheadCount==0, clean tree)\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:481-492 (refreshRemoteStatus holds withRemoteWriteLock and calls maybeAutoPull inside it)\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:514-523 (refreshStatus takes same lock and calls maybeAutoPull)\",\"apps/server/src/vcs/VcsStatusBroadcaster.ts:248-250 (remoteWriteLocks.withLock)\",\"packages/shared/src/KeyedLock.ts:47-53 (blocking semaphore per key, no try-lock)\",\"apps/server/src/ws.ts:2755 (vcsRefreshStatus RPC awaits refreshStatus)\"],\"consequence\":\"A user clicking Refresh status, or the turn-end PR refresh (RunFinalizationService.ts:111 calls refreshPullRequestStatus under the same lock), waits in the KeyedLock queue until the stalled fetch finishes or times out. That is up to about 5 min plus 2s, or more if the fetch was queued. Before the commit the pull did not wait on the fetch, so this lock hold was about 30s at most.\",\"scenario\":\"1) Repo R is on its default branch, clean, with autoPull on. Local remote-tracking refs are already behind HEAD, for example after an earlier auto-pull failed on a ref lock. 2) The poll runs refreshRemoteStatus under the R lock. Its status fetch F starts and the remote hangs. The waiter returns at 5s (1314). 3) remote.behindCount>0 from stale refs, so maybeAutoPull calls pullCurrentBranch. 4) It reaches Fiber.await(F) at 2670 and blocks with the R lock held. 5) A user's vcsRefreshStatus RPC for R waits at VcsStatusBroadcaster.ts:514 until F ends.\",\"severity\":\"medium\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"\",\"safe_line\":\"\"},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"forceKillAfterMs passes unchanged to the spawner. The number is read as milliseconds, and undefined takes the old one-second path for every other caller.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:969 (forceKillAfter: input.forceKillAfterMs)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1107-1109 (forwarded only when defined)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1292 (1_000 set only for status fetch)\",\".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:479-493 (terminateProcessGroup reads options.forceKillAfter)\",\".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:550-559 (scope release calls terminateProcessGroup with cmd.options)\",\".repos/effect-smol/packages/effect/src/Duration.ts:172-174 (Input: number = millis)\",\".repos/effect-smol/packages/effect/src/Duration.ts:788-791 (toMillis of number is identity)\",\".repos/effect-smol/packages/effect/src/process/ChildProcess.ts:269 (forceKillAfter?: Duration.Input | undefined)\"],\"consequence\":\"None. Other execute callers keep undefined, so they keep the one-second grace and no SIGKILL. The status fetch gets a 1s SIGTERM-to-SIGKILL window.\",\"scenario\":\"Tried: a non-status caller with forceKillAfterMs undefined. ChildProcess.make receives forceKillAfter undefined, and the spawner takes the isUndefined branch. Tried: the number 1000 reaching Duration.toMillis, which is identity for a number.\",\"severity\":\"none\",\"introduced_by_change\":false,\"covered_by\":null,\"missing\":\"\",\"safe_line\":\".repos/effect-smol/packages/platform/node-shared/src/NodeChildProcessSpawner.ts:484\"},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"Retry guard depends on `symbolic-ref --short HEAD` equalling `refName`. If Git abbreviates the branch name because of an ambiguous ref, the lock retry is silently skipped and the pull fails. Low: the failure is loud and nothing is lost.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2703-2706 (currentBranch read with symbolic-ref --short)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2719-2721 (retry requires currentBranch === refName)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2642-2643 (refName comes from status porcelain branch.head, which is not abbreviated)\"],\"consequence\":\"The pull reports the lock error and the retry against the upstream never runs, so the recovery path is lost for that repo.\",\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:2719-2721\",\"scenario\":\"The repo has branch main and also a tag named main. `git symbolic-ref --short HEAD` returns `heads/main` when Git considers `main` ambiguous. That behaviour is Git's, not in this checkout, so this scenario depends on it. Then currentBranch !== refName, the retry is skipped, and the user sees the lock error.\",\"severity\":\"low\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"Git's --short disambiguation rules are outside the checkout.\",\"safe_line\":\"\"},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Manual pull (vcsPull) is not under the remote write lock, so a status fetch that starts after pullCurrentBranch's pending check is not awaited. The lock retry also does not wait, so the same ref-lock failure can recur.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2670 (checks only fetches already in statusFetches)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2722-2728 (retry does not wait)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2241-2252 (statusDetails can start a fetch via refreshStatusUpstreamIfStale)\",\"apps/server/src/ws.ts:2757-2763 (vcsPull calls gitWorkflow.pullCurrentBranch with no remote write lock)\"],\"consequence\":\"The pull can fail with 'could not update a local reference' even though the fix was meant to recover from ref-lock collisions. The window is small because the lock is held briefly during ref update.\",\"scenario\":\"Manual pull starts with no pending fetch. A statusDetails call on the same repo starts a fetch after the 2667 check, once the 15s cache has expired. Its ref update collides with the pull's fetch. The retry at 2722 runs without waiting and can collide again.\",\"severity\":\"low\",\"introduced_by_change\":false,\"covered_by\":null,\"missing\":\"\",\"safe_line\":\"\"},{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"The dedupe check-then-set on statusFetches is not atomic. The runtime can yield between Map.get at line 1283 and Map.set at line 1310, so two concurrent callers can both start a fetch for one key. The first fiber's onExit can then delete the second's entry.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:1281-1311 (get, yield* forkIn, then set, all inside Effect.uninterruptible)\",\".repos/effect-smol/packages/effect/src/internal/effect.ts:754 (maxOpsBeforeYield, runtime may yield mid-region)\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1303-1307 (onExit deletes by key, not by identity)\"],\"consequence\":\"Two concurrent git fetch processes for one remote. One may fail on a ref lock and start a 30s cooldown. The pull's check at 2667 can miss the second fiber and run without waiting.\",\"scenario\":\"Two status calls for the same repo and remote arrive together. Call A does get, then the runtime yields after its op budget before set. Call B does get, sees nothing, and forks. A then sets its fiber, overwriting B's entry. If B exits first, its onExit deletes A's entry. Probability is low because the window is a few ops.\",\"severity\":\"low\",\"introduced_by_change\":true,\"covered_by\":null,\"missing\":\"\",\"safe_line\":\"\"}]}"
+}

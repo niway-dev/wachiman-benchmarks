@@ -1,0 +1,208 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/judge-experiment/runs/baseline/notification-key-ignores-new-request-24760.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "242d00cd34534e7a93cb6f6b02cf4652bdd1210e",
+  "base_commit": "c79ef8c454e1268ff79da5a9dcb74572e86f7861",
+  "wall_ms": 312211,
+  "cost_usd": 0.21954267000000002,
+  "duration_ms": 310953,
+  "num_turns": 39,
+  "usage": {
+    "input_tokens": 46,
+    "cache_creation_input_tokens": 129933,
+    "cache_read_input_tokens": 1781501,
+    "output_tokens": 67229,
+    "output_tokens_details": {
+      "thinking_tokens": 54834
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 129933,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 7164,
+        "cache_read_input_tokens": 130317,
+        "cache_creation_input_tokens": 5034,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 5034
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 7167,
+      "outputTokens": 67250,
+      "cacheReadInputTokens": 1781501,
+      "cacheCreationInputTokens": 129933,
+      "webSearchRequests": 0,
+      "costUSD": 0.21954267000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 54834,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 129933,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "safe",
+      "summary": "Concurrent full sweep and per-thread sweep for the same thread cannot double-settle. The stale-snapshot guard the note said it did not read is in the Orchestrator, and dispatch is serialized per thread.",
+      "scenario": "Full sweep (1-min worker) and the per-thread sweep both read thread T with updatedAt U1 and dispatch thread.auto-settle with snapshotAt U1. The per-thread lock serializes the two dispatches. The first commits settle, which sets settledOverride='settled' and bumps updatedAt. The second hits settledOverride !== null and is rejected with OrchestratorDispatchError, so there is no second settle.",
+      "safe_line": "apps/server/src/orchestration-v2/Orchestrator.ts:11584",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:519-560 (runSweep catches non-interrupt causes; per-thread state machine)",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:306-360 (sweep, settleThread dispatch with snapshotAt: thread.updatedAt)",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:534-560 and 600-678 (fullSweeps, threadSweeps, processEvent, drain)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11575-11605 (recheck settledOverride and updatedAt > snapshotAt, then thread.settle)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:3203-3223 (thread.settle sets settledOverride, bumps updatedAt)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113 (dispatch wrapped in threadDispatch.withLock per thread; seen via grep)"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 1,
+      "verdict": "safe",
+      "summary": "The fresh PR read after a close command or at run end is not dropped by cadence or by a sweep race. A key requested while a read is in flight is picked up by a follow-up sweep.",
+      "scenario": "Close command ends, refresh requested; a second close command or run end requests the same key while the first read is in flight. The request lands in pendingRequests, the snapshot at sweep start has already been taken, and requestedSweepQueued was reset at worker start, so another 'requested' sweep is queued. Separately, a requested key bypasses cadence in isDue, so it is not skipped because it synced recently.",
+      "safe_line": "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:211",
+      "evidence": [
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:199-210 (requested, pendingRequests, requestedSweepQueued)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:210-226 (isDue: requested keys are always due)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:258-262 (requested snapshot taken from pendingRequests, then cleared)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:340-348, 420 (refresh read, requested.delete after successful read)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:459-476 and 478-483 (requested worker resets requestedSweepQueued)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:485-501 (refreshOpenLinks filters open links)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:529-547 (turn-item and run.updated handling)",
+        "apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:562-567 (requestSync)"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 2,
+      "verdict": "safe",
+      "summary": "A completion that is followed by a continuation within 2s is cancelled, and re-observing the same completion does not restart the timer. Attention suppresses the pending completion.",
+      "scenario": "Run completes at T1, so the gate starts a 2s timer. At +1s a continuation starts and the snapshot shows not settled, so observe cancels the timer, and nothing is notified. Re-observing the same settled completion T1 hits pending.at === at and does not restart the timer. Attention arriving during the wait cancels and skips the completion.",
+      "safe_line": "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:42",
+      "evidence": [
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:19-78 (full gate)",
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:41-55 (lastSettled, cancel on unsettled/archived/quiet, attention skip, dedupe by at)",
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:67-71 (retain)",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:127-132 (present reads current entry at fire time)",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:214-226 (gate created and cleared in mount effect; previous cleared)",
+        "apps/web/src/components/ThreadNotificationCoordinator.tsx:228-280 (threads null clears; changed threads observed; retain)"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 3,
+      "verdict": "safe",
+      "summary": "The Working-exit expiry does re-render the Sidebar and the mobile list with no snapshot change. The optimistic manual-drop path intentionally bypasses the hold.",
+      "scenario": "A thread stops working and no snapshot arrives. The timer fires, bumps the version, and notifies listeners. Sidebar's useSyncExternalStore re-renders, partitionSidebarThreads calls observe again, and isWorking now returns false, so the row moves to Active. On mobile, the inboxVersion dep recomputes the useMemo, which calls observe. Optimistic drops use raw isThreadWorking by design, so a manual move is never held.",
+      "safe_line": "apps/web/src/components/Sidebar.tsx:384",
+      "evidence": [
+        "apps/web/src/components/Sidebar.tsx:289 (module-level tracker)",
+        "apps/web/src/components/Sidebar.tsx:384-387 (useSyncExternalStore subscribe and getSnapshot)",
+        "apps/web/src/components/Sidebar.tsx:427 (clockKey; declared but not used as a memo key in partitionSidebarThreads)",
+        "apps/web/src/components/Sidebar.tsx:515-527 (partitionSidebarThreads observes threads; inbox() uses held isWorking unless manuallyMoved)",
+        "apps/web/src/components/Sidebar.tsx:541-557 (optimistic drop uses raw isThreadWorking, which is consistent with the note)",
+        "apps/web/src/components/Sidebar.tsx:570 and 576-578 (normal path routes through held inbox())",
+        "apps/mobile/src/features/threads/useThreadListV2.ts:56-66 (inboxVersion in useMemo deps)",
+        "apps/mobile/src/features/threads/threadListV2.ts:663 (isWorking used for shelf placement)",
+        "apps/mobile/src/features/threads/threadListV2.ts:710 (sortInboxThreadsByReturn with inboxReturnAt)",
+        "apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx:285-311 and apps/mobile/src/features/home/HomeScreen.tsx:446-470 (both screens feed the same tracker from the same navigation thread set)"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 4,
+      "verdict": "safe",
+      "summary": "The hold does not wrongly extend a thread that needs attention, and it does not expire a thread that has resumed work. Attention, failure, archive, pin, settle and snooze all end the hold at once. The timer's expiry is corrected by the re-render.",
+      "scenario": "(a) A thread stops at T0, and an approval arrives at T0+500ms. actionable is true, so the deadline is null and working is false at once. (b) A failed run stops working: latestRun.status 'failed' is in actionable, so no hold. (c) A timer fires for a thread that resumed work with no render in between: the timer sets working=false and bumps the version, then observe on re-render sees actual=true and restores working=true. Only a returns timestamp is briefly stale, and it is overwritten when the thread stops again.",
+      "safe_line": "packages/client-runtime/src/state/threadInbox.ts:216",
+      "evidence": [
+        "packages/client-runtime/src/state/threadInbox.ts:17-31 (isThreadWorking)",
+        "packages/client-runtime/src/state/threadInbox.ts:115-120 (WORKING_EXIT_GRACE_MS)",
+        "packages/client-runtime/src/state/threadInbox.ts:122-160 (states, schedule, timer callback)",
+        "packages/client-runtime/src/state/threadInbox.ts:169-234 (observe: actionable, moved, excluded, deadline, working, returns)",
+        "packages/client-runtime/src/state/threadInbox.ts:236-240 (lookups)",
+        "apps/server/src/orchestration-v2/ThreadManagementService.ts:474-484 (isTerminalRunStatus, not read directly; only via grep)",
+        "apps/web/src/components/ThreadNotificationCoordinator.logic.ts:1-78 (attention set)",
+        "apps/web/src/components/Sidebar.tsx:384-387"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": 5,
+      "verdict": "safe",
+      "summary": "The hold is bounded at 2s from the first non-working observation, and repeated observes cannot reset it. Any of the exclusion or placement checks clears it.",
+      "scenario": "Thread stops at T0, so deadline = T0+2000. Repeated observes at T0+500 and T0+1500 reuse previous.deadline and do not reset it. A timer for the earliest deadline is re-armed after each fire. Removal or observe(null) clears the state and the timer.",
+      "safe_line": "packages/client-runtime/src/state/threadInbox.ts:217",
+      "evidence": [
+        "packages/client-runtime/src/state/threadInbox.ts:136-160 (schedule, earliest-deadline timer, re-arm)",
+        "packages/client-runtime/src/state/threadInbox.ts:173-178 (observe(null) clears timer and states)",
+        "packages/client-runtime/src/state/threadInbox.ts:197-229 (deadline logic, removal of absent threads)"
+      ],
+      "severity": "none",
+      "introduced_by_change": false
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "summary": "Full and per-thread sweeps can both reach thread.auto-settle for the same thread. The loser's dispatch is rejected and logged as a warning, which is spurious log noise. No state is damaged.",
+      "scenario": "A run ends, and the per-thread sweep and the 1-minute full sweep both pick thread T in the same window. One dispatch settles T. The other is rejected by the settledOverride check and caught by settleThread's catchCause, which logs 'automatic thread settlement skipped' at warning level.",
+      "location": "apps/server/src/orchestration-v2/ThreadSettlementService.ts:348-358",
+      "consequence": "Spurious warning logs on overlapping sweeps for the same thread. The new per-thread path makes the overlap more likely. No double settle or data loss.",
+      "severity": "low",
+      "introduced_by_change": true,
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:322-360 (settleThread dispatch and catch-to-warning)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:11575-11593 (rejection of settled or changed threads)",
+        "apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113 (per-thread lock, seen via grep)"
+      ]
+    },
+    {
+      "note_index": null,
+      "verdict": "cannot_tell",
+      "summary": "The 'settles within about 2s' claim for the per-thread path depends on host latency I cannot measure here. If the host reads take longer than the grace, the thread still moves Working to Active to Settled.",
+      "location": "apps/server/src/orchestration-v2/ThreadSettlementService.ts:457-464",
+      "consequence": "If summary or branch lookup is slow, the thread still flashes in the inbox before it vanishes. The fix narrows the window but does not guarantee it.",
+      "missing": "Runtime latency of pullRequests.summary (recoverTransientFailure: false, network) and git.branchPullRequest({refresh: true}) (ThreadSettlementService.ts:473-476, 493). Needs timing data from a real GitHub or gh-CLI round trip, which the checkout does not contain.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:436-494 (pullRequestFor: network reads before dispatch)",
+        "apps/server/src/orchestration-v2/ThreadSettlementService.ts:496-517 (group settle under concurrency 8)"
+      ],
+      "severity": "medium",
+      "introduced_by_change": false
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"safe\",\"summary\":\"Concurrent full sweep and per-thread sweep for the same thread cannot double-settle. The stale-snapshot guard the note said it did not read is in the Orchestrator, and dispatch is serialized per thread.\",\"scenario\":\"Full sweep (1-min worker) and the per-thread sweep both read thread T with updatedAt U1 and dispatch thread.auto-settle with snapshotAt U1. The per-thread lock serializes the two dispatches. The first commits settle, which sets settledOverride='settled' and bumps updatedAt. The second hits settledOverride !== null and is rejected with OrchestratorDispatchError, so there is no second settle.\",\"safe_line\":\"apps/server/src/orchestration-v2/Orchestrator.ts:11584\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:519-560 (runSweep catches non-interrupt causes; per-thread state machine)\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:306-360 (sweep, settleThread dispatch with snapshotAt: thread.updatedAt)\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:534-560 and 600-678 (fullSweeps, threadSweeps, processEvent, drain)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:11575-11605 (recheck settledOverride and updatedAt > snapshotAt, then thread.settle)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:3203-3223 (thread.settle sets settledOverride, bumps updatedAt)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113 (dispatch wrapped in threadDispatch.withLock per thread; seen via grep)\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":1,\"verdict\":\"safe\",\"summary\":\"The fresh PR read after a close command or at run end is not dropped by cadence or by a sweep race. A key requested while a read is in flight is picked up by a follow-up sweep.\",\"scenario\":\"Close command ends, refresh requested; a second close command or run end requests the same key while the first read is in flight. The request lands in pendingRequests, the snapshot at sweep start has already been taken, and requestedSweepQueued was reset at worker start, so another 'requested' sweep is queued. Separately, a requested key bypasses cadence in isDue, so it is not skipped because it synced recently.\",\"safe_line\":\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:211\",\"evidence\":[\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:199-210 (requested, pendingRequests, requestedSweepQueued)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:210-226 (isDue: requested keys are always due)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:258-262 (requested snapshot taken from pendingRequests, then cleared)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:340-348, 420 (refresh read, requested.delete after successful read)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:459-476 and 478-483 (requested worker resets requestedSweepQueued)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:485-501 (refreshOpenLinks filters open links)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:529-547 (turn-item and run.updated handling)\",\"apps/server/src/orchestration-v2/PullRequestSyncReactor.ts:562-567 (requestSync)\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":2,\"verdict\":\"safe\",\"summary\":\"A completion that is followed by a continuation within 2s is cancelled, and re-observing the same completion does not restart the timer. Attention suppresses the pending completion.\",\"scenario\":\"Run completes at T1, so the gate starts a 2s timer. At +1s a continuation starts and the snapshot shows not settled, so observe cancels the timer, and nothing is notified. Re-observing the same settled completion T1 hits pending.at === at and does not restart the timer. Attention arriving during the wait cancels and skips the completion.\",\"safe_line\":\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:42\",\"evidence\":[\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:19-78 (full gate)\",\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:41-55 (lastSettled, cancel on unsettled/archived/quiet, attention skip, dedupe by at)\",\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:67-71 (retain)\",\"apps/web/src/components/ThreadNotificationCoordinator.tsx:127-132 (present reads current entry at fire time)\",\"apps/web/src/components/ThreadNotificationCoordinator.tsx:214-226 (gate created and cleared in mount effect; previous cleared)\",\"apps/web/src/components/ThreadNotificationCoordinator.tsx:228-280 (threads null clears; changed threads observed; retain)\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":3,\"verdict\":\"safe\",\"summary\":\"The Working-exit expiry does re-render the Sidebar and the mobile list with no snapshot change. The optimistic manual-drop path intentionally bypasses the hold.\",\"scenario\":\"A thread stops working and no snapshot arrives. The timer fires, bumps the version, and notifies listeners. Sidebar's useSyncExternalStore re-renders, partitionSidebarThreads calls observe again, and isWorking now returns false, so the row moves to Active. On mobile, the inboxVersion dep recomputes the useMemo, which calls observe. Optimistic drops use raw isThreadWorking by design, so a manual move is never held.\",\"safe_line\":\"apps/web/src/components/Sidebar.tsx:384\",\"evidence\":[\"apps/web/src/components/Sidebar.tsx:289 (module-level tracker)\",\"apps/web/src/components/Sidebar.tsx:384-387 (useSyncExternalStore subscribe and getSnapshot)\",\"apps/web/src/components/Sidebar.tsx:427 (clockKey; declared but not used as a memo key in partitionSidebarThreads)\",\"apps/web/src/components/Sidebar.tsx:515-527 (partitionSidebarThreads observes threads; inbox() uses held isWorking unless manuallyMoved)\",\"apps/web/src/components/Sidebar.tsx:541-557 (optimistic drop uses raw isThreadWorking, which is consistent with the note)\",\"apps/web/src/components/Sidebar.tsx:570 and 576-578 (normal path routes through held inbox())\",\"apps/mobile/src/features/threads/useThreadListV2.ts:56-66 (inboxVersion in useMemo deps)\",\"apps/mobile/src/features/threads/threadListV2.ts:663 (isWorking used for shelf placement)\",\"apps/mobile/src/features/threads/threadListV2.ts:710 (sortInboxThreadsByReturn with inboxReturnAt)\",\"apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx:285-311 and apps/mobile/src/features/home/HomeScreen.tsx:446-470 (both screens feed the same tracker from the same navigation thread set)\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":4,\"verdict\":\"safe\",\"summary\":\"The hold does not wrongly extend a thread that needs attention, and it does not expire a thread that has resumed work. Attention, failure, archive, pin, settle and snooze all end the hold at once. The timer's expiry is corrected by the re-render.\",\"scenario\":\"(a) A thread stops at T0, and an approval arrives at T0+500ms. actionable is true, so the deadline is null and working is false at once. (b) A failed run stops working: latestRun.status 'failed' is in actionable, so no hold. (c) A timer fires for a thread that resumed work with no render in between: the timer sets working=false and bumps the version, then observe on re-render sees actual=true and restores working=true. Only a returns timestamp is briefly stale, and it is overwritten when the thread stops again.\",\"safe_line\":\"packages/client-runtime/src/state/threadInbox.ts:216\",\"evidence\":[\"packages/client-runtime/src/state/threadInbox.ts:17-31 (isThreadWorking)\",\"packages/client-runtime/src/state/threadInbox.ts:115-120 (WORKING_EXIT_GRACE_MS)\",\"packages/client-runtime/src/state/threadInbox.ts:122-160 (states, schedule, timer callback)\",\"packages/client-runtime/src/state/threadInbox.ts:169-234 (observe: actionable, moved, excluded, deadline, working, returns)\",\"packages/client-runtime/src/state/threadInbox.ts:236-240 (lookups)\",\"apps/server/src/orchestration-v2/ThreadManagementService.ts:474-484 (isTerminalRunStatus, not read directly; only via grep)\",\"apps/web/src/components/ThreadNotificationCoordinator.logic.ts:1-78 (attention set)\",\"apps/web/src/components/Sidebar.tsx:384-387\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":5,\"verdict\":\"safe\",\"summary\":\"The hold is bounded at 2s from the first non-working observation, and repeated observes cannot reset it. Any of the exclusion or placement checks clears it.\",\"scenario\":\"Thread stops at T0, so deadline = T0+2000. Repeated observes at T0+500 and T0+1500 reuse previous.deadline and do not reset it. A timer for the earliest deadline is re-armed after each fire. Removal or observe(null) clears the state and the timer.\",\"safe_line\":\"packages/client-runtime/src/state/threadInbox.ts:217\",\"evidence\":[\"packages/client-runtime/src/state/threadInbox.ts:136-160 (schedule, earliest-deadline timer, re-arm)\",\"packages/client-runtime/src/state/threadInbox.ts:173-178 (observe(null) clears timer and states)\",\"packages/client-runtime/src/state/threadInbox.ts:197-229 (deadline logic, removal of absent threads)\"],\"severity\":\"none\",\"introduced_by_change\":false},{\"note_index\":null,\"verdict\":\"breaks\",\"summary\":\"Full and per-thread sweeps can both reach thread.auto-settle for the same thread. The loser's dispatch is rejected and logged as a warning, which is spurious log noise. No state is damaged.\",\"scenario\":\"A run ends, and the per-thread sweep and the 1-minute full sweep both pick thread T in the same window. One dispatch settles T. The other is rejected by the settledOverride check and caught by settleThread's catchCause, which logs 'automatic thread settlement skipped' at warning level.\",\"location\":\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:348-358\",\"consequence\":\"Spurious warning logs on overlapping sweeps for the same thread. The new per-thread path makes the overlap more likely. No double settle or data loss.\",\"severity\":\"low\",\"introduced_by_change\":true,\"evidence\":[\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:322-360 (settleThread dispatch and catch-to-warning)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:11575-11593 (rejection of settled or changed threads)\",\"apps/server/src/orchestration-v2/Orchestrator.ts:12110-12113 (per-thread lock, seen via grep)\"]},{\"note_index\":null,\"verdict\":\"cannot_tell\",\"summary\":\"The 'settles within about 2s' claim for the per-thread path depends on host latency I cannot measure here. If the host reads take longer than the grace, the thread still moves Working to Active to Settled.\",\"location\":\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:457-464\",\"consequence\":\"If summary or branch lookup is slow, the thread still flashes in the inbox before it vanishes. The fix narrows the window but does not guarantee it.\",\"missing\":\"Runtime latency of pullRequests.summary (recoverTransientFailure: false, network) and git.branchPullRequest({refresh: true}) (ThreadSettlementService.ts:473-476, 493). Needs timing data from a real GitHub or gh-CLI round trip, which the checkout does not contain.\",\"evidence\":[\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:436-494 (pullRequestFor: network reads before dispatch)\",\"apps/server/src/orchestration-v2/ThreadSettlementService.ts:496-517 (group settle under concurrency 8)\"],\"severity\":\"medium\",\"introduced_by_change\":false}]}"
+}

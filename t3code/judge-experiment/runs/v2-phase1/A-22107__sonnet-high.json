@@ -1,0 +1,122 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-22107.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "3fdcef09944955a3e94e906ecf892bfbc1f7efc4",
+  "base_commit": "48745ffba50d8c00e430fc3d06244b4317690227",
+  "wall_ms": 124041,
+  "cost_usd": 0.3766223,
+  "duration_ms": 123543,
+  "num_turns": 18,
+  "usage": {
+    "input_tokens": 24,
+    "cache_creation_input_tokens": 51162,
+    "cache_read_input_tokens": 471454,
+    "output_tokens": 12414,
+    "output_tokens_details": {
+      "thinking_tokens": 8359
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 51162,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2191,
+        "cache_read_input_tokens": 56632,
+        "cache_creation_input_tokens": 2872,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2872
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4634,
+      "outputTokens": 355,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0006409,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 328,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 24,
+      "outputTokens": 12414,
+      "cacheReadInputTokens": 471454,
+      "cacheCreationInputTokens": 51162,
+      "webSearchRequests": 0,
+      "costUSD": 0.3759814,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 8359,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 51162,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "summary": "A hung status fetch is no longer a failure at 5s, so no backoff applies. Every status poll that misses the 15s cache stalls a full 5s until the fetch dies or finishes, up to 5 minutes.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:669",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:672-673",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:703-705",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1537-1557",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2254-2265",
+        "apps/server/src/git/GitManager.ts:1350-1352"
+      ],
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:669-705",
+      "scenario": "1) The remote is unreachable and the fetch hangs without exiting. 2) Status poll A starts the fetch fiber and waits 5s (703-705). The waiter's timeoutOption returns None, and refreshStatusRemoteCacheEntry returns true (1540-1542). 3) The cache stores that as a success with a 15s TTL (1551-1553). 4) At t=15s poll B misses the cache. `statusRemoteRefreshFailures` has no entry, because failure is only recorded when the fiber exits (1300). So the 669 gate does not fire. 5) B reuses the pending fiber (673) and waits another full 5s. 6) This repeats every ~15s until the 5-minute limit fails the fetch, after which the cooldown starts at 30s. Before the change, the 5s timeout was itself a recorded failure, so only the first poll paid 5s and later polls returned instantly under exponential backoff.",
+      "consequence": "On a dead or hung remote, `statusDetailsRemote` (GitManager.readRemoteStatus) takes 5s on every cache miss for the whole 5-minute hang. It used to take 5s once and then back off. The poll loop and any UI waiting on remote status are slowed for minutes. The first reviewer's note says only that reads return in at most about 5s, and misses that this repeats with no backoff.",
+      "severity": "medium",
+      "introduced_by_change": true
+    },
+    {
+      "note_index": 1,
+      "verdict": "breaks",
+      "summary": "The lock-failure retry never re-checks `statusFetches`. A status fetch that started after the one-time wait can still hold the same upstream ref lock when the retry runs, so the retry fails the same way.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:2693-2729",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1278-1313",
+        "apps/server/src/vcs/GitVcsDriverCore.ts:1551-1557"
+      ],
+      "location": "apps/server/src/vcs/GitVcsDriverCore.ts:2667-2670,2693-2729",
+      "scenario": "1) At 2667 no fetch is pending, so the pull skips the wait. 2) A status poll's cache entry expires (15s TTL) and `fetchRemoteForStatus` forks a new fetch for the same `${gitCommonDir}\\0${remote}` key (1278-1313). 3) The pull's own `git pull` fetch collides with it on a ref lock, either unrelated or `refs/remotes/<remote>/<branch>`. The pull fails with a lock error (2693). 4) The retry reads config and rev-parse, then runs `git pull --ff-only -- remote mergeRef` at 2722. It does not look at `statusFetches` or await the in-flight fiber. 5) If that fetch is still updating `refs/remotes/<remote>/<branch>`, which the status fetch also writes, the retry hits the same lock. 6) The user gets \"Git could not update a local reference… blocking the fetch\" at 2736. The wait at 2670 is a single check before the pull and is not repeated before the retry. The collision window is short, so this is timing-dependent.",
+      "consequence": "A user pull can still fail intermittently on a collision with the app's own background fetch. The commit sets out to prevent that, and its guard only covers fetches already running at the first check. The first reviewer's finding on the same wait (finding 0) is about the missing timeout and does not cover this.",
+      "severity": "low",
+      "introduced_by_change": false
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"summary\":\"A hung status fetch is no longer a failure at 5s, so no backoff applies. Every status poll that misses the 15s cache stalls a full 5s until the fetch dies or finishes, up to 5 minutes.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:669\",\"apps/server/src/vcs/GitVcsDriverCore.ts:672-673\",\"apps/server/src/vcs/GitVcsDriverCore.ts:703-705\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1537-1557\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2254-2265\",\"apps/server/src/git/GitManager.ts:1350-1352\"],\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:669-705\",\"scenario\":\"1) The remote is unreachable and the fetch hangs without exiting. 2) Status poll A starts the fetch fiber and waits 5s (703-705). The waiter's timeoutOption returns None, and refreshStatusRemoteCacheEntry returns true (1540-1542). 3) The cache stores that as a success with a 15s TTL (1551-1553). 4) At t=15s poll B misses the cache. `statusRemoteRefreshFailures` has no entry, because failure is only recorded when the fiber exits (1300). So the 669 gate does not fire. 5) B reuses the pending fiber (673) and waits another full 5s. 6) This repeats every ~15s until the 5-minute limit fails the fetch, after which the cooldown starts at 30s. Before the change, the 5s timeout was itself a recorded failure, so only the first poll paid 5s and later polls returned instantly under exponential backoff.\",\"consequence\":\"On a dead or hung remote, `statusDetailsRemote` (GitManager.readRemoteStatus) takes 5s on every cache miss for the whole 5-minute hang. It used to take 5s once and then back off. The poll loop and any UI waiting on remote status are slowed for minutes. The first reviewer's note says only that reads return in at most about 5s, and misses that this repeats with no backoff.\",\"severity\":\"medium\",\"introduced_by_change\":true},{\"note_index\":1,\"verdict\":\"breaks\",\"summary\":\"The lock-failure retry never re-checks `statusFetches`. A status fetch that started after the one-time wait can still hold the same upstream ref lock when the retry runs, so the retry fails the same way.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriverCore.ts:2664-2671\",\"apps/server/src/vcs/GitVcsDriverCore.ts:2693-2729\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1278-1313\",\"apps/server/src/vcs/GitVcsDriverCore.ts:1551-1557\"],\"location\":\"apps/server/src/vcs/GitVcsDriverCore.ts:2667-2670,2693-2729\",\"scenario\":\"1) At 2667 no fetch is pending, so the pull skips the wait. 2) A status poll's cache entry expires (15s TTL) and `fetchRemoteForStatus` forks a new fetch for the same `${gitCommonDir}\\\\0${remote}` key (1278-1313). 3) The pull's own `git pull` fetch collides with it on a ref lock, either unrelated or `refs/remotes/<remote>/<branch>`. The pull fails with a lock error (2693). 4) The retry reads config and rev-parse, then runs `git pull --ff-only -- remote mergeRef` at 2722. It does not look at `statusFetches` or await the in-flight fiber. 5) If that fetch is still updating `refs/remotes/<remote>/<branch>`, which the status fetch also writes, the retry hits the same lock. 6) The user gets \\\"Git could not update a local reference… blocking the fetch\\\" at 2736. The wait at 2670 is a single check before the pull and is not repeated before the retry. The collision window is short, so this is timing-dependent.\",\"consequence\":\"A user pull can still fail intermittently on a collision with the app's own background fetch. The commit sets out to prevent that, and its guard only covers fetches already running at the first check. The first reviewer's finding on the same wait (finding 0) is about the missing timeout and does not cover this.\",\"severity\":\"low\",\"introduced_by_change\":false}]}"
+}

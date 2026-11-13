@@ -1,0 +1,114 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/C-21315.json",
+  "config": "haiku-high",
+  "model": "claude-haiku-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "2e860972ae1740e0e82717a5fc2683513936188b",
+  "base_commit": "68be2f7b3273a642f3d48dc9fd723310f3fb5eef",
+  "wall_ms": 127684,
+  "cost_usd": 0.02887263,
+  "duration_ms": 127084,
+  "num_turns": 16,
+  "usage": {
+    "input_tokens": 22,
+    "cache_creation_input_tokens": 54504,
+    "cache_read_input_tokens": 415643,
+    "output_tokens": 26816,
+    "output_tokens_details": {
+      "thinking_tokens": 22894
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 54504,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 11810,
+        "cache_read_input_tokens": 59512,
+        "cache_creation_input_tokens": 410,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 410
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 3944,
+      "outputTokens": 26842,
+      "cacheReadInputTokens": 415643,
+      "cacheCreationInputTokens": 54504,
+      "webSearchRequests": 0,
+      "costUSD": 0.02887263,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 22894,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 54504,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "breaks",
+      "severity": "medium",
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:852-868",
+      "summary": "On git older than 2.31, the combined rev-parse exit code is wrong, so the fallback reports an existing HEAD as absent. The note's claim that old git only echoes --path-format is not what happens.",
+      "scenario": "1) Git 2.30 or older runs `rev-parse --path-format=absolute --git-common-dir --git-path index --verify --quiet HEAD` in a repo with a committed HEAD. Git does not recognise --path-format, and with --verify an unrecognised non-revision argument makes rev-parse exit 1 with no stdout (quiet die). This is from my knowledge of git's rev-parse.c, not from this checkout. 2) VcsProcess.ts:304 does not throw because allowNonZeroExit is set; it returns exitCode 1 and empty stdout (VcsProcess.ts:336-344). 3) Line 852 sets headExists=false and line 853 sets headChecked=true. 4) lines=[\"\"], length 1 != 3, so the fallback runs at line 865. Line 868 is `headChecked ? headExists : hasHeadCommit`, which keeps headExists=false without calling hasHeadCommit. 5) At 939 the `if (headExists)` block is skipped, so the temp index is not seeded with `read-tree HEAD`. At 1212 commit-tree gets no `-p HEAD`. The checkpoint is a parentless commit, and gitignored files tracked in HEAD are missing from its tree because `add -A` skips ignored paths the index does not contain. The old code (hasHeadCommit at its own call) returned true here. Consequence: a silently different checkpoint on older Git (Ubuntu 20.04 ships 2.25, for example), with no error. If git echoes the flag instead, exit is 0 and this path is not reached, so the outcome depends on that git behaviour, which I could not open here.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:837-868 (combined call, headChecked logic, fallback headExists)",
+        "apps/server/src/vcs/GitVcsDriver.ts:793-800 (old hasHeadCommit, exit-0 check, for comparison)",
+        "apps/server/src/vcs/GitVcsDriver.ts:939-959 (headExists gates read-tree HEAD and the reused index)",
+        "apps/server/src/vcs/GitVcsDriver.ts:1102-1108 and 1111-1128 (add -A; ignored paths)",
+        "apps/server/src/vcs/GitVcsDriver.ts:1205-1217 (commit-tree -p HEAD gated by headExists)",
+        "apps/server/src/vcs/VcsProcess.ts:221 and 304-344 (allowNonZeroExit returns exit 1 with stdout)",
+        "apps/server/src/vcs/VcsProcess.ts:279-287 and 361-366 (no retry or fsync path for allowNonZeroExit)",
+        "apps/server/src/vcs/GitVcsDriver.ts:521-555 (gitCommand prepends -C cwd)"
+      ],
+      "safe_line": "",
+      "covered_by": null,
+      "consequence": "On git < 2.31 the checkpoint loses its HEAD parent and HEAD's gitignored tracked files, with no error. Restore and diff behaviour then depends on the checkpoint contents.",
+      "missing": "Git source for rev-parse.c (unknown --path-format under --verify) is not in the checkout. The verdict assumes it exits 1; a test on git 2.30 would settle it. Restore consequences were not read."
+    },
+    {
+      "note_index": null,
+      "verdict": "breaks",
+      "severity": "low",
+      "introduced_by_change": true,
+      "location": "apps/server/src/vcs/GitVcsDriver.ts:837-851 with apps/server/src/vcs/VcsProcess.ts:261-263",
+      "summary": "For an unborn HEAD, the combined call now exits 1 under the CHECKPOINT_CAPTURE_OPERATION label, so the failure is counted against capture rather than hasHeadCommit.",
+      "scenario": "1) Capture runs in a repo with no commits. 2) The combined call uses operation CHECKPOINT_CAPTURE_OPERATION with allowNonZeroExit, so it exits 1. 3) VcsProcess.ts:221 sets failedExit=true, and VcsProcess.ts:261-263 records outcome=failure under the capture operation. Before, the same failure was recorded under GitVcsDriver.checkpoints.hasHeadCommit. Consequence: the metric for the capture operation now shows failures for every unborn-HEAD capture. This is an attribution shift only, no behaviour change.",
+      "evidence": [
+        "apps/server/src/vcs/GitVcsDriver.ts:837-851",
+        "apps/server/src/vcs/VcsProcess.ts:221",
+        "apps/server/src/vcs/VcsProcess.ts:255-265",
+        "apps/server/src/vcs/VcsProcess.ts:76-84 (capture operation is a known metric label)"
+      ],
+      "safe_line": "",
+      "covered_by": null,
+      "consequence": "Capture failure-rate dashboards count expected unborn-HEAD exits as failures.",
+      "missing": ""
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"breaks\",\"severity\":\"medium\",\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/GitVcsDriver.ts:852-868\",\"summary\":\"On git older than 2.31, the combined rev-parse exit code is wrong, so the fallback reports an existing HEAD as absent. The note's claim that old git only echoes --path-format is not what happens.\",\"scenario\":\"1) Git 2.30 or older runs `rev-parse --path-format=absolute --git-common-dir --git-path index --verify --quiet HEAD` in a repo with a committed HEAD. Git does not recognise --path-format, and with --verify an unrecognised non-revision argument makes rev-parse exit 1 with no stdout (quiet die). This is from my knowledge of git's rev-parse.c, not from this checkout. 2) VcsProcess.ts:304 does not throw because allowNonZeroExit is set; it returns exitCode 1 and empty stdout (VcsProcess.ts:336-344). 3) Line 852 sets headExists=false and line 853 sets headChecked=true. 4) lines=[\\\"\\\"], length 1 != 3, so the fallback runs at line 865. Line 868 is `headChecked ? headExists : hasHeadCommit`, which keeps headExists=false without calling hasHeadCommit. 5) At 939 the `if (headExists)` block is skipped, so the temp index is not seeded with `read-tree HEAD`. At 1212 commit-tree gets no `-p HEAD`. The checkpoint is a parentless commit, and gitignored files tracked in HEAD are missing from its tree because `add -A` skips ignored paths the index does not contain. The old code (hasHeadCommit at its own call) returned true here. Consequence: a silently different checkpoint on older Git (Ubuntu 20.04 ships 2.25, for example), with no error. If git echoes the flag instead, exit is 0 and this path is not reached, so the outcome depends on that git behaviour, which I could not open here.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriver.ts:837-868 (combined call, headChecked logic, fallback headExists)\",\"apps/server/src/vcs/GitVcsDriver.ts:793-800 (old hasHeadCommit, exit-0 check, for comparison)\",\"apps/server/src/vcs/GitVcsDriver.ts:939-959 (headExists gates read-tree HEAD and the reused index)\",\"apps/server/src/vcs/GitVcsDriver.ts:1102-1108 and 1111-1128 (add -A; ignored paths)\",\"apps/server/src/vcs/GitVcsDriver.ts:1205-1217 (commit-tree -p HEAD gated by headExists)\",\"apps/server/src/vcs/VcsProcess.ts:221 and 304-344 (allowNonZeroExit returns exit 1 with stdout)\",\"apps/server/src/vcs/VcsProcess.ts:279-287 and 361-366 (no retry or fsync path for allowNonZeroExit)\",\"apps/server/src/vcs/GitVcsDriver.ts:521-555 (gitCommand prepends -C cwd)\"],\"safe_line\":\"\",\"covered_by\":null,\"consequence\":\"On git < 2.31 the checkpoint loses its HEAD parent and HEAD's gitignored tracked files, with no error. Restore and diff behaviour then depends on the checkpoint contents.\",\"missing\":\"Git source for rev-parse.c (unknown --path-format under --verify) is not in the checkout. The verdict assumes it exits 1; a test on git 2.30 would settle it. Restore consequences were not read.\"},{\"note_index\":null,\"verdict\":\"breaks\",\"severity\":\"low\",\"introduced_by_change\":true,\"location\":\"apps/server/src/vcs/GitVcsDriver.ts:837-851 with apps/server/src/vcs/VcsProcess.ts:261-263\",\"summary\":\"For an unborn HEAD, the combined call now exits 1 under the CHECKPOINT_CAPTURE_OPERATION label, so the failure is counted against capture rather than hasHeadCommit.\",\"scenario\":\"1) Capture runs in a repo with no commits. 2) The combined call uses operation CHECKPOINT_CAPTURE_OPERATION with allowNonZeroExit, so it exits 1. 3) VcsProcess.ts:221 sets failedExit=true, and VcsProcess.ts:261-263 records outcome=failure under the capture operation. Before, the same failure was recorded under GitVcsDriver.checkpoints.hasHeadCommit. Consequence: the metric for the capture operation now shows failures for every unborn-HEAD capture. This is an attribution shift only, no behaviour change.\",\"evidence\":[\"apps/server/src/vcs/GitVcsDriver.ts:837-851\",\"apps/server/src/vcs/VcsProcess.ts:221\",\"apps/server/src/vcs/VcsProcess.ts:255-265\",\"apps/server/src/vcs/VcsProcess.ts:76-84 (capture operation is a known metric label)\"],\"safe_line\":\"\",\"covered_by\":null,\"consequence\":\"Capture failure-rate dashboards count expected unborn-HEAD exits as failures.\",\"missing\":\"\"}]}"
+}

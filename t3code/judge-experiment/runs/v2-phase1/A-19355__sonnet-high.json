@@ -1,0 +1,107 @@
+{
+  "format": "hazard-judge/1",
+  "input": "t3code/contract-order-experiment/runs/A-19355.json",
+  "config": "sonnet-high",
+  "model": "claude-sonnet-5-5",
+  "effort": "high",
+  "prompt_version": "v2",
+  "prompt_sha256": "6bc639f933c989dddce5dfcce1bca111ebdb3d50080265a84700130f19661596",
+  "reviewed_commit": "519d64f6cec0a0f9ed18fbca4a3f8695cac44506",
+  "base_commit": "adb04202b25c1c45255e76be9f03f0b346b9c5c4",
+  "wall_ms": 151744,
+  "cost_usd": 0.4789434999999999,
+  "duration_ms": 151263,
+  "num_turns": 31,
+  "usage": {
+    "input_tokens": 46,
+    "cache_creation_input_tokens": 59814,
+    "cache_read_input_tokens": 1017591,
+    "output_tokens": 13735,
+    "output_tokens_details": {
+      "thinking_tokens": 8004
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 59814,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1882,
+        "cache_read_input_tokens": 67405,
+        "cache_creation_input_tokens": 861,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 861
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "is_error": false,
+  "subtype": "success",
+  "model_usage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 4744,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00048640000000000006,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-sonnet-5-5": {
+      "inputTokens": 46,
+      "outputTokens": 13735,
+      "cacheReadInputTokens": 1017591,
+      "cacheCreationInputTokens": 59814,
+      "webSearchRequests": 0,
+      "costUSD": 0.4784570999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 8004,
+      "cacheCreationEphemeral5mInputTokens": 0,
+      "cacheCreationEphemeral1hInputTokens": 59814,
+      "canonicalModel": "claude-sonnet-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "verdicts": [
+    {
+      "note_index": 0,
+      "verdict": "cannot_tell",
+      "summary": "The release-time roster clear mostly holds up. The byte-for-byte round-trip risk is already finding 0. One extra hazard I could not confirm or rule out: every clear write is a `provider-thread.updated` event, and the projection reducer uses that event to move the app thread's `activeProviderThreadId`.",
+      "evidence": [
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:857-873 (the clear writes `provider-thread.updated` for each captured provider thread, not only the active one)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:2249-2276 (any `provider-thread.updated` with a non-null appThreadId sets `thread.activeProviderThreadId = event.payload.id` and `updatedAt`)",
+        "apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533 and :1066-1072 (the detach path captures every provider thread of the session with a non-empty roster)",
+        "apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:552-578 (the startup sibling writes the same whole-row events for every thread, so the side effect is not new in kind)",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService.ts:646-651 (the code already notes that `activeProviderThreadId` 'flaps' when two live rows exist for one app thread)",
+        "apps/server/src/orchestration-v2/ProjectionStore.ts:3076-3091 (the read returns provider threads owned by the thread's nodes and subagents too)",
+        "apps/server/src/orchestration-v2/RunExecutionService.ts:680-684,794-801,1334-1344 (the finalization write re-emits `latestProviderThread` with its old roster; the ordering against the clear is racy on a `runtime_error` release with an active run)",
+        "packages/provider-muse/src/server/adapter.ts:694-707 (Muse task ids are native item ids; whether a replacement host reuses them is not visible here)"
+      ],
+      "scenario": "An app thread has two provider threads bound to the same exclusive session, both with non-empty rosters. Examples are an older row left by rollback/fork, or a child row whose `appThreadId` is non-null. The session is released. `released` is built in projection order, so the last row written becomes `activeProviderThreadId`, and the thread's `updatedAt` is also reset to the clear time. If that last row is not the active one, the app thread points at the wrong provider thread. I could not confirm that Claude or Muse leave non-empty rosters on non-active provider threads of the same session, so this is unproven. Related race I also could not settle: on a `runtime_error` release during a running turn, the ingest fiber's failure finalization (RunExecutionService.ts:1334-1344) writes `latestProviderThread` with its stale roster. If that lands after the clear commits, the roster comes back and the thread stays Waiting.",
+      "missing": "Whether Claude or Muse can keep non-empty `pendingBackgroundTasks` on more than one provider thread of the same app thread and session, and whether such a row can be non-active or have a higher `first_run_ordinal` than the active row. Also the real ordering between the ingest fiber's failure finalization and the release's clear write.",
+      "introduced_by_change": true,
+      "severity": "low"
+    }
+  ],
+  "result_text": "{\"verdicts\":[{\"note_index\":0,\"verdict\":\"cannot_tell\",\"summary\":\"The release-time roster clear mostly holds up. The byte-for-byte round-trip risk is already finding 0. One extra hazard I could not confirm or rule out: every clear write is a `provider-thread.updated` event, and the projection reducer uses that event to move the app thread's `activeProviderThreadId`.\",\"evidence\":[\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:857-873 (the clear writes `provider-thread.updated` for each captured provider thread, not only the active one)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:2249-2276 (any `provider-thread.updated` with a non-null appThreadId sets `thread.activeProviderThreadId = event.payload.id` and `updatedAt`)\",\"apps/server/src/orchestration-v2/ProviderSessionManager.ts:2524-2533 and :1066-1072 (the detach path captures every provider thread of the session with a non-empty roster)\",\"apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts:552-578 (the startup sibling writes the same whole-row events for every thread, so the side effect is not new in kind)\",\"apps/server/src/orchestration-v2/ProviderTurnStartService.ts:646-651 (the code already notes that `activeProviderThreadId` 'flaps' when two live rows exist for one app thread)\",\"apps/server/src/orchestration-v2/ProjectionStore.ts:3076-3091 (the read returns provider threads owned by the thread's nodes and subagents too)\",\"apps/server/src/orchestration-v2/RunExecutionService.ts:680-684,794-801,1334-1344 (the finalization write re-emits `latestProviderThread` with its old roster; the ordering against the clear is racy on a `runtime_error` release with an active run)\",\"packages/provider-muse/src/server/adapter.ts:694-707 (Muse task ids are native item ids; whether a replacement host reuses them is not visible here)\"],\"scenario\":\"An app thread has two provider threads bound to the same exclusive session, both with non-empty rosters. Examples are an older row left by rollback/fork, or a child row whose `appThreadId` is non-null. The session is released. `released` is built in projection order, so the last row written becomes `activeProviderThreadId`, and the thread's `updatedAt` is also reset to the clear time. If that last row is not the active one, the app thread points at the wrong provider thread. I could not confirm that Claude or Muse leave non-empty rosters on non-active provider threads of the same session, so this is unproven. Related race I also could not settle: on a `runtime_error` release during a running turn, the ingest fiber's failure finalization (RunExecutionService.ts:1334-1344) writes `latestProviderThread` with its stale roster. If that lands after the clear commits, the roster comes back and the thread stays Waiting.\",\"missing\":\"Whether Claude or Muse can keep non-empty `pendingBackgroundTasks` on more than one provider thread of the same app thread and session, and whether such a row can be non-active or have a higher `first_run_ordinal` than the active row. Also the real ordering between the ingest fiber's failure finalization and the release's clear write.\",\"introduced_by_change\":true,\"severity\":\"low\"}]}"
+}
