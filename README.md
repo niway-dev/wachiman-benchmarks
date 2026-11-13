@@ -30,7 +30,7 @@ This repository holds data and reports only. The reviewer's code, specs and deci
 | [`2026-11-02-e1-sonnet/`](2026-11-02-e1-sonnet/README.md) | Wachiman v1.4.0 on Sonnet (experiment E1). |
 | [`2026-11-02-field/`](2026-11-02-field/README.md) | Field run on the real kaipu-record workspaces PRs. |
 | [`replay/`](replay/README.md) | How a pull request is replayed into the `kaipu-bench-*` repositories. |
-| [`t3code/`](t3code/README.md) | Bug history of pingdotgg/t3code (791 merged PRs, 2026-11-06 to 11-11): CodeRabbit and Macroscope threads, escaped bugs traced to their introducing PR, a 183-row catalogue and a replay shortlist. No Wachiman run yet. |
+| [`t3code/`](t3code/README.md) | A measurement unit next to `martian/`: 7 escaped bugs (5 valid) and 5 replayed PRs of pingdotgg/t3code with a machine-readable answer key (`cases.tsv`), one row per measured run set (`history.md`) and a runner (`scripts/run-set.sh`). Also the bug-history mining it comes from (791 merged PRs, CodeRabbit and Macroscope threads, a 183-row catalogue). |
 | [`mining/`](mining) | Throwaway scripts that produced the bug catalogue (kept for provenance). |
 | [`dataset/`](dataset/README.md) | The structured dataset and its raw GitHub API snapshots. |
 | [`scripts/`](scripts) | `fetch`, `normalize`, `runs` and `labels`: rebuild the dataset from GitHub. `pair`: pair Wachiman with another reviewer commit by commit (below). |
