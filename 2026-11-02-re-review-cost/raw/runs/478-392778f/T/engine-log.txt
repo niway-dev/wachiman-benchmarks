@@ -1,0 +1,65 @@
+Reviewed since 64db30b: apps/kaipu-record/src/main/workspaces/index.ts, apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts, apps/kaipu-record/src/main/workspaces/registry.ts, apps/kaipu-record/src/main/workspaces/relocate.test.ts, apps/kaipu-record/src/main/workspaces/relocate.ts, apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx, apps/kaipu-record/src/shared/types/workspaces.ts.
+PROTOTYPE threads=delta: 7 of 14 open thread(s) sent.
+evidence: 8 symbol(s) found, 24 call site(s), 12948 bytes, 606 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":12,"cost_usd":0.5036618,"duration_ms":54934}
+--- review at 392778f ---
+👮 **Wachiman** · review of the changes since `64db30b`, at `392778f`: all 7 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The round fixes both points it set out to fix. Picking the current folder in Change folder… now returns `unchanged: true` from main to the renderer, and no misleading toast appears. An offline edit of a `pendingInit` workspace keeps the flag, so the moved folder is still accepted, and the new registry test pins that. Two findings, both at "consider": keeping `pendingInit` lets the adoption branch in `availability` silently replace an offline rename and leave `pendingIdentity` set, and no renderer test covers the suppressed toast. Of the earlier threads, six are addressed; the dropped-capture one stays open as an acknowledged follow-up.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Change folder… on the folder the workspace already points at returns `unchanged: true`, and the renderer shows no toast (`apps/kaipu-record/src/main/workspaces/relocate.ts:43`) — `relocateFolder` passes the flag through to the IPC result. Both callers (the dialog at workspace-dialog.tsx:145 and `changeFolder` at workspaces-context.tsx:185) call `onRelocated`, which returns before `showToast` when `unchanged` is set. The row and dialog update through `bro… If it fails: A rejected IPC call still shows `relocateUncertain` (workspaces-context.tsx:180-182). The early return writes nothing, so it cannot fail halfway. Evidence: `apps/kaipu-record/src/main/workspaces/relocate.ts:37-48`, `apps/kaipu-record/src/main/workspaces/index.ts:340-350`, `apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:165-192`, `apps/kaipu-record/src/main/workspaces/registry.ts:832-858`.
+- An offline edit keeps `pendingInit` when the identity was not written to the folder (`apps/kaipu-record/src/main/workspaces/registry.ts:634`) — The moved folder is accepted. If the folder holds another id, the rename is silently replaced by the folder's name. If it fails: A failed identity write in `availability` leaves the entry pending, and the next probe retries. Evidence: `apps/kaipu-record/src/main/workspaces/registry.ts:623-639`, `apps/kaipu-record/src/main/workspaces/registry.ts:668-755`, `apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts:221-243`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 7 | 51 | 6 | reviewed | 12 | $0.50 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.316 · effort high · $0.50</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=392778fe1da065619238c2cb901d0d35558097a4 -->
+--- apps/kaipu-record/src/main/workspaces/registry.ts:634 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Keeping `pendingInit` after an offline edit lets a later adoption silently drop that edit (confidence medium)**
+
+An offline edit of a `pendingInit` workspace now keeps `pendingInit` and also sets `pendingIdentity` (lines 634, 638). Suppose the folder comes back holding an identity with another, unregistered id, for example one written by another Mac. `availability` then takes the adoption branch (lines 718-726): `Object.assign(entry, entryFromIdentity(...))` replaces the registry's newer name and color with the folder's values. It clears `pendingInit` but leaves `pendingIdentity` set. The next probe matches ids and "catches up" the file with values that are already the folder's (lines 670-682), so the user's rename is gone and nothing tells them.
+
+Before this commit the edit cleared `pendingInit`, so this folder was reported as `different` and the rename was kept. The trigger is rare and needs the case you already deferred (another id in the folder). Two possible fixes: when `pendingIdentity` is set, keep the registry's name and color in the adoption branch, or refuse the adoption. Either way, also clear `pendingIdentity` there.
+
+<!-- wachi:finding -->
+--- apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:168 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: No renderer test covers the suppressed toast for an unchanged relocate (confidence high)**
+
+The main side asserts `unchanged: true` (`relocate.test.ts:158`). No renderer test checks that `onRelocated` skips the `folderChanged` toast when `unchanged` is set, or that it still shows the toast otherwise. A search of the renderer tests finds no assertion on `folderChanged` at all. That early return is the user-visible fix from the earlier thread, so a regression there would go unnoticed. A small `WorkspacesProvider` test (Change folder… resolving `{ ok: true, unchanged: true }` shows no toast; `{ ok: true }` shows one) would pin it.
+
+<!-- wachi:finding -->
+--- reply to 4438597058: Looks addressed ---
+Fixed. The rollback at registry.ts:643-647 restores the old file, or removes the new one when the folder had none.
+--- reply to 4438597062: Looks addressed ---
+Fixed. Name and color are now checked separately.
+--- reply to 4438597064: Looks addressed ---
+Fixed. `edit` re-runs the name check inside the locked `update` (registry.ts:626) and undoes the identity write on `NameTakenError`.
+--- reply to 4439290166: Looks addressed ---
+Fixed for the no-identity case: `checkRelocate` accepts it for `pendingInit` (registry.ts:855), and this round keeps `pendingInit` through an offline edit (line 634). The other-id case is deferred as you said. One side effect of keeping `pendingInit` is raised as a separate finding: the adoption branch can now drop an offline rename.
+--- reply to 4439290170: Still open ---
+Acknowledged as a follow-up. The current code still drops pending captures in the relocate transaction, which is out of scope here.
+--- reply to 4439290177: Looks addressed ---
+Fixed. The same path now returns early, before `relocateActive` (relocate.ts:43-45).
+--- reply to 4439336705: Looks addressed ---
+Fixed. `unchanged: true` goes from relocate.ts:44 through index.ts:349 to workspaces-context.tsx:168, which skips the toast. A renderer test for it is suggested separately.

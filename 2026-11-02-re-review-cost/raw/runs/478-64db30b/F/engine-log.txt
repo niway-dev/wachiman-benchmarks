@@ -1,0 +1,44 @@
+Reviewed since c573b8e: apps/kaipu-record/src/main/workspaces/registry-create-edit.test.ts, apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts, apps/kaipu-record/src/main/workspaces/registry.ts, apps/kaipu-record/src/main/workspaces/relocate.test.ts, apps/kaipu-record/src/main/workspaces/relocate.ts, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx, apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx, packages/i18n/messages/en.json, packages/i18n/messages/es.json.
+evidence: 24 symbol(s) found, 24 call site(s), 15061 bytes, 665 ms, truncated
+Data-path questions for part 1 of 1: overlapping-calls, stale-write-back
+{"is_error":false,"terminal_reason":"success","turns":8,"cost_usd":0.531179,"duration_ms":76684}
+--- review at 64db30b ---
+👮 **Wachiman** · review of the changes since `c573b8e`, at `64db30b`: all 10 files reviewed.
+
+1 finding(s): 1 to consider; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+This push adds a separate `pendingColorUpgrade` marker. It writes the upgrade to the folder only while the folder still holds the old Default and rose, and adopts the folder's file otherwise. The early return in relocate.ts and the `pendingInit` acceptance in `checkRelocate` are correct as far as I could trace them, the new catch paths show "uncertain" messages, and the en/es strings match. One low-confidence question: nothing locks a probe's read-then-write against a concurrent `edit`, so an overlapping probe could restore the old name. Of the earlier threads, four are addressed. Two are still open: dropping pending captures on a real relocate, and the different-id adoption half of the `pendingInit` relocate thread.
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 10 | 249 | 5 | reviewed | 8 | $0.53 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.316 · effort high · $0.53</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=64db30b0dec2590302f85ea9b51057026094bac4 -->
+--- apps/kaipu-record/src/main/workspaces/registry.ts:684 ---
+👮 **Wachiman** · 🟡❓ **Consider · question: Can a probe that overlaps an edit write the old name back over the folder's identity? (confidence low)**
+
+Nothing locks `availability` per workspace. Its new deferred-upgrade branch reads the file at line 657, checks `entry.pendingColorUpgrade` (still `true` in memory until `edit`'s `update` runs at 619-632), and then writes `{ ...identity.identity, color }` at line 684 using the snapshot it read. Here is the overlap I'm asking about. `listState` starts probe B (`index.ts:136`) just as the folder comes back, and B reads the old Default/rose file. Meanwhile an `edit` to "Studio" runs its own probe, then writes "Studio" at line 612. If B's write lands after that, the folder holds "Default workspace" and kaipu again, while the registry says "Studio" with no pending flag. The next probe finds `stale` at lines 694-699 and adopts the folder's file, so the rename is lost without any message. For this to happen, B's single write has to outlast a whole probe-write, prefs-write, read and write in `edit`, and I can't tell whether anything (for example an IPC queue) already keeps probes and edits from overlapping. Is something serializing them? If not, routing the probe's write-back branches and `edit` through one per-workspace lock would close this gap. The existing `pendingIdentity` branch at line 666 has the same read-then-write shape.
+
+<!-- wachi:finding -->
+--- reply to 4439290166: Still open ---
+Half fixed. A `pendingInit` entry now accepts a moved folder that has `.kaipu/` items and no identity (line 848), and the new test covers it. The second half is still open: a `pendingInit` entry whose moved folder already holds an identity with an id this Mac doesn't know is still refused as `different` at lines 836-838, while `availability` would adopt that id (lines 711-720).
+--- reply to 4439290170: Still open ---
+Not changed in this push. `relocateActive` still calls `deps.dropPendingCaptures()` (`switch-transaction.ts:131`), so a real move still throws away an unsaved capture that could have been saved under the same workspace id. The new same-folder early return only avoids this for the no-op case.
+--- reply to 4439290177: Looks addressed ---
+Addressed. `relocateWorkspace` now returns the unchanged entry when the chosen path resolves to the current one, before `relocateActive` (relocate.ts:42-43). `relocate.test.ts` checks that no window is asked to save and that the generation stays at 1.
+--- reply to 4439290180: Looks addressed ---
+Addressed. The “Move to” / «Mover a» sentence is gone from both locales, and the dialog test now asserts it is absent.
+--- reply to 4439290186: Looks addressed ---
+Addressed. Both the dialog's and the context's `changeFolder` now catch a rejected call and show `relocateUncertain`, which says the result is unknown. That is more accurate than `relocateFailed`, since main may already have applied the change. There is a test for the dialog path.
+--- reply to 4439290193: Looks addressed ---
+Addressed. The test now resolves a relocate, checks that Save stays disabled, then picks a color and checks that Save becomes enabled.

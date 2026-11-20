@@ -1,0 +1,287 @@
+{
+  "structuredOutput": {
+    "files_reviewed": [
+      "apps/kaipu-record/src/shared/types/workspaces.ts",
+      "apps/kaipu-record/src/main/workspaces/index.ts",
+      "apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts",
+      "apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx",
+      "apps/documentation/src/content/docs/backlog/several-workspaces.md",
+      "apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md",
+      "packages/i18n/messages/en.json",
+      "packages/i18n/messages/es.json"
+    ],
+    "files_skipped": [],
+    "findings": [
+      {
+        "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+        "line": 347,
+        "severity": "consider",
+        "topic": "tests",
+        "confidence": "high",
+        "title": "No test pins that \"Change folder…\" is refused with `moving` during a group move",
+        "body": "This commit moves `busy: busyNow` into `activeTransactionDeps()`, so relocation now picks up the move lock as well. There are three places it applies: the check before the picker (`relocateFolder` → `relocateRefusal`, index.ts:483), the check after the picker (relocate.ts:33), and the late check inside `relocateActive` (switch-transaction.ts:115-118). `busyNow` returns `\"moving\"` while `moveRun` is set (index.ts:66-67).\n\nThe switch has a test for `moving` (switch-transaction.test.ts:73-74). The relocate tests only check `recording` (relocate.test.ts:170, 185). Nothing tests `relocateRefusalMessage`'s new `moving` → `relocateMoving` branch either. If someone later moves `busy` back into the switch-only deps, relocation would silently stop refusing during a move and no test would fail. Consider adding one `relocateWorkspace` case with `busy: () => \"moving\"`."
+      },
+      {
+        "path": "apps/documentation/src/content/docs/backlog/several-workspaces.md",
+        "line": 26,
+        "severity": "consider",
+        "topic": "docs",
+        "confidence": "high",
+        "title": "Change folder refusal list leaves out \"while a move runs\"",
+        "body": "The backlog banner says Change folder… is refused \"while a recording or export runs\". The spec's `workspaces:relocate` row (specs/2026-10-29-several-workspaces-design.md:1302) says the same. On this branch it is also refused while a group move runs (`WorkspaceRelocateRefusal` now includes `\"moving\"`, shared/types/workspaces.ts:157-158, via `busyNow`, index.ts:66-67). Since this PR adds that lock, consider mentioning it in the part 2 text, or in the relocate row."
+      }
+    ],
+    "contracts": [
+      {
+        "action": "Change folder… (relocate) is refused with reason `moving` while a group move runs",
+        "location": "apps/kaipu-record/src/main/workspaces/index.ts:347",
+        "equivalent_path": "switchWorkspace's busy check, which already returned `moving` (switch-transaction.ts:50-51, 64-68)",
+        "before_after": "Before: `busy` was only in runSwitch's own deps, so `relocateFolder` built its deps from `activeTransactionDeps()` with no `busy` at all. Now `busy: busyNow` sits in `activeTransactionDeps`, which both switch and relocate spread. It returns host.busy() (recording/exporting) or `moving` while `moveRun` is set. Relocate checks it before the picker (relocateRefusal), again after the picker (relocateWorkspace), and after prepareWindows for the active workspace (relocateActive).",
+        "visible_effect": "relocateRefusalMessage maps `moving` to `workspaces.relocateMoving` (\"Wait for the move to finish…\"), shown in the dialog's alert; en and es both define the key.",
+        "failure_mode": "A move that starts during the picker is caught by the second relocateRefusal check. For the active workspace, one that starts during prepareWindows is caught by the late check. After that, gate.close() drains the move's gated call. The default branch now uses `relocateFailed`, so an unexpected reason still shows a message.",
+        "status": "closed",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/index.ts:66-67",
+          "apps/kaipu-record/src/main/workspaces/index.ts:343-357",
+          "apps/kaipu-record/src/main/workspaces/index.ts:359-371",
+          "apps/kaipu-record/src/main/workspaces/index.ts:475-503",
+          "apps/kaipu-record/src/main/workspaces/relocate.ts:18-34",
+          "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-121",
+          "apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:35-44",
+          "packages/i18n/messages/en.json:2630",
+          "packages/i18n/messages/es.json:2630"
+        ],
+        "open_question": "",
+        "candidates": []
+      }
+    ],
+    "thread_replies": [
+      {
+        "comment_id": 4438769208,
+        "status": "addressed",
+        "reply": "Confirmed: the catch now calls `refuseAll(refusalOfError(error))` (index.ts:217). That maps StaleWorkspaceError to stale, MaintenanceError to maintenance, and anything else to io (move-group.ts:62-66)."
+      },
+      {
+        "comment_id": 4438769214,
+        "status": "addressed",
+        "reply": "Confirmed: a rejected `loadDeviceId` resets `deviceId = null` before rethrowing (index.ts:174-177), so the next group retries."
+      },
+      {
+        "comment_id": 4438769220,
+        "status": "addressed",
+        "reply": "Confirmed: the `skipped` doc now says only Stop fills it, and that a whole-group refusal lists items in `failed` (shared/types/workspaces.ts:252-256). That matches `refuseAll`."
+      },
+      {
+        "comment_id": 4438769272,
+        "status": "addressed",
+        "reply": "Confirmed: `chipLabel`, `newWorkspace` and `reason_stale` now say \"espacio de trabajo\" (es.json:2639, 2645, 2685)."
+      }
+    ],
+    "summary": "I found no defects in the new code since 02dbb2ec. All findings are \"consider\".\n\n**What I checked**\n- **Move lock and relocation.** `busy: busyNow` moved into `activeTransactionDeps()`. As a result, \"Change folder…\" is now refused with `moving` while a group move runs. That refusal applies before the picker, after it, and inside the active-workspace transaction.\n- **Messages.** The renderer maps `moving` to the new `relocateMoving` string. The new `relocateNotWorkspace` and `relocateFailed` keys exist once each, in both en.json and es.json.\n- **Dialog test.** Its new assertion on \"“Move to”\" matches the en string.\n- **Spec table.** The rebuilt channel table has no duplicate rows.\n\n**Two \"consider\" items**\n- No test covers the relocate refusal for `moving`.\n- The backlog doc and the spec's refusal list for Change folder… don't mention the move lock.\n\n**Earlier threads**\nAll four earlier threads on this part's files are addressed in the current code."
+  },
+  "text": "{\"files_reviewed\":[\"apps/kaipu-record/src/shared/types/workspaces.ts\",\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx\",\"apps/documentation/src/content/docs/backlog/several-workspaces.md\",\"apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md\",\"packages/i18n/messages/en.json\",\"packages/i18n/messages/es.json\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":347,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"No test pins that \\\"Change folder…\\\" is refused with `moving` during a group move\",\"body\":\"This commit moves `busy: busyNow` into `activeTransactionDeps()`, so relocation now picks up the move lock as well. There are three places it applies: the check before the picker (`relocateFolder` → `relocateRefusal`, index.ts:483), the check after the picker (relocate.ts:33), and the late check inside `relocateActive` (switch-transaction.ts:115-118). `busyNow` returns `\\\"moving\\\"` while `moveRun` is set (index.ts:66-67).\\n\\nThe switch has a test for `moving` (switch-transaction.test.ts:73-74). The relocate tests only check `recording` (relocate.test.ts:170, 185). Nothing tests `relocateRefusalMessage`'s new `moving` → `relocateMoving` branch either. If someone later moves `busy` back into the switch-only deps, relocation would silently stop refusing during a move and no test would fail. Consider adding one `relocateWorkspace` case with `busy: () => \\\"moving\\\"`.\"},{\"path\":\"apps/documentation/src/content/docs/backlog/several-workspaces.md\",\"line\":26,\"severity\":\"consider\",\"topic\":\"docs\",\"confidence\":\"high\",\"title\":\"Change folder refusal list leaves out \\\"while a move runs\\\"\",\"body\":\"The backlog banner says Change folder… is refused \\\"while a recording or export runs\\\". The spec's `workspaces:relocate` row (specs/2026-10-29-several-workspaces-design.md:1302) says the same. On this branch it is also refused while a group move runs (`WorkspaceRelocateRefusal` now includes `\\\"moving\\\"`, shared/types/workspaces.ts:157-158, via `busyNow`, index.ts:66-67). Since this PR adds that lock, consider mentioning it in the part 2 text, or in the relocate row.\"}],\"contracts\":[{\"action\":\"Change folder… (relocate) is refused with reason `moving` while a group move runs\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:347\",\"equivalent_path\":\"switchWorkspace's busy check, which already returned `moving` (switch-transaction.ts:50-51, 64-68)\",\"before_after\":\"Before: `busy` was only in runSwitch's own deps, so `relocateFolder` built its deps from `activeTransactionDeps()` with no `busy` at all. Now `busy: busyNow` sits in `activeTransactionDeps`, which both switch and relocate spread. It returns host.busy() (recording/exporting) or `moving` while `moveRun` is set. Relocate checks it before the picker (relocateRefusal), again after the picker (relocateWorkspace), and after prepareWindows for the active workspace (relocateActive).\",\"visible_effect\":\"relocateRefusalMessage maps `moving` to `workspaces.relocateMoving` (\\\"Wait for the move to finish…\\\"), shown in the dialog's alert; en and es both define the key.\",\"failure_mode\":\"A move that starts during the picker is caught by the second relocateRefusal check. For the active workspace, one that starts during prepareWindows is caught by the late check. After that, gate.close() drains the move's gated call. The default branch now uses `relocateFailed`, so an unexpected reason still shows a message.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:66-67\",\"apps/kaipu-record/src/main/workspaces/index.ts:343-357\",\"apps/kaipu-record/src/main/workspaces/index.ts:359-371\",\"apps/kaipu-record/src/main/workspaces/index.ts:475-503\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:18-34\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-121\",\"apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:35-44\",\"packages/i18n/messages/en.json:2630\",\"packages/i18n/messages/es.json:2630\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[{\"comment_id\":4438769208,\"status\":\"addressed\",\"reply\":\"Confirmed: the catch now calls `refuseAll(refusalOfError(error))` (index.ts:217). That maps StaleWorkspaceError to stale, MaintenanceError to maintenance, and anything else to io (move-group.ts:62-66).\"},{\"comment_id\":4438769214,\"status\":\"addressed\",\"reply\":\"Confirmed: a rejected `loadDeviceId` resets `deviceId = null` before rethrowing (index.ts:174-177), so the next group retries.\"},{\"comment_id\":4438769220,\"status\":\"addressed\",\"reply\":\"Confirmed: the `skipped` doc now says only Stop fills it, and that a whole-group refusal lists items in `failed` (shared/types/workspaces.ts:252-256). That matches `refuseAll`.\"},{\"comment_id\":4438769272,\"status\":\"addressed\",\"reply\":\"Confirmed: `chipLabel`, `newWorkspace` and `reason_stale` now say \\\"espacio de trabajo\\\" (es.json:2639, 2645, 2685).\"}],\"summary\":\"I found no defects in the new code since 02dbb2ec. All findings are \\\"consider\\\".\\n\\n**What I checked**\\n- **Move lock and relocation.** `busy: busyNow` moved into `activeTransactionDeps()`. As a result, \\\"Change folder…\\\" is now refused with `moving` while a group move runs. That refusal applies before the picker, after it, and inside the active-workspace transaction.\\n- **Messages.** The renderer maps `moving` to the new `relocateMoving` string. The new `relocateNotWorkspace` and `relocateFailed` keys exist once each, in both en.json and es.json.\\n- **Dialog test.** Its new assertion on \\\"“Move to”\\\" matches the en string.\\n- **Spec table.** The rebuilt channel table has no duplicate rows.\\n\\n**Two \\\"consider\\\" items**\\n- No test covers the relocate refusal for `moving`.\\n- The backlog doc and the spec's refusal list for Change folder… don't mention the move lock.\\n\\n**Earlier threads**\\nAll four earlier threads on this part's files are addressed in the current code.\"}",
+  "costUsd": 0.6515662000000001,
+  "turns": 18,
+  "durationMs": 60649,
+  "terminalReason": "success",
+  "isError": false,
+  "raw": {
+    "duration_api_ms": 60200,
+    "stop_reason": "tool_use",
+    "session_id": "ec5eda83-f632-4212-bf6f-3addca0b5663",
+    "total_cost_usd": 0.6515662000000001,
+    "usage": {
+      "input_tokens": 22,
+      "cache_creation_input_tokens": 53047,
+      "cache_read_input_tokens": 461611,
+      "output_tokens": 6739,
+      "output_tokens_details": {
+        "thinking_tokens": 1832
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 53047,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 2605,
+          "cache_read_input_tokens": 57794,
+          "cache_creation_input_tokens": 288,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 288
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-opus-5-5": {
+        "inputTokens": 22,
+        "outputTokens": 6739,
+        "cacheReadInputTokens": 461611,
+        "cacheCreationInputTokens": 53047,
+        "webSearchRequests": 0,
+        "costUSD": 0.6515662000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 1832,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 53047,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 18,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"files_reviewed\":[\"apps/kaipu-record/src/shared/types/workspaces.ts\",\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx\",\"apps/documentation/src/content/docs/backlog/several-workspaces.md\",\"apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md\",\"packages/i18n/messages/en.json\",\"packages/i18n/messages/es.json\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":347,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"No test pins that \\\"Change folder…\\\" is refused with `moving` during a group move\",\"body\":\"This commit moves `busy: busyNow` into `activeTransactionDeps()`, so relocation now picks up the move lock as well. There are three places it applies: the check before the picker (`relocateFolder` → `relocateRefusal`, index.ts:483), the check after the picker (relocate.ts:33), and the late check inside `relocateActive` (switch-transaction.ts:115-118). `busyNow` returns `\\\"moving\\\"` while `moveRun` is set (index.ts:66-67).\\n\\nThe switch has a test for `moving` (switch-transaction.test.ts:73-74). The relocate tests only check `recording` (relocate.test.ts:170, 185). Nothing tests `relocateRefusalMessage`'s new `moving` → `relocateMoving` branch either. If someone later moves `busy` back into the switch-only deps, relocation would silently stop refusing during a move and no test would fail. Consider adding one `relocateWorkspace` case with `busy: () => \\\"moving\\\"`.\"},{\"path\":\"apps/documentation/src/content/docs/backlog/several-workspaces.md\",\"line\":26,\"severity\":\"consider\",\"topic\":\"docs\",\"confidence\":\"high\",\"title\":\"Change folder refusal list leaves out \\\"while a move runs\\\"\",\"body\":\"The backlog banner says Change folder… is refused \\\"while a recording or export runs\\\". The spec's `workspaces:relocate` row (specs/2026-10-29-several-workspaces-design.md:1302) says the same. On this branch it is also refused while a group move runs (`WorkspaceRelocateRefusal` now includes `\\\"moving\\\"`, shared/types/workspaces.ts:157-158, via `busyNow`, index.ts:66-67). Since this PR adds that lock, consider mentioning it in the part 2 text, or in the relocate row.\"}],\"contracts\":[{\"action\":\"Change folder… (relocate) is refused with reason `moving` while a group move runs\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:347\",\"equivalent_path\":\"switchWorkspace's busy check, which already returned `moving` (switch-transaction.ts:50-51, 64-68)\",\"before_after\":\"Before: `busy` was only in runSwitch's own deps, so `relocateFolder` built its deps from `activeTransactionDeps()` with no `busy` at all. Now `busy: busyNow` sits in `activeTransactionDeps`, which both switch and relocate spread. It returns host.busy() (recording/exporting) or `moving` while `moveRun` is set. Relocate checks it before the picker (relocateRefusal), again after the picker (relocateWorkspace), and after prepareWindows for the active workspace (relocateActive).\",\"visible_effect\":\"relocateRefusalMessage maps `moving` to `workspaces.relocateMoving` (\\\"Wait for the move to finish…\\\"), shown in the dialog's alert; en and es both define the key.\",\"failure_mode\":\"A move that starts during the picker is caught by the second relocateRefusal check. For the active workspace, one that starts during prepareWindows is caught by the late check. After that, gate.close() drains the move's gated call. The default branch now uses `relocateFailed`, so an unexpected reason still shows a message.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:66-67\",\"apps/kaipu-record/src/main/workspaces/index.ts:343-357\",\"apps/kaipu-record/src/main/workspaces/index.ts:359-371\",\"apps/kaipu-record/src/main/workspaces/index.ts:475-503\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:18-34\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-121\",\"apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:35-44\",\"packages/i18n/messages/en.json:2630\",\"packages/i18n/messages/es.json:2630\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[{\"comment_id\":4438769208,\"status\":\"addressed\",\"reply\":\"Confirmed: the catch now calls `refuseAll(refusalOfError(error))` (index.ts:217). That maps StaleWorkspaceError to stale, MaintenanceError to maintenance, and anything else to io (move-group.ts:62-66).\"},{\"comment_id\":4438769214,\"status\":\"addressed\",\"reply\":\"Confirmed: a rejected `loadDeviceId` resets `deviceId = null` before rethrowing (index.ts:174-177), so the next group retries.\"},{\"comment_id\":4438769220,\"status\":\"addressed\",\"reply\":\"Confirmed: the `skipped` doc now says only Stop fills it, and that a whole-group refusal lists items in `failed` (shared/types/workspaces.ts:252-256). That matches `refuseAll`.\"},{\"comment_id\":4438769272,\"status\":\"addressed\",\"reply\":\"Confirmed: `chipLabel`, `newWorkspace` and `reason_stale` now say \\\"espacio de trabajo\\\" (es.json:2639, 2645, 2685).\"}],\"summary\":\"I found no defects in the new code since 02dbb2ec. All findings are \\\"consider\\\".\\n\\n**What I checked**\\n- **Move lock and relocation.** `busy: busyNow` moved into `activeTransactionDeps()`. As a result, \\\"Change folder…\\\" is now refused with `moving` while a group move runs. That refusal applies before the picker, after it, and inside the active-workspace transaction.\\n- **Messages.** The renderer maps `moving` to the new `relocateMoving` string. The new `relocateNotWorkspace` and `relocateFailed` keys exist once each, in both en.json and es.json.\\n- **Dialog test.** Its new assertion on \\\"“Move to”\\\" matches the en string.\\n- **Spec table.** The rebuilt channel table has no duplicate rows.\\n\\n**Two \\\"consider\\\" items**\\n- No test covers the relocate refusal for `moving`.\\n- The backlog doc and the spec's refusal list for Change folder… don't mention the move lock.\\n\\n**Earlier threads**\\nAll four earlier threads on this part's files are addressed in the current code.\"}",
+    "structured_output": {
+      "files_reviewed": [
+        "apps/kaipu-record/src/shared/types/workspaces.ts",
+        "apps/kaipu-record/src/main/workspaces/index.ts",
+        "apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts",
+        "apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.test.tsx",
+        "apps/documentation/src/content/docs/backlog/several-workspaces.md",
+        "apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md",
+        "packages/i18n/messages/en.json",
+        "packages/i18n/messages/es.json"
+      ],
+      "files_skipped": [],
+      "findings": [
+        {
+          "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+          "line": 347,
+          "severity": "consider",
+          "topic": "tests",
+          "confidence": "high",
+          "title": "No test pins that \"Change folder…\" is refused with `moving` during a group move",
+          "body": "This commit moves `busy: busyNow` into `activeTransactionDeps()`, so relocation now picks up the move lock as well. There are three places it applies: the check before the picker (`relocateFolder` → `relocateRefusal`, index.ts:483), the check after the picker (relocate.ts:33), and the late check inside `relocateActive` (switch-transaction.ts:115-118). `busyNow` returns `\"moving\"` while `moveRun` is set (index.ts:66-67).\n\nThe switch has a test for `moving` (switch-transaction.test.ts:73-74). The relocate tests only check `recording` (relocate.test.ts:170, 185). Nothing tests `relocateRefusalMessage`'s new `moving` → `relocateMoving` branch either. If someone later moves `busy` back into the switch-only deps, relocation would silently stop refusing during a move and no test would fail. Consider adding one `relocateWorkspace` case with `busy: () => \"moving\"`."
+        },
+        {
+          "path": "apps/documentation/src/content/docs/backlog/several-workspaces.md",
+          "line": 26,
+          "severity": "consider",
+          "topic": "docs",
+          "confidence": "high",
+          "title": "Change folder refusal list leaves out \"while a move runs\"",
+          "body": "The backlog banner says Change folder… is refused \"while a recording or export runs\". The spec's `workspaces:relocate` row (specs/2026-10-29-several-workspaces-design.md:1302) says the same. On this branch it is also refused while a group move runs (`WorkspaceRelocateRefusal` now includes `\"moving\"`, shared/types/workspaces.ts:157-158, via `busyNow`, index.ts:66-67). Since this PR adds that lock, consider mentioning it in the part 2 text, or in the relocate row."
+        }
+      ],
+      "contracts": [
+        {
+          "action": "Change folder… (relocate) is refused with reason `moving` while a group move runs",
+          "location": "apps/kaipu-record/src/main/workspaces/index.ts:347",
+          "equivalent_path": "switchWorkspace's busy check, which already returned `moving` (switch-transaction.ts:50-51, 64-68)",
+          "before_after": "Before: `busy` was only in runSwitch's own deps, so `relocateFolder` built its deps from `activeTransactionDeps()` with no `busy` at all. Now `busy: busyNow` sits in `activeTransactionDeps`, which both switch and relocate spread. It returns host.busy() (recording/exporting) or `moving` while `moveRun` is set. Relocate checks it before the picker (relocateRefusal), again after the picker (relocateWorkspace), and after prepareWindows for the active workspace (relocateActive).",
+          "visible_effect": "relocateRefusalMessage maps `moving` to `workspaces.relocateMoving` (\"Wait for the move to finish…\"), shown in the dialog's alert; en and es both define the key.",
+          "failure_mode": "A move that starts during the picker is caught by the second relocateRefusal check. For the active workspace, one that starts during prepareWindows is caught by the late check. After that, gate.close() drains the move's gated call. The default branch now uses `relocateFailed`, so an unexpected reason still shows a message.",
+          "status": "closed",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/index.ts:66-67",
+            "apps/kaipu-record/src/main/workspaces/index.ts:343-357",
+            "apps/kaipu-record/src/main/workspaces/index.ts:359-371",
+            "apps/kaipu-record/src/main/workspaces/index.ts:475-503",
+            "apps/kaipu-record/src/main/workspaces/relocate.ts:18-34",
+            "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-121",
+            "apps/kaipu-record/src/renderer/src/features/workspaces/relocate-copy.ts:35-44",
+            "packages/i18n/messages/en.json:2630",
+            "packages/i18n/messages/es.json:2630"
+          ],
+          "open_question": "",
+          "candidates": []
+        }
+      ],
+      "thread_replies": [
+        {
+          "comment_id": 4438769208,
+          "status": "addressed",
+          "reply": "Confirmed: the catch now calls `refuseAll(refusalOfError(error))` (index.ts:217). That maps StaleWorkspaceError to stale, MaintenanceError to maintenance, and anything else to io (move-group.ts:62-66)."
+        },
+        {
+          "comment_id": 4438769214,
+          "status": "addressed",
+          "reply": "Confirmed: a rejected `loadDeviceId` resets `deviceId = null` before rethrowing (index.ts:174-177), so the next group retries."
+        },
+        {
+          "comment_id": 4438769220,
+          "status": "addressed",
+          "reply": "Confirmed: the `skipped` doc now says only Stop fills it, and that a whole-group refusal lists items in `failed` (shared/types/workspaces.ts:252-256). That matches `refuseAll`."
+        },
+        {
+          "comment_id": 4438769272,
+          "status": "addressed",
+          "reply": "Confirmed: `chipLabel`, `newWorkspace` and `reason_stale` now say \"espacio de trabajo\" (es.json:2639, 2645, 2685)."
+        }
+      ],
+      "summary": "I found no defects in the new code since 02dbb2ec. All findings are \"consider\".\n\n**What I checked**\n- **Move lock and relocation.** `busy: busyNow` moved into `activeTransactionDeps()`. As a result, \"Change folder…\" is now refused with `moving` while a group move runs. That refusal applies before the picker, after it, and inside the active-workspace transaction.\n- **Messages.** The renderer maps `moving` to the new `relocateMoving` string. The new `relocateNotWorkspace` and `relocateFailed` keys exist once each, in both en.json and es.json.\n- **Dialog test.** Its new assertion on \"“Move to”\" matches the en string.\n- **Spec table.** The rebuilt channel table has no duplicate rows.\n\n**Two \"consider\" items**\n- No test covers the relocate refusal for `moving`.\n- The backlog doc and the spec's refusal list for Change folder… don't mention the move lock.\n\n**Earlier threads**\nAll four earlier threads on this part's files are addressed in the current code."
+    },
+    "ttft_ms": 1281,
+    "type": "result",
+    "duration_ms": 60649,
+    "uuid": "05590ce3-da19-41d8-97f2-32365265b256",
+    "ttft_stream_ms": 861,
+    "time_to_request_ms": 224,
+    "first_content_frame_ms": 861,
+    "queued_turn_count": 0,
+    "result_index": 0,
+    "model_usage_since_last_result": {
+      "claude-opus-5-5": {
+        "inputTokens": 22,
+        "outputTokens": 6739,
+        "cacheReadInputTokens": 461611,
+        "cacheCreationInputTokens": 53047,
+        "webSearchRequests": 0,
+        "costUSD": 0.6515662000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 1832,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 53047,
+        "canonicalModel": "claude-opus-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  }
+}

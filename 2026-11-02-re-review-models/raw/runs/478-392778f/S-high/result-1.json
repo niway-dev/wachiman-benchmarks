@@ -1,0 +1,287 @@
+{
+  "structuredOutput": {
+    "files_reviewed": [
+      "apps/kaipu-record/src/shared/types/workspaces.ts",
+      "apps/kaipu-record/src/main/workspaces/index.ts",
+      "apps/kaipu-record/src/main/workspaces/registry.ts",
+      "apps/kaipu-record/src/main/workspaces/relocate.ts",
+      "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx",
+      "apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts",
+      "apps/kaipu-record/src/main/workspaces/relocate.test.ts"
+    ],
+    "files_skipped": [],
+    "findings": [
+      {
+        "path": "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx",
+        "line": 168,
+        "severity": "consider",
+        "topic": "tests",
+        "confidence": "high",
+        "title": "Nothing tests that `unchanged` reaches the renderer and suppresses the toast",
+        "body": "The flag crosses three layers: `relocateWorkspace` sets it (pinned in `relocate.test.ts:158`), `relocateFolder` copies it into the IPC result (`index.ts:349`), and `onRelocated` skips the toast (`workspaces-context.tsx:168`). Only the first hop has a test. If the spread at `index.ts:349` were dropped, or the early return here removed, the \"now points to the new folder\" toast would come back for a no-op and every test would still pass. A small test in the workspaces context or dialog tests would cover it: resolve `relocate` with `{ ok: true, unchanged: true, workspace }` and assert no toast, then resolve it without the flag and assert the toast."
+      }
+    ],
+    "contracts": [
+      {
+        "action": "Picking the workspace's current folder in \"Change folder…\" returns `unchanged: true`, and the renderer shows no toast",
+        "location": "apps/kaipu-record/src/main/workspaces/relocate.ts:43",
+        "equivalent_path": "A real relocation (`relocateFolder` → `relocateWorkspace` → `registry.relocate`), which ends with `folderChanged` shown by `onRelocated`.",
+        "before_after": "Before: the same-path early return gave `{ok:true, entry}` and the renderer showed \"now points to the new folder\" for a no-op. After: `relocate.ts:43-45` adds `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` returns before the toast. The probe, `refreshTitles` and `broadcastState` in `relocateFolder` (index.ts:342-345) still run, so a deleted identity.json is still rewritten.",
+        "visible_effect": "The user picks the same folder and the dialog or Settings shows no message. The dialog's own handling of `result.ok` is unchanged (`workspace-dialog.tsx:145`).",
+        "failure_mode": "No new async call. If the flag were lost, the old misleading toast would come back, and no test would catch it.",
+        "status": "closed",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/relocate.ts:42-45",
+          "apps/kaipu-record/src/main/workspaces/index.ts:340-350",
+          "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:165-171",
+          "apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:144-146",
+          "apps/kaipu-record/src/shared/types/workspaces.ts:163-169"
+        ],
+        "open_question": "",
+        "candidates": []
+      },
+      {
+        "action": "An offline edit of a `pendingInit` workspace now keeps `pendingInit` set",
+        "location": "apps/kaipu-record/src/main/workspaces/registry.ts:634",
+        "equivalent_path": "The `availability` probe, which clears `pendingInit` when it writes the identity file (lines 743-749) or adopts one (line 725). `checkRelocate` accepts a folder with `.kaipu` and no identity only while `pendingInit` is set (line 855).",
+        "before_after": "Before: any edit deleted `pendingInit`, so a later \"Change folder…\" to a moved drive with Kaipu items and no identity.json was refused as `has-items-no-identity`. After: it is deleted only when the identity was written to the folder (`savedToFolder`). The registry change is marked `pendingIdentity` (line 638) and the probe after the move writes the edited name and color under the registered id (lines 733-749), then clears all three flags.",
+        "visible_effect": "The renamed workspace can be pointed at the remounted drive, and the new name carries over to the folder. The test at registry-relocate.test.ts:221-243 covers this.",
+        "failure_mode": "If the folder already holds an identity with the registered id when the probe runs, the `pendingIdentity` branch (line 670) writes the identity but does not delete `pendingInit`. The next probe clears it through the `stale` check (line 702), so it is harmless and self-healing.",
+        "status": "closed",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/registry.ts:586-593",
+          "apps/kaipu-record/src/main/workspaces/registry.ts:603-638",
+          "apps/kaipu-record/src/main/workspaces/registry.ts:668-716",
+          "apps/kaipu-record/src/main/workspaces/registry.ts:731-754",
+          "apps/kaipu-record/src/main/workspaces/registry.ts:847-857",
+          "apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts:221-243"
+        ],
+        "open_question": "",
+        "candidates": []
+      }
+    ],
+    "thread_replies": [
+      {
+        "comment_id": 4439336705,
+        "status": "addressed",
+        "reply": "Addressed. `relocate.ts:43-45` returns `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` skips the toast. The main-side flag is tested; the forwarding and the renderer skip are not (see the finding on `workspaces-context.tsx`)."
+      },
+      {
+        "comment_id": 4439290177,
+        "status": "addressed",
+        "reply": "Addressed. The same-path early return in `relocate.ts:42-45` skips `relocateActive`, and `relocate.test.ts:155-161` checks the log is empty and the generation is unchanged."
+      },
+      {
+        "comment_id": 4439290166,
+        "status": "addressed",
+        "reply": "The part you fixed holds. `checkRelocate` accepts a `pendingInit` workspace's moved folder (`registry.ts:855`), and the offline edit no longer clears `pendingInit` (`registry.ts:634`). The new test at `registry-relocate.test.ts:221-243` covers it. The adopted-id case you deferred is not changed here."
+      }
+    ],
+    "summary": "The change holds up. The `unchanged` flag is set in `relocate.ts:43-45` and forwarded at `index.ts:349`. The renderer skips the toast at `workspaces-context.tsx:168`. The `pendingInit` fix at `registry.ts:634` is consistent with `availability` and `checkRelocate`, and its test covers the real path. I found one gap: only the `relocate.ts` hop of the `unchanged` flag has a test. The IPC forwarding and the renderer skip are untested. The three open threads on these files are addressed."
+  },
+  "text": "{\"files_reviewed\":[\"apps/kaipu-record/src/shared/types/workspaces.ts\",\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/kaipu-record/src/main/workspaces/registry.ts\",\"apps/kaipu-record/src/main/workspaces/relocate.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx\",\"apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts\",\"apps/kaipu-record/src/main/workspaces/relocate.test.ts\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx\",\"line\":168,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"Nothing tests that `unchanged` reaches the renderer and suppresses the toast\",\"body\":\"The flag crosses three layers: `relocateWorkspace` sets it (pinned in `relocate.test.ts:158`), `relocateFolder` copies it into the IPC result (`index.ts:349`), and `onRelocated` skips the toast (`workspaces-context.tsx:168`). Only the first hop has a test. If the spread at `index.ts:349` were dropped, or the early return here removed, the \\\"now points to the new folder\\\" toast would come back for a no-op and every test would still pass. A small test in the workspaces context or dialog tests would cover it: resolve `relocate` with `{ ok: true, unchanged: true, workspace }` and assert no toast, then resolve it without the flag and assert the toast.\"}],\"contracts\":[{\"action\":\"Picking the workspace's current folder in \\\"Change folder…\\\" returns `unchanged: true`, and the renderer shows no toast\",\"location\":\"apps/kaipu-record/src/main/workspaces/relocate.ts:43\",\"equivalent_path\":\"A real relocation (`relocateFolder` → `relocateWorkspace` → `registry.relocate`), which ends with `folderChanged` shown by `onRelocated`.\",\"before_after\":\"Before: the same-path early return gave `{ok:true, entry}` and the renderer showed \\\"now points to the new folder\\\" for a no-op. After: `relocate.ts:43-45` adds `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` returns before the toast. The probe, `refreshTitles` and `broadcastState` in `relocateFolder` (index.ts:342-345) still run, so a deleted identity.json is still rewritten.\",\"visible_effect\":\"The user picks the same folder and the dialog or Settings shows no message. The dialog's own handling of `result.ok` is unchanged (`workspace-dialog.tsx:145`).\",\"failure_mode\":\"No new async call. If the flag were lost, the old misleading toast would come back, and no test would catch it.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/relocate.ts:42-45\",\"apps/kaipu-record/src/main/workspaces/index.ts:340-350\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:165-171\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:144-146\",\"apps/kaipu-record/src/shared/types/workspaces.ts:163-169\"],\"open_question\":\"\",\"candidates\":[]},{\"action\":\"An offline edit of a `pendingInit` workspace now keeps `pendingInit` set\",\"location\":\"apps/kaipu-record/src/main/workspaces/registry.ts:634\",\"equivalent_path\":\"The `availability` probe, which clears `pendingInit` when it writes the identity file (lines 743-749) or adopts one (line 725). `checkRelocate` accepts a folder with `.kaipu` and no identity only while `pendingInit` is set (line 855).\",\"before_after\":\"Before: any edit deleted `pendingInit`, so a later \\\"Change folder…\\\" to a moved drive with Kaipu items and no identity.json was refused as `has-items-no-identity`. After: it is deleted only when the identity was written to the folder (`savedToFolder`). The registry change is marked `pendingIdentity` (line 638) and the probe after the move writes the edited name and color under the registered id (lines 733-749), then clears all three flags.\",\"visible_effect\":\"The renamed workspace can be pointed at the remounted drive, and the new name carries over to the folder. The test at registry-relocate.test.ts:221-243 covers this.\",\"failure_mode\":\"If the folder already holds an identity with the registered id when the probe runs, the `pendingIdentity` branch (line 670) writes the identity but does not delete `pendingInit`. The next probe clears it through the `stale` check (line 702), so it is harmless and self-healing.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/registry.ts:586-593\",\"apps/kaipu-record/src/main/workspaces/registry.ts:603-638\",\"apps/kaipu-record/src/main/workspaces/registry.ts:668-716\",\"apps/kaipu-record/src/main/workspaces/registry.ts:731-754\",\"apps/kaipu-record/src/main/workspaces/registry.ts:847-857\",\"apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts:221-243\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[{\"comment_id\":4439336705,\"status\":\"addressed\",\"reply\":\"Addressed. `relocate.ts:43-45` returns `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` skips the toast. The main-side flag is tested; the forwarding and the renderer skip are not (see the finding on `workspaces-context.tsx`).\"},{\"comment_id\":4439290177,\"status\":\"addressed\",\"reply\":\"Addressed. The same-path early return in `relocate.ts:42-45` skips `relocateActive`, and `relocate.test.ts:155-161` checks the log is empty and the generation is unchanged.\"},{\"comment_id\":4439290166,\"status\":\"addressed\",\"reply\":\"The part you fixed holds. `checkRelocate` accepts a `pendingInit` workspace's moved folder (`registry.ts:855`), and the offline edit no longer clears `pendingInit` (`registry.ts:634`). The new test at `registry-relocate.test.ts:221-243` covers it. The adopted-id case you deferred is not changed here.\"}],\"summary\":\"The change holds up. The `unchanged` flag is set in `relocate.ts:43-45` and forwarded at `index.ts:349`. The renderer skips the toast at `workspaces-context.tsx:168`. The `pendingInit` fix at `registry.ts:634` is consistent with `availability` and `checkRelocate`, and its test covers the real path. I found one gap: only the `relocate.ts` hop of the `unchanged` flag has a test. The IPC forwarding and the renderer skip are untested. The three open threads on these files are addressed.\"}",
+  "costUsd": 0.20788869999999998,
+  "turns": 8,
+  "durationMs": 31102,
+  "terminalReason": "success",
+  "isError": false,
+  "raw": {
+    "duration_api_ms": 30847,
+    "stop_reason": "tool_use",
+    "session_id": "0a5fdf10-7d7f-46d0-ad51-0f3bfdfdc505",
+    "total_cost_usd": 0.20788869999999998,
+    "usage": {
+      "input_tokens": 10,
+      "cache_creation_input_tokens": 38176,
+      "cache_read_input_tokens": 129547,
+      "output_tokens": 4221,
+      "output_tokens_details": {
+        "thinking_tokens": 848
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 38176,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 2651,
+          "cache_read_input_tokens": 37114,
+          "cache_creation_input_tokens": 6044,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 6044
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 10,
+        "outputTokens": 4221,
+        "cacheReadInputTokens": 129547,
+        "cacheCreationInputTokens": 38176,
+        "webSearchRequests": 0,
+        "costUSD": 0.20788869999999998,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 848,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 38176,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 8,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"files_reviewed\":[\"apps/kaipu-record/src/shared/types/workspaces.ts\",\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/kaipu-record/src/main/workspaces/registry.ts\",\"apps/kaipu-record/src/main/workspaces/relocate.ts\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx\",\"apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts\",\"apps/kaipu-record/src/main/workspaces/relocate.test.ts\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx\",\"line\":168,\"severity\":\"consider\",\"topic\":\"tests\",\"confidence\":\"high\",\"title\":\"Nothing tests that `unchanged` reaches the renderer and suppresses the toast\",\"body\":\"The flag crosses three layers: `relocateWorkspace` sets it (pinned in `relocate.test.ts:158`), `relocateFolder` copies it into the IPC result (`index.ts:349`), and `onRelocated` skips the toast (`workspaces-context.tsx:168`). Only the first hop has a test. If the spread at `index.ts:349` were dropped, or the early return here removed, the \\\"now points to the new folder\\\" toast would come back for a no-op and every test would still pass. A small test in the workspaces context or dialog tests would cover it: resolve `relocate` with `{ ok: true, unchanged: true, workspace }` and assert no toast, then resolve it without the flag and assert the toast.\"}],\"contracts\":[{\"action\":\"Picking the workspace's current folder in \\\"Change folder…\\\" returns `unchanged: true`, and the renderer shows no toast\",\"location\":\"apps/kaipu-record/src/main/workspaces/relocate.ts:43\",\"equivalent_path\":\"A real relocation (`relocateFolder` → `relocateWorkspace` → `registry.relocate`), which ends with `folderChanged` shown by `onRelocated`.\",\"before_after\":\"Before: the same-path early return gave `{ok:true, entry}` and the renderer showed \\\"now points to the new folder\\\" for a no-op. After: `relocate.ts:43-45` adds `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` returns before the toast. The probe, `refreshTitles` and `broadcastState` in `relocateFolder` (index.ts:342-345) still run, so a deleted identity.json is still rewritten.\",\"visible_effect\":\"The user picks the same folder and the dialog or Settings shows no message. The dialog's own handling of `result.ok` is unchanged (`workspace-dialog.tsx:145`).\",\"failure_mode\":\"No new async call. If the flag were lost, the old misleading toast would come back, and no test would catch it.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/relocate.ts:42-45\",\"apps/kaipu-record/src/main/workspaces/index.ts:340-350\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:165-171\",\"apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:144-146\",\"apps/kaipu-record/src/shared/types/workspaces.ts:163-169\"],\"open_question\":\"\",\"candidates\":[]},{\"action\":\"An offline edit of a `pendingInit` workspace now keeps `pendingInit` set\",\"location\":\"apps/kaipu-record/src/main/workspaces/registry.ts:634\",\"equivalent_path\":\"The `availability` probe, which clears `pendingInit` when it writes the identity file (lines 743-749) or adopts one (line 725). `checkRelocate` accepts a folder with `.kaipu` and no identity only while `pendingInit` is set (line 855).\",\"before_after\":\"Before: any edit deleted `pendingInit`, so a later \\\"Change folder…\\\" to a moved drive with Kaipu items and no identity.json was refused as `has-items-no-identity`. After: it is deleted only when the identity was written to the folder (`savedToFolder`). The registry change is marked `pendingIdentity` (line 638) and the probe after the move writes the edited name and color under the registered id (lines 733-749), then clears all three flags.\",\"visible_effect\":\"The renamed workspace can be pointed at the remounted drive, and the new name carries over to the folder. The test at registry-relocate.test.ts:221-243 covers this.\",\"failure_mode\":\"If the folder already holds an identity with the registered id when the probe runs, the `pendingIdentity` branch (line 670) writes the identity but does not delete `pendingInit`. The next probe clears it through the `stale` check (line 702), so it is harmless and self-healing.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/registry.ts:586-593\",\"apps/kaipu-record/src/main/workspaces/registry.ts:603-638\",\"apps/kaipu-record/src/main/workspaces/registry.ts:668-716\",\"apps/kaipu-record/src/main/workspaces/registry.ts:731-754\",\"apps/kaipu-record/src/main/workspaces/registry.ts:847-857\",\"apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts:221-243\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[{\"comment_id\":4439336705,\"status\":\"addressed\",\"reply\":\"Addressed. `relocate.ts:43-45` returns `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` skips the toast. The main-side flag is tested; the forwarding and the renderer skip are not (see the finding on `workspaces-context.tsx`).\"},{\"comment_id\":4439290177,\"status\":\"addressed\",\"reply\":\"Addressed. The same-path early return in `relocate.ts:42-45` skips `relocateActive`, and `relocate.test.ts:155-161` checks the log is empty and the generation is unchanged.\"},{\"comment_id\":4439290166,\"status\":\"addressed\",\"reply\":\"The part you fixed holds. `checkRelocate` accepts a `pendingInit` workspace's moved folder (`registry.ts:855`), and the offline edit no longer clears `pendingInit` (`registry.ts:634`). The new test at `registry-relocate.test.ts:221-243` covers it. The adopted-id case you deferred is not changed here.\"}],\"summary\":\"The change holds up. The `unchanged` flag is set in `relocate.ts:43-45` and forwarded at `index.ts:349`. The renderer skips the toast at `workspaces-context.tsx:168`. The `pendingInit` fix at `registry.ts:634` is consistent with `availability` and `checkRelocate`, and its test covers the real path. I found one gap: only the `relocate.ts` hop of the `unchanged` flag has a test. The IPC forwarding and the renderer skip are untested. The three open threads on these files are addressed.\"}",
+    "structured_output": {
+      "files_reviewed": [
+        "apps/kaipu-record/src/shared/types/workspaces.ts",
+        "apps/kaipu-record/src/main/workspaces/index.ts",
+        "apps/kaipu-record/src/main/workspaces/registry.ts",
+        "apps/kaipu-record/src/main/workspaces/relocate.ts",
+        "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx",
+        "apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts",
+        "apps/kaipu-record/src/main/workspaces/relocate.test.ts"
+      ],
+      "files_skipped": [],
+      "findings": [
+        {
+          "path": "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx",
+          "line": 168,
+          "severity": "consider",
+          "topic": "tests",
+          "confidence": "high",
+          "title": "Nothing tests that `unchanged` reaches the renderer and suppresses the toast",
+          "body": "The flag crosses three layers: `relocateWorkspace` sets it (pinned in `relocate.test.ts:158`), `relocateFolder` copies it into the IPC result (`index.ts:349`), and `onRelocated` skips the toast (`workspaces-context.tsx:168`). Only the first hop has a test. If the spread at `index.ts:349` were dropped, or the early return here removed, the \"now points to the new folder\" toast would come back for a no-op and every test would still pass. A small test in the workspaces context or dialog tests would cover it: resolve `relocate` with `{ ok: true, unchanged: true, workspace }` and assert no toast, then resolve it without the flag and assert the toast."
+        }
+      ],
+      "contracts": [
+        {
+          "action": "Picking the workspace's current folder in \"Change folder…\" returns `unchanged: true`, and the renderer shows no toast",
+          "location": "apps/kaipu-record/src/main/workspaces/relocate.ts:43",
+          "equivalent_path": "A real relocation (`relocateFolder` → `relocateWorkspace` → `registry.relocate`), which ends with `folderChanged` shown by `onRelocated`.",
+          "before_after": "Before: the same-path early return gave `{ok:true, entry}` and the renderer showed \"now points to the new folder\" for a no-op. After: `relocate.ts:43-45` adds `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` returns before the toast. The probe, `refreshTitles` and `broadcastState` in `relocateFolder` (index.ts:342-345) still run, so a deleted identity.json is still rewritten.",
+          "visible_effect": "The user picks the same folder and the dialog or Settings shows no message. The dialog's own handling of `result.ok` is unchanged (`workspace-dialog.tsx:145`).",
+          "failure_mode": "No new async call. If the flag were lost, the old misleading toast would come back, and no test would catch it.",
+          "status": "closed",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/relocate.ts:42-45",
+            "apps/kaipu-record/src/main/workspaces/index.ts:340-350",
+            "apps/kaipu-record/src/renderer/src/features/workspaces/workspaces-context.tsx:165-171",
+            "apps/kaipu-record/src/renderer/src/features/workspaces/workspace-dialog.tsx:144-146",
+            "apps/kaipu-record/src/shared/types/workspaces.ts:163-169"
+          ],
+          "open_question": "",
+          "candidates": []
+        },
+        {
+          "action": "An offline edit of a `pendingInit` workspace now keeps `pendingInit` set",
+          "location": "apps/kaipu-record/src/main/workspaces/registry.ts:634",
+          "equivalent_path": "The `availability` probe, which clears `pendingInit` when it writes the identity file (lines 743-749) or adopts one (line 725). `checkRelocate` accepts a folder with `.kaipu` and no identity only while `pendingInit` is set (line 855).",
+          "before_after": "Before: any edit deleted `pendingInit`, so a later \"Change folder…\" to a moved drive with Kaipu items and no identity.json was refused as `has-items-no-identity`. After: it is deleted only when the identity was written to the folder (`savedToFolder`). The registry change is marked `pendingIdentity` (line 638) and the probe after the move writes the edited name and color under the registered id (lines 733-749), then clears all three flags.",
+          "visible_effect": "The renamed workspace can be pointed at the remounted drive, and the new name carries over to the folder. The test at registry-relocate.test.ts:221-243 covers this.",
+          "failure_mode": "If the folder already holds an identity with the registered id when the probe runs, the `pendingIdentity` branch (line 670) writes the identity but does not delete `pendingInit`. The next probe clears it through the `stale` check (line 702), so it is harmless and self-healing.",
+          "status": "closed",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/registry.ts:586-593",
+            "apps/kaipu-record/src/main/workspaces/registry.ts:603-638",
+            "apps/kaipu-record/src/main/workspaces/registry.ts:668-716",
+            "apps/kaipu-record/src/main/workspaces/registry.ts:731-754",
+            "apps/kaipu-record/src/main/workspaces/registry.ts:847-857",
+            "apps/kaipu-record/src/main/workspaces/registry-relocate.test.ts:221-243"
+          ],
+          "open_question": "",
+          "candidates": []
+        }
+      ],
+      "thread_replies": [
+        {
+          "comment_id": 4439336705,
+          "status": "addressed",
+          "reply": "Addressed. `relocate.ts:43-45` returns `unchanged: true`, `index.ts:349` forwards it, and `workspaces-context.tsx:168` skips the toast. The main-side flag is tested; the forwarding and the renderer skip are not (see the finding on `workspaces-context.tsx`)."
+        },
+        {
+          "comment_id": 4439290177,
+          "status": "addressed",
+          "reply": "Addressed. The same-path early return in `relocate.ts:42-45` skips `relocateActive`, and `relocate.test.ts:155-161` checks the log is empty and the generation is unchanged."
+        },
+        {
+          "comment_id": 4439290166,
+          "status": "addressed",
+          "reply": "The part you fixed holds. `checkRelocate` accepts a `pendingInit` workspace's moved folder (`registry.ts:855`), and the offline edit no longer clears `pendingInit` (`registry.ts:634`). The new test at `registry-relocate.test.ts:221-243` covers it. The adopted-id case you deferred is not changed here."
+        }
+      ],
+      "summary": "The change holds up. The `unchanged` flag is set in `relocate.ts:43-45` and forwarded at `index.ts:349`. The renderer skips the toast at `workspaces-context.tsx:168`. The `pendingInit` fix at `registry.ts:634` is consistent with `availability` and `checkRelocate`, and its test covers the real path. I found one gap: only the `relocate.ts` hop of the `unchanged` flag has a test. The IPC forwarding and the renderer skip are untested. The three open threads on these files are addressed."
+    },
+    "ttft_ms": 2097,
+    "type": "result",
+    "duration_ms": 31102,
+    "uuid": "c16027de-40cd-4383-a69b-491950ef24a3",
+    "ttft_stream_ms": 1377,
+    "time_to_request_ms": 139,
+    "first_content_frame_ms": 1377,
+    "queued_turn_count": 0,
+    "result_index": 0,
+    "model_usage_since_last_result": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 10,
+        "outputTokens": 4221,
+        "cacheReadInputTokens": 129547,
+        "cacheCreationInputTokens": 38176,
+        "webSearchRequests": 0,
+        "costUSD": 0.20788869999999998,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 848,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 38176,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  }
+}

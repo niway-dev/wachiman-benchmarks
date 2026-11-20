@@ -1,0 +1,47 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 1 file(s): apps/kaipu-record/src/main/workspaces/index.ts.
+32 of the 33 file(s) changed since 4ed1580 are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 4ed1580: apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 3 symbol(s) found, 6 call site(s), 5629 bytes, 151 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":14,"cost_usd":0.5101798,"duration_ms":51245}
+--- review at 0253fd7 ---
+👮 **Wachiman** · review of the changes since `4ed1580`, at `0253fd7`: all 1 files reviewed.
+
+1 finding(s): 1 to fix; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+This part only touches `relocateFolder`. After a relocation, it now re-detects the folder's sync provider and returns the workspace view with that provider. The return value is right. The problem is the order for the active workspace: the relocate transaction fires `broadcastLibraryChanged` before the detection runs, and nothing re-lists the Library afterwards. A Drive folder that only the xattr identifies is then listed without the eviction probe until some unrelated library change. There are no open threads on this file.
+
+<details><summary>What the change connects to (1 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- After "Change folder…" succeeds, re-detect the workspace's sync provider and return its view with availability and sync (`apps/kaipu-record/src/main/workspaces/index.ts:753-763`) — The returned workspace view and the broadcast state show the detected provider. The Library listing made during the commit used the path-rule answer (sync-state.ts:26-30). For an xattr-only Drive folder, that listing has no eviction probe (library/index.ts:71-74) and stays that… If it fails: detectSync never throws and bounds each step at the timeout (synced-folder.ts:74-91), so refresh cannot reject. A timed-out step reads as not synced, and the workspace is then treated as a plain fold… Evidence: `apps/kaipu-record/src/main/workspaces/index.ts:524-530`, `apps/kaipu-record/src/main/workspaces/index.ts:628-647`, `apps/kaipu-record/src/main/workspaces/index.ts:176-193`, `apps/kaipu-record/src/main/workspaces/index.ts:368-370`, `apps/kaipu-record/src/main/workspaces/relocate.ts:42-48`, `apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141`, `apps/kaipu-record/src/main/workspaces/sync-state.ts:19-30`, `apps/kaipu-record/src/main/workspaces/synced-folder.ts:74-91`, `apps/kaipu-record/src/main/library/index.ts:71-74`, `apps/kaipu-record/src/main/media-protocol.ts:126`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 1 | 5 | 5 | reviewed | 14 | $0.51 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.316 · effort high · $0.51</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=0253fd77510fb5e9efb5c084ed30185907c4ba8c -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:755 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Relocating the active workspace re-lists the Library before the new folder's provider is detected, and the list is not refreshed afterwards (confidence medium)**
+
+For the active workspace, `relocateWorkspace` runs `relocateActive` (`relocate.ts:46-48`). Its `afterCommit` (`index.ts:524-530`) calls `host?.broadcastLibraryChanged()` inside the transaction, before line 755 detects the new folder. Until then, `syncStates.of` sees a path that changed since the last detection and falls back to the path rule (`sync-state.ts:26-30`). The path rule misses a Drive folder that only the xattr identifies, which is the case `detectSync` exists for (`synced-folder.ts:83-91`). So the windows re-list with `currentVault()` built with no eviction probe (`library/index.ts:71-74`). Evicted items get thumbnail URLs and no "In the cloud" state, and the `kaipu-media://` gate (`media-protocol.ts:126`) is off for requests made in that gap. Those requests open the files, which downloads them.
+
+Once `refresh` finishes, only `broadcastState()` runs (line 759). The Library is never told to re-list, so those cards stay wrong until some unrelated library change. The PR's renderer-side move and drag guards read that list.
+
+Fix: call `host?.broadcastLibraryChanged()` after line 755 when the relocated workspace is the active one. Alternatively, detect the chosen folder before the transaction commits.
+
+<!-- wachi:finding -->

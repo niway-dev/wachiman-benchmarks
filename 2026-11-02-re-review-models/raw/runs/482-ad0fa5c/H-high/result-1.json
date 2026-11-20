@@ -1,0 +1,253 @@
+{
+  "structuredOutput": {
+    "files_reviewed": [
+      "apps/kaipu-record/src/main/workspaces/index.ts",
+      "apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md"
+    ],
+    "files_skipped": [],
+    "findings": [
+      {
+        "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+        "line": 608,
+        "severity": "consider",
+        "topic": "bug",
+        "confidence": "medium",
+        "title": "Change folder on the active workspace broadcasts without re-reading its folder file",
+        "body": "`relocateFolder` runs the active workspace through `activeTransactionDeps()` (index.ts:585). Its `afterCommit` now calls `notifyOverridesChanged()` (index.ts:406), but nothing re-reads the folder's `settings.json` for the new path. The switch does that in `persistActive` (index.ts:425-427, `workspaceSettings?.refresh(target)`). The other refresh calls are on add, app start and capture start (index.ts:135, 313, 476), and ADR 0034 (`0034-per-workspace-setting-overrides.mdx:219-220`) names the same moments, not relocation.\n\nSo after \"Change folder…\" the cache still holds the old folder's read, and the notify rebroadcasts that stale snapshot. Main-side `settings:get` and `onSettingsChanged` listeners keep the old folder's overrides until something refreshes. The Settings UI appears to correct this itself: `settings-scope.tsx:91` calls `getScoped`, which calls `refresh` (workspace-settings.ts:248), and that re-read runs again when `workspaces` changes (settings-scope.tsx:99). Pending review also waits for that re-read. Suggest calling `workspaceSettings?.refresh(id)` on the relocate path before `afterCommit`, the way `persistActive` does for a switch, or recording in ADR 0034 that relocation is not a read moment. I have not run this."
+      }
+    ],
+    "contracts": [
+      {
+        "action": "Switch workspace: effective-settings notify moved from persistActive to afterCommit",
+        "location": "apps/kaipu-record/src/main/workspaces/index.ts:404-407",
+        "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:423-428 (persistActive refresh, the same switch)",
+        "before_after": "Before: notifyOverridesChanged ran inside persistActive after workspaceSettings.refresh(target), before gate.commit and dropPendingCaptures. After: it runs in afterCommit, after gate.commit(target). The persistActive refresh still broadcasts when the target's overrides differ (workspace-settings.ts:159-161 calls changed() when the active id matches), so the new settings can reach windows before commit anyway; the comment at index.ts:425-426 holds, but the commit-time claim is only partly true.",
+        "visible_effect": "The active workspace's effective settings reach every window and main listener once the switch commits (plus any earlier broadcast from the refresh). No value changes.",
+        "failure_mode": "If persistActive throws, no notify runs in either version: switchWorkspace reopens the gate and rethrows (switch-transaction.ts:72-77). Nothing new is lost.",
+        "status": "closed",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/index.ts:404-410",
+          "apps/kaipu-record/src/main/workspaces/index.ts:423-428",
+          "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:72-81",
+          "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162",
+          "apps/kaipu-record/src/main/infrastructure/settings-store.ts:232-238"
+        ],
+        "open_question": "",
+        "candidates": []
+      },
+      {
+        "action": "Change folder (relocate) of the active workspace now also calls notifyOverridesChanged via afterCommit",
+        "location": "apps/kaipu-record/src/main/workspaces/index.ts:608",
+        "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:423-428 (the switch path, which refreshes the target's folder file before commit)",
+        "before_after": "Before this diff, the relocate path's afterCommit did not notify. Now it does, but relocate never refreshes the folder cache: relocateActive (relocate.ts:46-48, switch-transaction.ts:100-141) calls only registry.relocate, then afterCommit. The switch path refreshes before commit.",
+        "visible_effect": "Until something re-reads the folder file, the snapshot keeps the old folder's overrides. The Settings page re-reads on a workspaces change and corrects it (settings-scope.tsx:99, workspace-settings.ts:248), so the window is short; the notify itself changes nothing.",
+        "failure_mode": "Silent stale effective settings after relocation, in main (settings:get and main listeners) until the next refresh. Not lost: the capture-start refresh (index.ts:313) and the Settings re-read both correct it. The Pending-review sheet for the new folder waits for that re-read too.",
+        "status": "closed",
+        "evidence": [
+          "apps/kaipu-record/src/main/workspaces/index.ts:580-619",
+          "apps/kaipu-record/src/main/workspaces/index.ts:585",
+          "apps/kaipu-record/src/main/workspaces/index.ts:608",
+          "apps/kaipu-record/src/main/workspaces/relocate.ts:46-48",
+          "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141",
+          "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162",
+          "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:248",
+          "apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:91",
+          "apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:99",
+          "apps/documentation/src/content/docs/architecture/decisions/0034-per-workspace-setting-overrides.mdx:219-220"
+        ],
+        "open_question": "",
+        "candidates": []
+      }
+    ],
+    "thread_replies": [],
+    "summary": "Part 1 of 1 (PR #482). Two files reviewed. index.ts moves the `notifyOverridesChanged()` call out of `persistActive` and into `afterCommit`, so the new workspace's effective settings are broadcast after the gate commits. That is correct for switches, and `afterCommit` is shared with the relocate path. One consider-level finding: relocating the active workspace (`relocateFolder`, index.ts:608) now rebroadcasts without re-reading the new folder's `settings.json`, unlike a switch. The Settings UI corrects this on its next re-read. The spec doc change moves three IPC table rows that sat above the table header into the table itself; the table is now well-formed and the rows match the handlers in index.ts. No findings there. No open review threads touch this part's files, so there are no thread replies. Only the changed region of the spec was read (lines 1285-1324), not the whole document.\"}"
+  },
+  "text": "{\"files_reviewed\":[\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":608,\"severity\":\"consider\",\"topic\":\"bug\",\"confidence\":\"medium\",\"title\":\"Change folder on the active workspace broadcasts without re-reading its folder file\",\"body\":\"`relocateFolder` runs the active workspace through `activeTransactionDeps()` (index.ts:585). Its `afterCommit` now calls `notifyOverridesChanged()` (index.ts:406), but nothing re-reads the folder's `settings.json` for the new path. The switch does that in `persistActive` (index.ts:425-427, `workspaceSettings?.refresh(target)`). The other refresh calls are on add, app start and capture start (index.ts:135, 313, 476), and ADR 0034 (`0034-per-workspace-setting-overrides.mdx:219-220`) names the same moments, not relocation.\\n\\nSo after \\\"Change folder…\\\" the cache still holds the old folder's read, and the notify rebroadcasts that stale snapshot. Main-side `settings:get` and `onSettingsChanged` listeners keep the old folder's overrides until something refreshes. The Settings UI appears to correct this itself: `settings-scope.tsx:91` calls `getScoped`, which calls `refresh` (workspace-settings.ts:248), and that re-read runs again when `workspaces` changes (settings-scope.tsx:99). Pending review also waits for that re-read. Suggest calling `workspaceSettings?.refresh(id)` on the relocate path before `afterCommit`, the way `persistActive` does for a switch, or recording in ADR 0034 that relocation is not a read moment. I have not run this.\"}],\"contracts\":[{\"action\":\"Switch workspace: effective-settings notify moved from persistActive to afterCommit\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:404-407\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:423-428 (persistActive refresh, the same switch)\",\"before_after\":\"Before: notifyOverridesChanged ran inside persistActive after workspaceSettings.refresh(target), before gate.commit and dropPendingCaptures. After: it runs in afterCommit, after gate.commit(target). The persistActive refresh still broadcasts when the target's overrides differ (workspace-settings.ts:159-161 calls changed() when the active id matches), so the new settings can reach windows before commit anyway; the comment at index.ts:425-426 holds, but the commit-time claim is only partly true.\",\"visible_effect\":\"The active workspace's effective settings reach every window and main listener once the switch commits (plus any earlier broadcast from the refresh). No value changes.\",\"failure_mode\":\"If persistActive throws, no notify runs in either version: switchWorkspace reopens the gate and rethrows (switch-transaction.ts:72-77). Nothing new is lost.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:404-410\",\"apps/kaipu-record/src/main/workspaces/index.ts:423-428\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:72-81\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162\",\"apps/kaipu-record/src/main/infrastructure/settings-store.ts:232-238\"],\"open_question\":\"\",\"candidates\":[]},{\"action\":\"Change folder (relocate) of the active workspace now also calls notifyOverridesChanged via afterCommit\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:608\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:423-428 (the switch path, which refreshes the target's folder file before commit)\",\"before_after\":\"Before this diff, the relocate path's afterCommit did not notify. Now it does, but relocate never refreshes the folder cache: relocateActive (relocate.ts:46-48, switch-transaction.ts:100-141) calls only registry.relocate, then afterCommit. The switch path refreshes before commit.\",\"visible_effect\":\"Until something re-reads the folder file, the snapshot keeps the old folder's overrides. The Settings page re-reads on a workspaces change and corrects it (settings-scope.tsx:99, workspace-settings.ts:248), so the window is short; the notify itself changes nothing.\",\"failure_mode\":\"Silent stale effective settings after relocation, in main (settings:get and main listeners) until the next refresh. Not lost: the capture-start refresh (index.ts:313) and the Settings re-read both correct it. The Pending-review sheet for the new folder waits for that re-read too.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:580-619\",\"apps/kaipu-record/src/main/workspaces/index.ts:585\",\"apps/kaipu-record/src/main/workspaces/index.ts:608\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:46-48\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:248\",\"apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:91\",\"apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:99\",\"apps/documentation/src/content/docs/architecture/decisions/0034-per-workspace-setting-overrides.mdx:219-220\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[],\"summary\":\"Part 1 of 1 (PR #482). Two files reviewed. index.ts moves the `notifyOverridesChanged()` call out of `persistActive` and into `afterCommit`, so the new workspace's effective settings are broadcast after the gate commits. That is correct for switches, and `afterCommit` is shared with the relocate path. One consider-level finding: relocating the active workspace (`relocateFolder`, index.ts:608) now rebroadcasts without re-reading the new folder's `settings.json`, unlike a switch. The Settings UI corrects this on its next re-read. The spec doc change moves three IPC table rows that sat above the table header into the table itself; the table is now well-formed and the rows match the handlers in index.ts. No findings there. No open review threads touch this part's files, so there are no thread replies. Only the changed region of the spec was read (lines 1285-1324), not the whole document.\\\"}\"}",
+  "costUsd": 0.027489849999999996,
+  "turns": 17,
+  "durationMs": 99420,
+  "terminalReason": "success",
+  "isError": false,
+  "raw": {
+    "duration_api_ms": 98591,
+    "stop_reason": "tool_use",
+    "session_id": "ed13bbac-f5d8-4f04-92ca-536140b45108",
+    "total_cost_usd": 0.027489849999999996,
+    "usage": {
+      "input_tokens": 14,
+      "cache_creation_input_tokens": 70530,
+      "cache_read_input_tokens": 314745,
+      "output_tokens": 20470,
+      "output_tokens_details": {
+        "thinking_tokens": 15772
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 70530,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 9048,
+          "cache_read_input_tokens": 74240,
+          "cache_creation_input_tokens": 2075,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 2075
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-haiku-5-5": {
+        "inputTokens": 14,
+        "outputTokens": 20470,
+        "cacheReadInputTokens": 314745,
+        "cacheCreationInputTokens": 70530,
+        "webSearchRequests": 0,
+        "costUSD": 0.027489849999999996,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 15772,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 70530,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 17,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"files_reviewed\":[\"apps/kaipu-record/src/main/workspaces/index.ts\",\"apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md\"],\"files_skipped\":[],\"findings\":[{\"path\":\"apps/kaipu-record/src/main/workspaces/index.ts\",\"line\":608,\"severity\":\"consider\",\"topic\":\"bug\",\"confidence\":\"medium\",\"title\":\"Change folder on the active workspace broadcasts without re-reading its folder file\",\"body\":\"`relocateFolder` runs the active workspace through `activeTransactionDeps()` (index.ts:585). Its `afterCommit` now calls `notifyOverridesChanged()` (index.ts:406), but nothing re-reads the folder's `settings.json` for the new path. The switch does that in `persistActive` (index.ts:425-427, `workspaceSettings?.refresh(target)`). The other refresh calls are on add, app start and capture start (index.ts:135, 313, 476), and ADR 0034 (`0034-per-workspace-setting-overrides.mdx:219-220`) names the same moments, not relocation.\\n\\nSo after \\\"Change folder…\\\" the cache still holds the old folder's read, and the notify rebroadcasts that stale snapshot. Main-side `settings:get` and `onSettingsChanged` listeners keep the old folder's overrides until something refreshes. The Settings UI appears to correct this itself: `settings-scope.tsx:91` calls `getScoped`, which calls `refresh` (workspace-settings.ts:248), and that re-read runs again when `workspaces` changes (settings-scope.tsx:99). Pending review also waits for that re-read. Suggest calling `workspaceSettings?.refresh(id)` on the relocate path before `afterCommit`, the way `persistActive` does for a switch, or recording in ADR 0034 that relocation is not a read moment. I have not run this.\"}],\"contracts\":[{\"action\":\"Switch workspace: effective-settings notify moved from persistActive to afterCommit\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:404-407\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:423-428 (persistActive refresh, the same switch)\",\"before_after\":\"Before: notifyOverridesChanged ran inside persistActive after workspaceSettings.refresh(target), before gate.commit and dropPendingCaptures. After: it runs in afterCommit, after gate.commit(target). The persistActive refresh still broadcasts when the target's overrides differ (workspace-settings.ts:159-161 calls changed() when the active id matches), so the new settings can reach windows before commit anyway; the comment at index.ts:425-426 holds, but the commit-time claim is only partly true.\",\"visible_effect\":\"The active workspace's effective settings reach every window and main listener once the switch commits (plus any earlier broadcast from the refresh). No value changes.\",\"failure_mode\":\"If persistActive throws, no notify runs in either version: switchWorkspace reopens the gate and rethrows (switch-transaction.ts:72-77). Nothing new is lost.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:404-410\",\"apps/kaipu-record/src/main/workspaces/index.ts:423-428\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:72-81\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162\",\"apps/kaipu-record/src/main/infrastructure/settings-store.ts:232-238\"],\"open_question\":\"\",\"candidates\":[]},{\"action\":\"Change folder (relocate) of the active workspace now also calls notifyOverridesChanged via afterCommit\",\"location\":\"apps/kaipu-record/src/main/workspaces/index.ts:608\",\"equivalent_path\":\"apps/kaipu-record/src/main/workspaces/index.ts:423-428 (the switch path, which refreshes the target's folder file before commit)\",\"before_after\":\"Before this diff, the relocate path's afterCommit did not notify. Now it does, but relocate never refreshes the folder cache: relocateActive (relocate.ts:46-48, switch-transaction.ts:100-141) calls only registry.relocate, then afterCommit. The switch path refreshes before commit.\",\"visible_effect\":\"Until something re-reads the folder file, the snapshot keeps the old folder's overrides. The Settings page re-reads on a workspaces change and corrects it (settings-scope.tsx:99, workspace-settings.ts:248), so the window is short; the notify itself changes nothing.\",\"failure_mode\":\"Silent stale effective settings after relocation, in main (settings:get and main listeners) until the next refresh. Not lost: the capture-start refresh (index.ts:313) and the Settings re-read both correct it. The Pending-review sheet for the new folder waits for that re-read too.\",\"status\":\"closed\",\"evidence\":[\"apps/kaipu-record/src/main/workspaces/index.ts:580-619\",\"apps/kaipu-record/src/main/workspaces/index.ts:585\",\"apps/kaipu-record/src/main/workspaces/index.ts:608\",\"apps/kaipu-record/src/main/workspaces/relocate.ts:46-48\",\"apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162\",\"apps/kaipu-record/src/main/workspaces/workspace-settings.ts:248\",\"apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:91\",\"apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:99\",\"apps/documentation/src/content/docs/architecture/decisions/0034-per-workspace-setting-overrides.mdx:219-220\"],\"open_question\":\"\",\"candidates\":[]}],\"thread_replies\":[],\"summary\":\"Part 1 of 1 (PR #482). Two files reviewed. index.ts moves the `notifyOverridesChanged()` call out of `persistActive` and into `afterCommit`, so the new workspace's effective settings are broadcast after the gate commits. That is correct for switches, and `afterCommit` is shared with the relocate path. One consider-level finding: relocating the active workspace (`relocateFolder`, index.ts:608) now rebroadcasts without re-reading the new folder's `settings.json`, unlike a switch. The Settings UI corrects this on its next re-read. The spec doc change moves three IPC table rows that sat above the table header into the table itself; the table is now well-formed and the rows match the handlers in index.ts. No findings there. No open review threads touch this part's files, so there are no thread replies. Only the changed region of the spec was read (lines 1285-1324), not the whole document.\\\"}\"}",
+    "structured_output": {
+      "files_reviewed": [
+        "apps/kaipu-record/src/main/workspaces/index.ts",
+        "apps/documentation/src/content/docs/specs/2026-10-29-several-workspaces-design.md"
+      ],
+      "files_skipped": [],
+      "findings": [
+        {
+          "path": "apps/kaipu-record/src/main/workspaces/index.ts",
+          "line": 608,
+          "severity": "consider",
+          "topic": "bug",
+          "confidence": "medium",
+          "title": "Change folder on the active workspace broadcasts without re-reading its folder file",
+          "body": "`relocateFolder` runs the active workspace through `activeTransactionDeps()` (index.ts:585). Its `afterCommit` now calls `notifyOverridesChanged()` (index.ts:406), but nothing re-reads the folder's `settings.json` for the new path. The switch does that in `persistActive` (index.ts:425-427, `workspaceSettings?.refresh(target)`). The other refresh calls are on add, app start and capture start (index.ts:135, 313, 476), and ADR 0034 (`0034-per-workspace-setting-overrides.mdx:219-220`) names the same moments, not relocation.\n\nSo after \"Change folder…\" the cache still holds the old folder's read, and the notify rebroadcasts that stale snapshot. Main-side `settings:get` and `onSettingsChanged` listeners keep the old folder's overrides until something refreshes. The Settings UI appears to correct this itself: `settings-scope.tsx:91` calls `getScoped`, which calls `refresh` (workspace-settings.ts:248), and that re-read runs again when `workspaces` changes (settings-scope.tsx:99). Pending review also waits for that re-read. Suggest calling `workspaceSettings?.refresh(id)` on the relocate path before `afterCommit`, the way `persistActive` does for a switch, or recording in ADR 0034 that relocation is not a read moment. I have not run this."
+        }
+      ],
+      "contracts": [
+        {
+          "action": "Switch workspace: effective-settings notify moved from persistActive to afterCommit",
+          "location": "apps/kaipu-record/src/main/workspaces/index.ts:404-407",
+          "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:423-428 (persistActive refresh, the same switch)",
+          "before_after": "Before: notifyOverridesChanged ran inside persistActive after workspaceSettings.refresh(target), before gate.commit and dropPendingCaptures. After: it runs in afterCommit, after gate.commit(target). The persistActive refresh still broadcasts when the target's overrides differ (workspace-settings.ts:159-161 calls changed() when the active id matches), so the new settings can reach windows before commit anyway; the comment at index.ts:425-426 holds, but the commit-time claim is only partly true.",
+          "visible_effect": "The active workspace's effective settings reach every window and main listener once the switch commits (plus any earlier broadcast from the refresh). No value changes.",
+          "failure_mode": "If persistActive throws, no notify runs in either version: switchWorkspace reopens the gate and rethrows (switch-transaction.ts:72-77). Nothing new is lost.",
+          "status": "closed",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/index.ts:404-410",
+            "apps/kaipu-record/src/main/workspaces/index.ts:423-428",
+            "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:72-81",
+            "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162",
+            "apps/kaipu-record/src/main/infrastructure/settings-store.ts:232-238"
+          ],
+          "open_question": "",
+          "candidates": []
+        },
+        {
+          "action": "Change folder (relocate) of the active workspace now also calls notifyOverridesChanged via afterCommit",
+          "location": "apps/kaipu-record/src/main/workspaces/index.ts:608",
+          "equivalent_path": "apps/kaipu-record/src/main/workspaces/index.ts:423-428 (the switch path, which refreshes the target's folder file before commit)",
+          "before_after": "Before this diff, the relocate path's afterCommit did not notify. Now it does, but relocate never refreshes the folder cache: relocateActive (relocate.ts:46-48, switch-transaction.ts:100-141) calls only registry.relocate, then afterCommit. The switch path refreshes before commit.",
+          "visible_effect": "Until something re-reads the folder file, the snapshot keeps the old folder's overrides. The Settings page re-reads on a workspaces change and corrects it (settings-scope.tsx:99, workspace-settings.ts:248), so the window is short; the notify itself changes nothing.",
+          "failure_mode": "Silent stale effective settings after relocation, in main (settings:get and main listeners) until the next refresh. Not lost: the capture-start refresh (index.ts:313) and the Settings re-read both correct it. The Pending-review sheet for the new folder waits for that re-read too.",
+          "status": "closed",
+          "evidence": [
+            "apps/kaipu-record/src/main/workspaces/index.ts:580-619",
+            "apps/kaipu-record/src/main/workspaces/index.ts:585",
+            "apps/kaipu-record/src/main/workspaces/index.ts:608",
+            "apps/kaipu-record/src/main/workspaces/relocate.ts:46-48",
+            "apps/kaipu-record/src/main/workspaces/switch-transaction.ts:100-141",
+            "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:145-162",
+            "apps/kaipu-record/src/main/workspaces/workspace-settings.ts:248",
+            "apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:91",
+            "apps/kaipu-record/src/renderer/src/pages/settings/scope/settings-scope.tsx:99",
+            "apps/documentation/src/content/docs/architecture/decisions/0034-per-workspace-setting-overrides.mdx:219-220"
+          ],
+          "open_question": "",
+          "candidates": []
+        }
+      ],
+      "thread_replies": [],
+      "summary": "Part 1 of 1 (PR #482). Two files reviewed. index.ts moves the `notifyOverridesChanged()` call out of `persistActive` and into `afterCommit`, so the new workspace's effective settings are broadcast after the gate commits. That is correct for switches, and `afterCommit` is shared with the relocate path. One consider-level finding: relocating the active workspace (`relocateFolder`, index.ts:608) now rebroadcasts without re-reading the new folder's `settings.json`, unlike a switch. The Settings UI corrects this on its next re-read. The spec doc change moves three IPC table rows that sat above the table header into the table itself; the table is now well-formed and the rows match the handlers in index.ts. No findings there. No open review threads touch this part's files, so there are no thread replies. Only the changed region of the spec was read (lines 1285-1324), not the whole document.\"}"
+    },
+    "ttft_ms": 1622,
+    "type": "result",
+    "duration_ms": 99420,
+    "uuid": "2452723d-f5f9-4308-bf37-973146ec10a5",
+    "ttft_stream_ms": 1376,
+    "time_to_request_ms": 267,
+    "first_content_frame_ms": 1376,
+    "queued_turn_count": 0,
+    "result_index": 0,
+    "model_usage_since_last_result": {
+      "claude-haiku-5-5": {
+        "inputTokens": 14,
+        "outputTokens": 20470,
+        "cacheReadInputTokens": 314745,
+        "cacheCreationInputTokens": 70530,
+        "webSearchRequests": 0,
+        "costUSD": 0.027489849999999996,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 15772,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 70530,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  }
+}

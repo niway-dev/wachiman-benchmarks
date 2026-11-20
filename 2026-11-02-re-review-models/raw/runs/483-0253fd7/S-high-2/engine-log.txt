@@ -1,0 +1,50 @@
+Rows that are not the pull request's own change (a merged branch's, or now the same as the base) are left out of 1 file(s): apps/kaipu-record/src/main/workspaces/index.ts.
+32 of the 33 file(s) changed since 4ed1580 are not reviewed: not in the pull request's own change, or that change is the one already reviewed.
+Reviewed since 4ed1580: apps/kaipu-record/src/main/workspaces/index.ts.
+evidence: 3 symbol(s) found, 6 call site(s), 5629 bytes, 143 ms, truncated
+Data-path questions for part 1 of 1: none
+{"is_error":false,"terminal_reason":"success","turns":13,"cost_usd":0.20348839999999999,"duration_ms":32266}
+--- review at 0253fd7 ---
+👮 **Wachiman** · review of the changes since `4ed1580`, at `0253fd7`: all 1 files reviewed.
+
+1 finding(s): 1 to fix; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The 5-line change in `relocateFolder` adds a sync detection for the new folder and returns the refreshed workspace view. One problem: for the active workspace, the relocation commits and the windows re-list before `syncStates.refresh` runs, unlike add/create. A folder that only the xattr check recognises as synced is treated as not synced during that re-list. I raised one `fix` (medium confidence). None of the open threads sit on this file, so there are no thread replies.
+
+<details><summary>What the change connects to (0 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- After "Change folder…", detect the new folder's sync provider and return the refreshed workspace view (`apps/kaipu-record/src/main/workspaces/index.ts:753-762`) — Does detectSync ever reject rather than resolve null? If it can, an unhandled rejection after the relocation is persisted would surface as a failed IPC call even though the folder was changed. Files that would answer it: `apps/kaipu-record/src/main/workspaces/synced-folder.ts`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 1 | 5 | 5 | reviewed | 13 | $0.20 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.316 · effort high · $0.20</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=0253fd77510fb5e9efb5c084ed30185907c4ba8c -->
+--- apps/kaipu-record/src/main/workspaces/index.ts:755 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Relocating the active workspace commits and re-lists before the new folder's sync state is detected (confidence medium)**
+
+For the active workspace, `relocateWorkspace` runs `relocateActive`, which commits the gate and calls `afterCommit` (`switch-transaction.ts:135-137`). `afterCommit` calls `broadcastLibraryChanged()` and `broadcastState()` (`workspaces/index.ts:524-529`), so the windows re-list the library from the new folder. `syncStates.refresh(current)` only runs afterwards, at line 755. Until it finishes, `SyncStates.of` sees that the path changed and falls back to the path rule (`sync-state.ts:26-29`). That rule only recognises `~/Library/CloudStorage` and similar locations. A Google Drive or iCloud folder that only the xattr check recognises (the case the earlier threads on `index.ts:770` describe) therefore counts as not synced for the whole re-list:
+- `activeEvictionProbe()` returns null (line 369), so the re-list gets no eviction probe.
+- `activeScratch()` and `syncedStagingFor()` return null (lines 375, 397), so a recording started in that window stages in `.kaipu/tmp/` inside the synced folder.
+- `refresh` can take up to the 2 s detection timeout, which widens the window.
+
+The add and create paths avoid this: they call `syncStates.refresh` before `runSwitch` (lines 578 and 630).
+
+Fix: detect before the transaction commits. For example, call `syncStates.refresh({ id, path: chosen })` right before `relocateWorkspace` at line 751. If `outcome.ok` is false, re-run `syncStates.refresh(entry)` for the old entry, because the map would otherwise hold the chosen path under this id. Alternatively, do the refresh inside the `apply` callback so it runs before `gate.commit`.
+
+<!-- wachi:finding -->
