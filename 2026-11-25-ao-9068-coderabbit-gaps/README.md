@@ -12,8 +12,8 @@
 - **Verified defects that CodeRabbit raised:** 4, all low severity. Three were fixed in the PR.
   One was declined as a follow-up for the spec generator.
 - **What CodeRabbit found that Wachiman did not:** two contract gaps in code that Wachiman's
-  first run read line for line (an OpenAPI enum and its Go struct tag), and one gap in a file
-  **outside the diff** (a second account picker that did not get the new badge). The fourth
+  first run read line for line (an OpenAPI enum and its Go struct tag), and one gap in a reviewed
+  file **outside its changed lines** (a second account picker that did not get the new badge). The fourth
   finding was in code Wachiman never saw before it was fixed, so it is not a miss.
 - **Wachiman version:** v1.17.0 on all six runs, model `claude-sonnet-5-5`, profile `personal`
   (from each run's `engine.version` and its log). CodeRabbit's version is not published.
@@ -71,11 +71,13 @@ coverage lists `dto.go` and `openapi.yaml` as reviewed.
      That is why it was declined in the PR.
    - Why CodeRabbit found it: a rule about the OpenAPI format, applied to generated YAML.
    - Difficulty 3.
-3. **A second picker outside the diff.** The PR added the badge to the composer picker. A
-   separate session account picker, in a file the PR did not touch, kept showing bare emails.
+3. **A second picker outside the changed lines.** The PR added the badge to the composer picker. A
+   separate session account picker kept showing bare emails. Its file was in r1's diff (two
+   changed lines), but the picker's rendering was outside those hunks.
    - Why CodeRabbit found it: it searched the repository for other places that render the same
-     account options. It posted this under "Outside diff range comments". Wachiman reviews the
-     diff and its declared context, so it cannot see this kind of gap.
+     account options. It posted this under "Outside diff range comments". Wachiman had the file
+     in its batch, so it could have seen this, but it reviews the changed hunks first and did not
+     trace the shared account data to every place that renders it.
    - Difficulty 4: you have to know the other component exists.
 
 The fourth finding (typeahead) is **not a gap**. CodeRabbit flagged `f4fc86d`, and that defect
@@ -92,8 +94,24 @@ across I/O) and missed the cheaper cross-checks:
 - format rules on generated specs;
 - other call sites outside the diff.
 
-Each of the three is a candidate check to add to Wachiman's instructions. The third one also
-needs repository search beyond the diff.
+Each of the three is a candidate check to add to Wachiman's instructions. The third one needs
+tracing shared data to every place that renders it, starting from the files already in the diff.
+
+## Second judge
+
+[`judge-gpt-sol.md`](judge-gpt-sol.md) is the blind second judgement by `gpt-6.2-sol`. It agreed
+that all four CodeRabbit findings and both Wachiman findings are real defects. It differed in
+three places:
+
+| Finding | First judge (opus) | Second judge (gpt-sol) | Kept |
+| --- | --- | --- | --- |
+| C3, the session picker | "a file the PR did not touch" | the file was in r1's diff, and the picker was outside its hunks | **gpt-sol**, checked with `git diff --stat 2fe8d90 aa05b6d` |
+| C4, typeahead | low, difficulty 3 | medium, difficulty 4: the badge letters could move keyboard selection to the wrong account | gpt-sol's severity |
+| C2, the nullable enum | low, declined | low, and the daemon accepts an explicit `null` that the schema rejects; still open at `5d2be83` | both: low, open |
+| W1 / W2 | not scored | W1 medium (concurrent partial updates overwrite each other), W2 low | gpt-sol's |
+
+Its recommended Wachiman checks: compare DTOs with runtime behavior, check generated schema
+constraints, and trace shared UI data through to rendering.
 
 ## Special cases
 
@@ -116,8 +134,9 @@ None of these is `refused`, `skipped` or `partial`.
 - **One PR, one day, one repository.**
 - **No pairs.** Every comparison above depends on identical lines across different commits
   (`basis: rerun`), not on the same commit.
-- **Who judged:** `claude-opus-5-5`, the same agent that wrote the PR and its fixes. The judging
-  was not blind.
+- **Who judged:** `claude-opus-5-5`, the same agent that wrote the PR and its fixes (not blind),
+  then `gpt-6.2-sol` at high effort as a blind second judge, given the code and the findings but
+  not the first verdicts. See [Second judge](#second-judge).
 - **Not tested:** whether CodeRabbit would have caught the two concurrency bugs.
 - **Local data:** the local review JSONs and logs stay on the laptop. Only their counts,
   ranges, versions and costs are copied here.
