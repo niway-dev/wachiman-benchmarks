@@ -15,3 +15,17 @@ test("a run that caught no expected issue is still a labelled run", () => {
     { run_label: "W8", original_pr: "463", doc: "doc", expected_total: 2, expected_caught: [], expected_partial: [] },
   ]);
 });
+
+test("two-digit run labels (W10…) are run columns", () => {
+  const md = [
+    "## Expected issues",
+    "",
+    "| ID | Issue | W9 | W10 |",
+    "|---|---|---|---|",
+    "| E1 | A | no | yes |",
+  ].join("\n");
+  expect(labelledRuns(md, "doc", "463").map((r) => [r.run_label, r.expected_caught])).toEqual([
+    ["W9", []],
+    ["W10", ["E1"]],
+  ]);
+});

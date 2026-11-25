@@ -41,6 +41,9 @@ describe("run map", () => {
     expect(benchLabel("kaipu-bench-wachi", 33, "465", "r7", "[replay r7] x")).toMatchObject({ label: "S7", model: "claude-sonnet-5-5" });
     expect(benchLabel("kaipu-bench-pullfrog-v2", 4, "465", "r1", "[replay] x").label).toBe("PF-v2");
     expect(benchLabel("kaipu-bench-coderabbit-v2", 4, "465", "r1", "[replay] x").label).toBe("CR-v2");
+    expect(benchLabel("kaipu-bench-wachi-v3", 4, "465", "r1", "[replay] x")).toMatchObject({ label: "W7", version: "v1.20.1" });
+    expect(benchLabel("kaipu-bench-wachi-v3", 17, "463", "r1", "[replay] x")).toMatchObject({ label: "W10", version: "v1.21.0" });
+    expect(benchLabel("kaipu-bench-wachi-v3", 31, "467", "r3", "[replay r3] x")).toMatchObject({ label: "W12", version: "v1.21.0" });
   });
 
   test("what no doc covers is flagged as guessed", () => {

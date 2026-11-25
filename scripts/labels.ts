@@ -96,9 +96,9 @@ export interface Verdict {
   sameAs: string;
 }
 
-const RUN_TOKEN = /\b(W-R\d|W\d|S\d|PF-v\d|CR-v\d)\b/g;
-const SINGLE_RUN = /^(?:Opus )?(W-R\d|W\d|S\d|PF-v\d|CR-v\d)$/;
-const MULTI_RUN = /^(?:Opus )?((?:W-R\d|W\d|S\d|PF-v\d|CR-v\d)(?:\s*\/\s*(?:W-R\d|W\d|S\d|PF-v\d|CR-v\d))+)$/;
+const RUN_TOKEN = /\b(W-R\d|W\d+|S\d|PF-v\d|CR-v\d)\b/g;
+const SINGLE_RUN = /^(?:Opus )?(W-R\d|W\d+|S\d|PF-v\d|CR-v\d)$/;
+const MULTI_RUN = /^(?:Opus )?((?:W-R\d|W\d+|S\d|PF-v\d|CR-v\d)(?:\s*\/\s*(?:W-R\d|W\d+|S\d|PF-v\d|CR-v\d))+)$/;
 
 const foundCell = (v: string) => /^(yes|partial|✓|~)/i.test(v.trim());
 
@@ -374,6 +374,7 @@ const REPLAY_DOCS = [
   { dir: "2026-11-02/prs", name: "2026-11-02" },
   { dir: "2026-11-02-e1-sonnet/prs", name: "2026-11-02-e1-sonnet" },
   { dir: "2026-11-25-v1.20.1-replay/prs", name: "2026-11-25-v1.20.1-replay" },
+  { dir: "2026-11-25-v1.21.0-focus-replay/prs", name: "2026-11-25-v1.21.0-focus-replay" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
 const REPLAY_PRS = ["463", "464", "465", "466", "467"];
@@ -384,6 +385,7 @@ export const PRIMARY_DOC: Record<string, string> = {
   "W-R1": "2026-11-01", "W-R2": "2026-11-01", "W-R3": "2026-11-01", "PF-v1": "2026-11-01", "PF-v2": "2026-11-01", "CR-v1": "2026-11-01", "CR-v2": "2026-11-01",
   W4: "2026-11-02", W5: "2026-11-02", W6: "2026-11-02", S7: "2026-11-02-e1-sonnet", S8: "2026-11-02-e1-sonnet", S9: "2026-11-02-e1-sonnet",
   W7: "2026-11-25-v1.20.1-replay", W8: "2026-11-25-v1.20.1-replay", W9: "2026-11-25-v1.20.1-replay",
+  W10: "2026-11-25-v1.21.0-focus-replay", W11: "2026-11-25-v1.21.0-focus-replay", W12: "2026-11-25-v1.21.0-focus-replay",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {

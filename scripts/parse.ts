@@ -505,6 +505,7 @@ const RUNNER_NOISE = /^(##\[(group|endgroup|debug)\]|\[command\]|Post job cleanu
 export const PINNED_SHAS: Record<string, string> = {
   "0536f89466cb3c0c981848acae1c9df52bfb8c4a": "v1.10.1",
   "793a64df5775b606ea5b2253569f4e6cd216c3ef": "v1.20.1",
+  "621aa3943538e5785d3734a46934749942f2cf1a": "v1.21.0",
 };
 
 /**
