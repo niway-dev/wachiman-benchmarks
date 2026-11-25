@@ -161,6 +161,32 @@ part of the engine's real symbols stage.
 - The extractors are regexes written for TypeScript-like code. Ruby is not in `SOURCE_EXTENSIONS`, so discourse gets no
   extraction at all in the engine today; the forced Ruby row shows only that the regexes run on it and find some names.
 
+## Experiment: one `git diff` instead of three
+
+The engine reads a change with three `git diff` runs (`--raw`, `--numstat`, then the patches;
+`localFiles` in `src/connectors/local-git.ts`). The same options can produce all three in one run:
+`--raw --numstat -z` plus the patch options. Measured on the same 57 PRs and the same machine, median
+of 7 interleaved runs each:
+
+| | Three runs | One run | Change |
+| --- | ---: | ---: | ---: |
+| All 57 PRs, sum of medians | 3,549 ms | 1,747 ms | −51% |
+| t3code #40132 (1,010 files) | 606 ms | 497 ms | −18% |
+| agent-orchestrator #8961 (2,172 files) | 402 ms | 299 ms | −26% |
+| t3code #39445 (40 files) | 110 ms | 64 ms | −42% |
+| cal.com #22532 | 49 ms | 18 ms | −64% |
+
+The saving is largest on small PRs, where most of the time is starting git and opening the
+repository, which one run does once instead of three times. In all 57 PRs the patch part of the single
+run is byte-identical to the separate patch run, and its first part matches the separate `--raw` run
+(`scripts/diff-one-vs-three-equal.ts`). The engine would need a parser that splits the single output;
+that parser was not written, so its cost is not in these numbers.
+
+```sh
+bun scripts/diff-one-vs-three.ts /tmp/classify-bench
+bun scripts/diff-one-vs-three-equal.ts /tmp/classify-bench
+```
+
 ## What is NOT measured
 
 - The model, any network call to GitHub, and posting.
