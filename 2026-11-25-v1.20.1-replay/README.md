@@ -92,5 +92,7 @@ Same setup as W4–W6. Only the engine version and the credential change.
   significance test was run.
 - **The known-bug list was built from earlier versions' runs and the authors' fixes.** A bug only
   v1.20.1 sees is counted as "new", not "known", so this table cannot reward it.
-- **The cost is an estimate.** The ceiling did not trip (W7–W9 stayed under 2× the W4–W6 median),
-  but nobody checked a bill.
+- **The cost is an estimate.** Nobody checked a bill. The stop rule set before spending (stop after
+  round 1 if its median review cost more than $2.00, twice the W4–W6 median) did not trip: round 1's
+  median was $1.08. Single reviews of #467 did cost more than $2.00 ($2.75–$3.15), as #467 did on
+  v1.4.0 ($2.82–$2.98).

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   extractRunLog, hasWachimanSignature, isWachimanComment, parseLegacyNote, parseBodyFindings, parseCodeRabbit, parseCodeRabbitBody, parseContractLine, parseContracts, parseCsv,
-  PINNED_SHAS, parsePullfrog, parseWachimanHeader, parseWachimanReview, reviewState, splitLogLine, toCsv,
+  parsePullfrog, parseWachimanHeader, parseWachimanReview, reviewState, splitLogLine, toCsv,
 } from "./parse.ts";
 
 // Every fixture below is a real string from the snapshots in dataset/raw.
@@ -288,6 +288,29 @@ describe("run logs", () => {
     `${P}2026-11-02T03:19:58.4111834Z Temporarily overriding HOME='/home/runner/work/_temp/x'`,
   ].join("\n");
 
+  // kaipu-bench-wachi-v3 run 45707628322 (v1.20.1, pinned by SHA), trimmed.
+  const LOG_V120 = [
+    `${P}2026-11-25T21:48:08.2631339Z Uses: niway-dev/wachiman/.github/workflows/review.yml@793a64df5775b606ea5b2253569f4e6cd216c3ef`,
+    `${P}2026-11-25T21:48:10.0000000Z   CLAUDE_CODE_VERSION: 2.1.304`,
+    `${P}2026-11-25T21:48:10.1000000Z   WACHIMAN_MODEL: claude-opus-5-5`,
+    `${P}2026-11-25T21:48:10.1000001Z   WACHIMAN_EFFORT: high`,
+    `${P}2026-11-25T21:48:10.1000002Z   WACHIMAN_VERIFIER_MODEL: claude-sonnet-5-5`,
+    `${P}2026-11-25T21:48:10.2000000Z ##[endgroup]`,
+    `${P}2026-11-25T21:49:20.0000000Z {"label":"batch 2/2","is_error":false,"terminal_reason":"success","turns":10,"cost_usd":0.5656196,"duration_ms":67471}`,
+    `${P}2026-11-25T21:49:30.0000000Z {"label":"batch 1/2","is_error":false,"terminal_reason":"success","turns":6,"cost_usd":0.6318942,"duration_ms":76453}`,
+    `${P}2026-11-25T21:49:40.0000000Z Post job cleanup.`,
+  ].join("\n");
+
+  test("v1.20: a SHA pin, WACHIMAN_* settings and labelled result lines", () => {
+    const r = extractRunLog(LOG_V120);
+    expect(r).toMatchObject({ version: "v1.20.1", model: "claude-opus-5-5", effort: "high", cost_usd: 1.1975, duration_ms: 143924 });
+    expect(r.calls).toHaveLength(2);
+  });
+
+  test("an unknown SHA pin gives no version", () => {
+    expect(extractRunLog(LOG_V120.replace("793a64df5775b606ea5b2253569f4e6cd216c3ef", "a".repeat(40))).version).toBe("");
+  });
+
   test("splits the job, step and timestamp prefix, including a byte-order mark", () => {
     expect(splitLogLine(`${P}﻿2026-11-02T03:13:10.5344468Z Current runner version`)).toEqual({ ts: "2026-11-02T03:13:10.5344468Z", text: "Current runner version" });
   });
@@ -384,7 +407,4 @@ describe("v1.20 formats", () => {
     expect(reviewState(body)).toEqual(json);
   });
 
-  test("a SHA pin maps to its release tag", () => {
-    expect(PINNED_SHAS["793a64df5775b606ea5b2253569f4e6cd216c3ef"]).toBe("v1.20.1");
-  });
 });

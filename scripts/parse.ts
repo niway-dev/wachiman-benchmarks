@@ -100,7 +100,7 @@ export function parseLegacyNote(body: string): { category: string; title: string
 
 /** A Wachiman finding comment: branded, or (older engines) a bare label or a `Note (category)` posted by the Actions bot. */
 export function isWachimanComment(body: string, login: string): boolean {
-  if (body.startsWith(BRAND_PREFIX)) return true;
+  if (body.startsWith(BRAND_PREFIX) || body.startsWith(TABLE_PREFIX)) return true;
   const first = body.split("\n", 1)[0] ?? "";
   return /^github-actions/i.test(login) && (BRANDLESS.test(first) || parseLegacyNote(body) !== null);
 }
