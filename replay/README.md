@@ -9,6 +9,7 @@ reviewer reads another's comments.
 
 ```sh
 cd replay
+export BENCH_FOCUS=rename                          # wachi: review with the focus file (see below)
 ./bench.sh create wachi kaipu-bench-wachi-v3      # repo + main + replay branches; setup PR is #1
 # owner: install the apps, add the ANTHROPIC_API_KEY secret (the links are printed)
 ./bench.sh open kaipu-bench-wachi-v3               # replay PRs (#2...) and the review trigger
@@ -29,7 +30,7 @@ Prerequisites: `gh` logged in as `csdev19` (checked, never switched), the SSH al
 | `push <repo-name> [manifest]` | Pushes the replay branches to a repository that already exists, with the same checks as `create`. Use it with `BENCH_BRANCH_PREFIX` to add a second set of runs next to the first. |
 | `open <repo-name> [manifest]` | Opens one `[replay] <title>` PR per manifest row, head into base, labelled `replay`, body = preamble + the original description. Skips a pair that already has an open PR. Then triggers the reviewer on the PRs it created. |
 | `rounds <repo-name> <k...>` | Wachi repositories only. Pushes `replay/pr-<n>/head-r<k>` at the same head SHA and opens one `[replay r<k>]` PR per row and round, because the engine does not review a head it already marked. |
-| `collect <repo-name> <out-dir> [label]` | Saves, per replay PR, the bot reviews, the bot inline comments and (CodeRabbit) the bot issue comments to `<out-dir>/<label>-pr-<num>-{reviews,comments,issue-comments}.md`. For Pullfrog it also writes each run's cost row to `<out-dir>/<label>-costs.txt`. `label` defaults to the repository name without `kaipu-bench-`. |
+| `collect <repo-name> <out-dir> [label]` | Saves, per replay PR whose base branch starts with `BENCH_BRANCH_PREFIX`, the bot reviews, the bot inline comments and (CodeRabbit) the bot issue comments to `<out-dir>/<label>-pr-<num>-{reviews,comments,issue-comments}.md`. For Pullfrog it also writes each run's cost row to `<out-dir>/<label>-costs.txt`. `label` defaults to the repository name without `kaipu-bench-`. |
 
 The reviewer comes from the repository name (`kaipu-bench-wachi-v2` is Wachi). Triggers on `open`
 and `rounds`:
@@ -103,7 +104,8 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   both, the engine uses the token, and every cost it reports is an API-equivalent estimate.
 - `open` and `rounds` trigger only the PRs they create. To re-trigger a skipped one, comment by hand.
 - `--dry-run` still reads the manifest and checks the local clone; it never calls `gh`, pushes or
-  creates files outside what it prints.
+  creates files outside what it prints. With `BENCH_FOCUS=rename` it still builds the focus commit
+  in the clone (git objects only), to print its SHA.
 - The cost row of a Pullfrog run is the first non-separator line after the `Cost ($)` header in
   `gh run view <id> --log`; a run without one gets a placeholder line. Actions logs expire, so
   collect soon after the runs.

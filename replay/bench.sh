@@ -428,7 +428,7 @@ push_replays() {
       || die "${BRANCH_PREFIX}/pr-${M_N[$i]}/head is not at ${M_HEAD[$i]} on ${repo}"
     i=$((i + 1))
   done
-  note "all $((M_COUNT * 2)) replay branches are at the manifest SHAs"
+  note "all $((M_COUNT * 2)) ${BRANCH_PREFIX}/ branches are at the expected SHAs"
 }
 
 # Register the replayed commits' own workflows, then disable them (see README: why).
@@ -615,7 +615,8 @@ ${orig}"
     fi
     i=$((i + 1))
   done
-  x gh pr list -R "${OWNER}/${repo}" --label replay --json number,title --jq '.[] | "#\(.number) \(.title)"'
+  x gh pr list -R "${OWNER}/${repo}" --label replay --json number,title,baseRefName \
+    --jq ".[] | select(.baseRefName | startswith(\"${BRANCH_PREFIX}/\")) | \"#\\(.number) \\(.title)\""
 }
 
 # ---------------------------------------------------------------- rounds
@@ -773,13 +774,13 @@ cmd_collect() {
 
   step "List the replay PRs of ${OWNER}/${repo}"
   if [ "${DRY_RUN}" = 1 ]; then
-    show_cmd gh pr list -R "${OWNER}/${repo}" --label replay --state all --limit 200 --json number,title \
-      --jq '.[] | "\(.number)\t\(.title)"'
+    show_cmd gh pr list -R "${OWNER}/${repo}" --label replay --state all --limit 200 --json number,title,baseRefName \
+      --jq ".[] | select(.baseRefName | startswith(\"${BRANCH_PREFIX}/\")) | \"\\(.number)\\t\\(.title)\""
     PR_NUMS=("<pr-number>")
     PR_TITLES=("<title>")
   else
-    list="$(gh pr list -R "${OWNER}/${repo}" --label replay --state all --limit 200 --json number,title \
-      --jq '.[] | "\(.number)\t\(.title)"' | sort -n)"
+    list="$(gh pr list -R "${OWNER}/${repo}" --label replay --state all --limit 200 --json number,title,baseRefName \
+      --jq ".[] | select(.baseRefName | startswith(\"${BRANCH_PREFIX}/\")) | \"\\(.number)\\t\\(.title)\"" | sort -n)"
     while IFS=$'\t' read -r num title; do
       if [ -z "${num}" ]; then continue; fi
       PR_NUMS+=("${num}")
