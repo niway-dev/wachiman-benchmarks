@@ -57,7 +57,8 @@ no longer reads `.github/agent-review.md`, the name kaipu-record used until
 the file under that old name, so a Wachiman review of a replay sees the repository's rules only
 if the base also has `.github/wachiman.md`. Runs W7–W9 (v1.20.1) were reviewed without them.
 
-For a Wachi repository, `create`, `push` and `open` decide this from `BENCH_FOCUS`:
+For a Wachi repository, `create`, `push`, `open` and `rounds` decide this from `BENCH_FOCUS` (pass the
+same value, and the same `BENCH_BRANCH_PREFIX`, to all of them):
 
 | `BENCH_FOCUS` | What the base branch gets |
 | --- | --- |
