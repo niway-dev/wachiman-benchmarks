@@ -15,7 +15,9 @@
 **v1.20.1 costs about the same per review as v1.4.0, runs faster, and posts fewer findings. It
 catches slightly fewer known bugs: 30 of 81 chances against 35.** So each known bug caught costs
 more: $0.71 against $0.60. The gap is under two known bugs per run (W4–W6: 11–12 per run, W7–W9:
-9–11). Three runs per version cannot tell a small regression from run-to-run variation.
+9–11). Three runs per version cannot tell a small regression from run-to-run variation. These runs did
+not read the repository's review focus file (see Method); the
+[follow-up run with it](../2026-11-25-v1.21.0-focus-replay/README.md) found no more.
 
 | Per review (15 reviews each) | v1.4.0 (W4–W6) | v1.20.1 (W7–W9) |
 | --- | --- | --- |
@@ -59,7 +61,13 @@ Known bugs caught by at least one of the three runs:
 
 ## Method
 
-Same setup as W4–W6. Only the engine version and the credential change.
+Same setup as W4–W6, except for the engine version, the credential and the review focus file.
+
+- **Review focus file: not read.** Every base commit has kaipu-record's review focus at
+  `.github/agent-review.md`. v1.4.0 read it. v1.20.1 did not, because v1.14.0 stopped reading that
+  name, so these runs were reviewed without the repository's rules. The
+  [follow-up run](../2026-11-25-v1.21.0-focus-replay/README.md) restored the file on v1.21.0 and
+  caught 27 known bugs, not more, so the missing file does not explain the gap below.
 
 - **Pull requests:** the five pull requests in
   [`replay/manifest-2026-10-31.tsv`](../replay/manifest-2026-10-31.tsv) (kaipu-record #463–#467),
