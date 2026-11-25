@@ -26,6 +26,7 @@ Prerequisites: `gh` logged in as `csdev19` (checked, never switched), the SSH al
 | Command | What it does |
 | --- | --- |
 | `create <wachi\|pullfrog\|coderabbit> <repo-name> [manifest]` | Creates the public repository. `main` is one fresh commit: the README plus the reviewer's files. Pushes `replay/pr-<n>/{base,head}` at the manifest SHAs and checks them on the remote. Then registers and disables the replayed workflows (below) and prints the owner's setup links. |
+| `push <repo-name> [manifest]` | Pushes the replay branches to a repository that already exists, with the same checks as `create`. Use it with `BENCH_BRANCH_PREFIX` to add a second set of runs next to the first. |
 | `open <repo-name> [manifest]` | Opens one `[replay] <title>` PR per manifest row, head into base, labelled `replay`, body = preamble + the original description. Skips a pair that already has an open PR. Then triggers the reviewer on the PRs it created. |
 | `rounds <repo-name> <k...>` | Wachi repositories only. Pushes `replay/pr-<n>/head-r<k>` at the same head SHA and opens one `[replay r<k>]` PR per row and round, because the engine does not review a head it already marked. |
 | `collect <repo-name> <out-dir> [label]` | Saves, per replay PR, the bot reviews, the bot inline comments and (CodeRabbit) the bot issue comments to `<out-dir>/<label>-pr-<num>-{reviews,comments,issue-comments}.md`. For Pullfrog it also writes each run's cost row to `<out-dir>/<label>-costs.txt`. `label` defaults to the repository name without `kaipu-bench-`. |
@@ -42,6 +43,29 @@ and `rounds`:
 CodeRabbit needs the comment because it reads `.coderabbit.yaml` from the PR's head commit, and
 kaipu-record's own file there limits automatic review to the production and master branches, so
 the automatic review always skips. A config on `main` cannot change that.
+
+Branch names start with `BENCH_BRANCH_PREFIX` (default `replay`), so `replay/pr-<n>/base` above
+is `<prefix>/pr-<n>/base`. Pass the same prefix to `push`, `open` and `rounds` of one set of runs.
+
+## Review focus file
+
+Wachiman reads a repository's review focus (its rules for the reviewer) from the pull request's
+base commit, at `.github/wachiman.md` (`.github/claude-review.md` is still read too). Since v1.14.0 it
+no longer reads `.github/agent-review.md`, the name kaipu-record used until
+[kaipu-record#728](https://github.com/niway-dev/kaipu-record/pull/728). Every manifest base has
+the file under that old name, so a Wachiman review of a replay sees the repository's rules only
+if the base also has `.github/wachiman.md`. Runs W7–W9 (v1.20.1) were reviewed without them.
+
+For a Wachi repository, `create`, `push` and `open` decide this from `BENCH_FOCUS`:
+
+| `BENCH_FOCUS` | What the base branch gets |
+| --- | --- |
+| `check` (default) | Nothing; the command stops if a base has the file only under a name Wachiman ignores |
+| `rename` | One commit on top of the manifest base that copies the file to `.github/wachiman.md`, unchanged. Its date and author are fixed, so every run computes the same SHA. The PR body names it |
+| `as-is` | The manifest base unchanged: the review runs without the repository's rules. Say so in the report |
+
+The extra commit does not change what is reviewed: GitHub diffs a pull request from the merge base
+to the head, and the merge base is still the manifest base.
 
 ## Why `create` registers and disables workflows
 

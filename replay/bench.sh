@@ -2,6 +2,7 @@
 # bench.sh - set up, run and collect a code-review benchmark on replayed kaipu-record PRs.
 #
 #   bench.sh create <wachi|pullfrog|coderabbit> <repo-name> [manifest]
+#   bench.sh push <repo-name> [manifest]
 #   bench.sh open <repo-name> [manifest]
 #   bench.sh rounds <repo-name> <k...>
 #   bench.sh collect <repo-name> <out-dir> [label]
@@ -25,6 +26,16 @@ GIT_NAME="${BENCH_GIT_NAME:-$(git config --get user.name 2>/dev/null || true)}"
 if [ -z "${GIT_NAME}" ]; then GIT_NAME="Cristian Sotomayor"; fi
 # Workflows that arrive with the replayed commits and must not run next to the reviewer under test.
 DISABLE_WORKFLOWS="agent-review.yml pr-checks.yml"
+# Branches are <prefix>/pr-<n>/{base,head,head-r<k>}. Another prefix keeps a second set of runs
+# in the same repository apart from the first.
+BRANCH_PREFIX="${BENCH_BRANCH_PREFIX:-replay}"
+# The review focus file Wachiman reads, and the names it no longer reads (removed in v1.14.0).
+FOCUS_PATH=".github/wachiman.md"
+STALE_FOCUS_PATHS=".github/agent-review.md"
+# check: refuse a base whose focus file has a name Wachiman ignores. rename: push, instead of the
+# manifest base, one extra commit that copies it to FOCUS_PATH. as-is: push the base unchanged.
+FOCUS_MODE="${BENCH_FOCUS:-check}"
+FOCUS_COMMIT_DATE="2026-10-31T00:00:00Z"
 WAIT_SECONDS=90
 METHOD_URL="https://github.com/niway-dev/wachiman/tree/main/docs/benchmark"
 BENCH_URL="https://github.com/niway-dev/wachiman/blob/main/docs/benchmark/replay/bench.sh"
@@ -36,6 +47,8 @@ M_N=()
 M_BASE=()
 M_HEAD=()
 M_TITLE=()
+# The base commit each replay branch gets: M_BASE[i], or the focus commit on top of it.
+M_PUSH_BASE=()
 NEW_PR_NUM=""
 
 trap 'if [ -n "${TMP_WORK}" ]; then rm -rf "${TMP_WORK}"; fi' EXIT
@@ -51,6 +64,7 @@ usage() {
   cat <<'EOF'
 Usage:
   bench.sh create <wachi|pullfrog|coderabbit> <repo-name> [manifest]
+  bench.sh push <repo-name> [manifest]
   bench.sh open <repo-name> [manifest]
   bench.sh rounds <repo-name> <k...>
   bench.sh collect <repo-name> <out-dir> [label]
@@ -60,7 +74,10 @@ Usage:
 <repo-name> is niway-dev/<repo-name>, normally kaipu-bench-<reviewer>[-vN]; open, rounds and
 collect infer the reviewer from it. [manifest] defaults to manifest-2026-10-31.tsv next to this
 script (or $BENCH_MANIFEST). Environment: KAIPU_CLONE (kaipu-record clone, default
-/tmp/kaipu-mine/repo), KAIPU_PULLFROG_REF (ref holding pullfrog.yml, default origin/main).
+/tmp/kaipu-mine/repo), KAIPU_PULLFROG_REF (ref holding pullfrog.yml, default origin/main),
+BENCH_BRANCH_PREFIX (branch name prefix, default replay: a second set of runs in one repository
+uses another prefix), BENCH_FOCUS (wachi only: check, rename or as-is; see the README, "Review
+focus file").
 EOF
 }
 
@@ -325,28 +342,70 @@ pullfrog.yml copied unchanged from ${SOURCE_REPO}@${src_sha}"
   fi
 }
 
-# Push replay/pr-<n>/{base,head} for every manifest row, then check the remote SHAs.
+# Fill M_PUSH_BASE. Wachiman reads its focus file from the base commit; a base that holds it only
+# under a name Wachiman ignores would be reviewed without it, silently (see README, "Review focus
+# file"). The focus commit is built from fixed metadata, so every run computes the same SHA, and
+# the pull request's diff (merge base to head) is unchanged.
+resolve_bases() {
+  local reviewer="$1" i base stale found blob idx tree
+  i=0
+  while [ "${i}" -lt "${M_COUNT}" ]; do
+    base="${M_BASE[$i]}"
+    M_PUSH_BASE[i]="${base}"
+    if [ "${reviewer}" != "wachi" ] || [ "${FOCUS_MODE}" = "as-is" ]; then i=$((i + 1)); continue; fi
+    if [ ! -d "${CLONE}/.git" ] && [ ! -f "${CLONE}/HEAD" ]; then i=$((i + 1)); continue; fi
+    found=""
+    if ! git -C "${CLONE}" cat-file -e "${base}:${FOCUS_PATH}" 2>/dev/null; then
+      for stale in ${STALE_FOCUS_PATHS}; do
+        if git -C "${CLONE}" cat-file -e "${base}:${stale}" 2>/dev/null; then found="${stale}"; break; fi
+      done
+    fi
+    if [ -n "${found}" ]; then
+      case "${FOCUS_MODE}" in
+        check)
+          die "base ${base:0:7} of PR ${M_N[$i]} has ${found}, which Wachiman no longer reads, and no ${FOCUS_PATH}. Set BENCH_FOCUS=rename to review with it, or BENCH_FOCUS=as-is to review without it, and record the choice in the report" ;;
+        rename)
+          blob="$(git -C "${CLONE}" rev-parse "${base}:${found}")"
+          idx="$(mktemp "${TMPDIR:-/tmp}/bench-index.XXXXXX")"
+          GIT_INDEX_FILE="${idx}" git -C "${CLONE}" read-tree "${base}"
+          GIT_INDEX_FILE="${idx}" git -C "${CLONE}" update-index --add --cacheinfo "100644,${blob},${FOCUS_PATH}"
+          tree="$(GIT_INDEX_FILE="${idx}" git -C "${CLONE}" write-tree)"
+          rm -f "${idx}"
+          M_PUSH_BASE[i]="$(GIT_AUTHOR_NAME="${GIT_NAME}" GIT_AUTHOR_EMAIL="${GIT_EMAIL}" GIT_AUTHOR_DATE="${FOCUS_COMMIT_DATE}" \
+            GIT_COMMITTER_NAME="${GIT_NAME}" GIT_COMMITTER_EMAIL="${GIT_EMAIL}" GIT_COMMITTER_DATE="${FOCUS_COMMIT_DATE}" \
+            git -C "${CLONE}" commit-tree "${tree}" -p "${base}" \
+            -m "bench: copy ${found} to ${FOCUS_PATH}" \
+            -m "Wachiman reads its review focus only from ${FOCUS_PATH} since v1.14.0. Same content; the reviewed diff is unchanged.")"
+          note "kaipu#${M_N[$i]}: base ${base:0:7} + focus commit ${M_PUSH_BASE[$i]:0:7} (${found} -> ${FOCUS_PATH})" ;;
+        *) die "BENCH_FOCUS='${FOCUS_MODE}': use check, rename or as-is" ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+}
+
+# Push ${BRANCH_PREFIX}/pr-<n>/{base,head} for every manifest row, then check the remote SHAs.
 push_replays() {
   local repo="$1" url i refs=() expected
   url="$(git_url "${repo}")"
   i=0
   while [ "${i}" -lt "${M_COUNT}" ]; do
-    refs+=("${M_BASE[$i]}:refs/heads/replay/pr-${M_N[$i]}/base" "${M_HEAD[$i]}:refs/heads/replay/pr-${M_N[$i]}/head")
+    refs+=("${M_PUSH_BASE[$i]}:refs/heads/${BRANCH_PREFIX}/pr-${M_N[$i]}/base" "${M_HEAD[$i]}:refs/heads/${BRANCH_PREFIX}/pr-${M_N[$i]}/head")
     i=$((i + 1))
   done
   x git -C "${CLONE}" push -q "${url}" "${refs[@]}"
   if [ "${DRY_RUN}" = 1 ]; then
-    show_cmd git ls-remote "${url}" 'refs/heads/replay/*'
+    show_cmd git ls-remote "${url}" "refs/heads/${BRANCH_PREFIX}/*"
     note "(every pushed branch must report the SHA from the manifest)"
     return 0
   fi
-  expected="$(git ls-remote "${url}" 'refs/heads/replay/*')"
+  expected="$(git ls-remote "${url}" "refs/heads/${BRANCH_PREFIX}/*")"
   i=0
   while [ "${i}" -lt "${M_COUNT}" ]; do
-    printf '%s\n' "${expected}" | grep -qxF "$(printf '%s\trefs/heads/replay/pr-%s/base' "${M_BASE[$i]}" "${M_N[$i]}")" \
-      || die "replay/pr-${M_N[$i]}/base is not at ${M_BASE[$i]} on ${repo}"
-    printf '%s\n' "${expected}" | grep -qxF "$(printf '%s\trefs/heads/replay/pr-%s/head' "${M_HEAD[$i]}" "${M_N[$i]}")" \
-      || die "replay/pr-${M_N[$i]}/head is not at ${M_HEAD[$i]} on ${repo}"
+    printf '%s\n' "${expected}" | grep -qxF "$(printf '%s\trefs/heads/%s/pr-%s/base' "${M_PUSH_BASE[$i]}" "${BRANCH_PREFIX}" "${M_N[$i]}")" \
+      || die "${BRANCH_PREFIX}/pr-${M_N[$i]}/base is not at ${M_PUSH_BASE[$i]} on ${repo}"
+    printf '%s\n' "${expected}" | grep -qxF "$(printf '%s\trefs/heads/%s/pr-%s/head' "${M_HEAD[$i]}" "${BRANCH_PREFIX}" "${M_N[$i]}")" \
+      || die "${BRANCH_PREFIX}/pr-${M_N[$i]}/head is not at ${M_HEAD[$i]} on ${repo}"
     i=$((i + 1))
   done
   note "all $((M_COUNT * 2)) replay branches are at the manifest SHAs"
@@ -405,7 +464,7 @@ neutralize_replayed_workflows() {
 
 create_setup_pr() {
   local repo="$1" url
-  local base="replay/pr-${M_N[0]}/base" head="replay/pr-${M_N[0]}/head"
+  local base="${BRANCH_PREFIX}/pr-${M_N[0]}/base" head="${BRANCH_PREFIX}/pr-${M_N[0]}/head"
   local title="[setup] register and disable the replayed workflows (closed, never merged)"
   local body="Setup only. Opening any replay pair makes GitHub register the workflow files that arrive with the replayed commits (\`agent-review.yml\`, \`pr-checks.yml\`) so they can be disabled before an API key secret exists. This PR is closed right after."
   if [ "${DRY_RUN}" = 1 ]; then
@@ -434,6 +493,7 @@ cmd_create() {
   esac
   load_manifest "${manifest}"
   check_clone
+  resolve_bases "${reviewer}"
   preflight_gh
 
   step "Create ${OWNER}/${repo} (public)"
@@ -451,6 +511,19 @@ cmd_create() {
   step "Done"
   note "The setup PR took #1, so the benchmark PRs of this repository start at #2."
   print_setup_links "${reviewer}" "${repo}"
+}
+
+# Push a second set of replay branches to an existing repository (BENCH_BRANCH_PREFIX).
+cmd_push() {
+  if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then usage_die "push <repo-name> [manifest]"; fi
+  local repo="$1" manifest="${2:-${DEFAULT_MANIFEST}}"
+  check_repo_name "${repo}"
+  load_manifest "${manifest}"
+  check_clone
+  resolve_bases "$(reviewer_of "${repo}")"
+  preflight_gh
+  step "Push the ${BRANCH_PREFIX}/ branches (${M_COUNT} pairs from ${manifest##*/})"
+  push_replays "${repo}"
 }
 
 print_setup_links() {
@@ -477,6 +550,11 @@ preamble_open() {
   # shellcheck disable=SC2016 # backticks are literal Markdown
   printf '> **Replay of [%s#%s](https://github.com/%s/pull/%s)** for the code-review benchmark. Base `%s`, head `%s`: the same commits the original reviewers saw, so the diff is byte-identical. Never merged. Method and scoring: [wachiman/docs/benchmark](%s). The original description follows.' \
     "${SOURCE_REPO}" "$1" "${SOURCE_REPO}" "$1" "${2:0:7}" "${3:0:7}" "${METHOD_URL}"
+  if [ -n "${4:-}" ] && [ "$4" != "$2" ]; then
+    # shellcheck disable=SC2016 # backticks are literal Markdown
+    printf ' The base branch adds one commit, `%s`, that copies the review focus file to `%s`, the name Wachiman reads; the diff is unchanged.' \
+      "${4:0:7}" "${FOCUS_PATH}"
+  fi
 }
 
 cmd_open() {
@@ -485,6 +563,8 @@ cmd_open() {
   check_repo_name "${repo}"
   reviewer="$(reviewer_of "${repo}")"
   load_manifest "${manifest}"
+  check_clone
+  resolve_bases "${reviewer}"
   preflight_gh
 
   step "Open the replay PRs in ${OWNER}/${repo} (${reviewer})"
@@ -493,21 +573,21 @@ cmd_open() {
   while [ "${i}" -lt "${M_COUNT}" ]; do
     existing=""
     if [ "${DRY_RUN}" = 1 ]; then
-      show_cmd gh pr list -R "${OWNER}/${repo}" --state open --base "replay/pr-${M_N[$i]}/base" \
-        --head "replay/pr-${M_N[$i]}/head" --json number --jq '.[0].number // empty'
+      show_cmd gh pr list -R "${OWNER}/${repo}" --state open --base "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" \
+        --head "${BRANCH_PREFIX}/pr-${M_N[$i]}/head" --json number --jq '.[0].number // empty'
     else
-      existing="$(open_pr_number "${repo}" "replay/pr-${M_N[$i]}/base" "replay/pr-${M_N[$i]}/head")"
+      existing="$(open_pr_number "${repo}" "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" "${BRANCH_PREFIX}/pr-${M_N[$i]}/head")"
     fi
     if [ -n "${existing}" ]; then
       note "kaipu#${M_N[$i]}: already open as #${existing}, skipped (no new trigger)"
     else
       orig="$(original_body "${M_N[$i]}")"
-      body="$(preamble_open "${M_N[$i]}" "${M_BASE[$i]}" "${M_HEAD[$i]}")
+      body="$(preamble_open "${M_N[$i]}" "${M_BASE[$i]}" "${M_HEAD[$i]}" "${M_PUSH_BASE[$i]}")
 
 ---
 
 ${orig}"
-      create_replay_pr "${repo}" "replay/pr-${M_N[$i]}/base" "replay/pr-${M_N[$i]}/head" \
+      create_replay_pr "${repo}" "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" "${BRANCH_PREFIX}/pr-${M_N[$i]}/head" \
         "[replay] ${M_TITLE[$i]}" "${body}"
       note "kaipu#${M_N[$i]} -> #${NEW_PR_NUM}"
       trigger_review "${reviewer}" "${repo}" "${NEW_PR_NUM}"
@@ -542,11 +622,11 @@ cmd_rounds() {
   preflight_gh
   url="$(git_url "${repo}")"
 
-  step "Push replay/pr-<n>/head-r<k> at the head SHAs (rounds: $*)"
+  step "Push ${BRANCH_PREFIX}/pr-<n>/head-r<k> at the head SHAs (rounds: $*)"
   i=0
   while [ "${i}" -lt "${M_COUNT}" ]; do
     for k in "$@"; do
-      refs+=("${M_HEAD[$i]}:refs/heads/replay/pr-${M_N[$i]}/head-r${k}")
+      refs+=("${M_HEAD[$i]}:refs/heads/${BRANCH_PREFIX}/pr-${M_N[$i]}/head-r${k}")
     done
     i=$((i + 1))
   done
@@ -559,10 +639,10 @@ cmd_rounds() {
     while [ "${i}" -lt "${M_COUNT}" ]; do
       existing=""
       if [ "${DRY_RUN}" = 1 ]; then
-        show_cmd gh pr list -R "${OWNER}/${repo}" --state open --base "replay/pr-${M_N[$i]}/base" \
-          --head "replay/pr-${M_N[$i]}/head-r${k}" --json number --jq '.[0].number // empty'
+        show_cmd gh pr list -R "${OWNER}/${repo}" --state open --base "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" \
+          --head "${BRANCH_PREFIX}/pr-${M_N[$i]}/head-r${k}" --json number --jq '.[0].number // empty'
       else
-        existing="$(open_pr_number "${repo}" "replay/pr-${M_N[$i]}/base" "replay/pr-${M_N[$i]}/head-r${k}")"
+        existing="$(open_pr_number "${repo}" "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" "${BRANCH_PREFIX}/pr-${M_N[$i]}/head-r${k}")"
       fi
       if [ -n "${existing}" ]; then
         note "round ${k}: kaipu#${M_N[$i]} already open as #${existing}, skipped (no new trigger)"
@@ -573,7 +653,7 @@ cmd_rounds() {
 ---
 
 ${orig}"
-        create_replay_pr "${repo}" "replay/pr-${M_N[$i]}/base" "replay/pr-${M_N[$i]}/head-r${k}" \
+        create_replay_pr "${repo}" "${BRANCH_PREFIX}/pr-${M_N[$i]}/base" "${BRANCH_PREFIX}/pr-${M_N[$i]}/head-r${k}" \
           "[replay r${k}] ${M_TITLE[$i]}" "${body}"
         note "round ${k}: kaipu#${M_N[$i]} -> #${NEW_PR_NUM}"
         trigger_review wachi "${repo}" "${NEW_PR_NUM}"
@@ -725,6 +805,7 @@ main() {
   if [ "${DRY_RUN}" = 1 ]; then printf '# dry run: nothing below is executed\n'; fi
   case "${cmd}" in
     create) cmd_create "$@" ;;
+    push) cmd_push "$@" ;;
     open) cmd_open "$@" ;;
     rounds) cmd_rounds "$@" ;;
     collect) cmd_collect "$@" ;;
