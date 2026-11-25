@@ -35,7 +35,9 @@ STALE_FOCUS_PATHS=".github/agent-review.md"
 # check: refuse a base whose focus file has a name Wachiman ignores. rename: push, instead of the
 # manifest base, one extra commit that copies it to FOCUS_PATH. as-is: push the base unchanged.
 FOCUS_MODE="${BENCH_FOCUS:-check}"
+# Fixed author, committer and date, so the focus commit's SHA is the same on every machine.
 FOCUS_COMMIT_DATE="2026-10-31T00:00:00Z"
+FOCUS_COMMIT_NAME="Cristian Sotomayor ⚡"
 WAIT_SECONDS=90
 METHOD_URL="https://github.com/niway-dev/wachiman/tree/main/docs/benchmark"
 BENCH_URL="https://github.com/niway-dev/wachiman/blob/main/docs/benchmark/replay/bench.sh"
@@ -345,7 +347,8 @@ pullfrog.yml copied unchanged from ${SOURCE_REPO}@${src_sha}"
 # Fill M_PUSH_BASE. Wachiman reads its focus file from the base commit; a base that holds it only
 # under a name Wachiman ignores would be reviewed without it, silently (see README, "Review focus
 # file"). The focus commit is built from fixed metadata, so every run computes the same SHA, and
-# the pull request's diff (merge base to head) is unchanged.
+# the pull request's diff (merge base to head) is unchanged. It is computed even under --dry-run:
+# that writes git objects into the clone, never to a remote.
 resolve_bases() {
   local reviewer="$1" i base stale found blob idx tree
   i=0
@@ -371,8 +374,8 @@ resolve_bases() {
           GIT_INDEX_FILE="${idx}" git -C "${CLONE}" update-index --add --cacheinfo "100644,${blob},${FOCUS_PATH}"
           tree="$(GIT_INDEX_FILE="${idx}" git -C "${CLONE}" write-tree)"
           rm -f "${idx}"
-          M_PUSH_BASE[i]="$(GIT_AUTHOR_NAME="${GIT_NAME}" GIT_AUTHOR_EMAIL="${GIT_EMAIL}" GIT_AUTHOR_DATE="${FOCUS_COMMIT_DATE}" \
-            GIT_COMMITTER_NAME="${GIT_NAME}" GIT_COMMITTER_EMAIL="${GIT_EMAIL}" GIT_COMMITTER_DATE="${FOCUS_COMMIT_DATE}" \
+          M_PUSH_BASE[i]="$(GIT_AUTHOR_NAME="${FOCUS_COMMIT_NAME}" GIT_AUTHOR_EMAIL="${GIT_EMAIL}" GIT_AUTHOR_DATE="${FOCUS_COMMIT_DATE}" \
+            GIT_COMMITTER_NAME="${FOCUS_COMMIT_NAME}" GIT_COMMITTER_EMAIL="${GIT_EMAIL}" GIT_COMMITTER_DATE="${FOCUS_COMMIT_DATE}" \
             git -C "${CLONE}" commit-tree "${tree}" -p "${base}" \
             -m "bench: copy ${found} to ${FOCUS_PATH}" \
             -m "Wachiman reads its review focus only from ${FOCUS_PATH} since v1.14.0. Same content; the reviewed diff is unchanged.")"
@@ -380,6 +383,23 @@ resolve_bases() {
         *) die "BENCH_FOCUS='${FOCUS_MODE}': use check, rename or as-is" ;;
       esac
     fi
+    i=$((i + 1))
+  done
+}
+
+# Stop unless every <prefix>/pr-<n>/base on the remote is at M_PUSH_BASE, so a PR body never names
+# a focus commit the branch does not have (or misses one it has).
+check_remote_bases() {
+  local repo="$1" remote i
+  if [ "${DRY_RUN}" = 1 ]; then
+    show_cmd git ls-remote "$(git_url "${repo}")" "refs/heads/${BRANCH_PREFIX}/*"
+    return 0
+  fi
+  remote="$(git ls-remote "$(git_url "${repo}")" "refs/heads/${BRANCH_PREFIX}/*")"
+  i=0
+  while [ "${i}" -lt "${M_COUNT}" ]; do
+    printf '%s\n' "${remote}" | grep -qxF "$(printf '%s\trefs/heads/%s/pr-%s/base' "${M_PUSH_BASE[$i]}" "${BRANCH_PREFIX}" "${M_N[$i]}")" \
+      || die "${BRANCH_PREFIX}/pr-${M_N[$i]}/base on ${repo} is not at ${M_PUSH_BASE[$i]:0:7}; push with the same BENCH_FOCUS first"
     i=$((i + 1))
   done
 }
@@ -563,9 +583,10 @@ cmd_open() {
   check_repo_name "${repo}"
   reviewer="$(reviewer_of "${repo}")"
   load_manifest "${manifest}"
-  check_clone
+  if [ "${reviewer}" = "wachi" ]; then check_clone; fi
   resolve_bases "${reviewer}"
   preflight_gh
+  if [ "${reviewer}" = "wachi" ]; then check_remote_bases "${repo}"; fi
 
   step "Open the replay PRs in ${OWNER}/${repo} (${reviewer})"
   ensure_label "${repo}"
@@ -603,6 +624,11 @@ preamble_round() {
   # shellcheck disable=SC2016 # backticks are literal Markdown
   printf '> **Replay of [%s#%s](https://github.com/%s/pull/%s), run %s** for the code-review benchmark. Same base and head commits as the round-1 replay (a second branch name on the same commit, so the reviewer sees a fresh pull request). Never merged. Method: [wachiman/docs/benchmark](%s).' \
     "${SOURCE_REPO}" "$1" "${SOURCE_REPO}" "$1" "$2" "${METHOD_URL}"
+  if [ -n "${4:-}" ] && [ "$4" != "$3" ]; then
+    # shellcheck disable=SC2016 # backticks are literal Markdown
+    printf ' The base branch adds one commit, `%s`, that copies the review focus file to `%s`, the name Wachiman reads; the diff is unchanged.' \
+      "${4:0:7}" "${FOCUS_PATH}"
+  fi
 }
 
 cmd_rounds() {
@@ -619,7 +645,9 @@ cmd_rounds() {
   done
   load_manifest "${DEFAULT_MANIFEST}"
   check_clone
+  resolve_bases "${reviewer}"
   preflight_gh
+  check_remote_bases "${repo}"
   url="$(git_url "${repo}")"
 
   step "Push ${BRANCH_PREFIX}/pr-<n>/head-r<k> at the head SHAs (rounds: $*)"
@@ -648,7 +676,7 @@ cmd_rounds() {
         note "round ${k}: kaipu#${M_N[$i]} already open as #${existing}, skipped (no new trigger)"
       else
         orig="$(original_body "${M_N[$i]}")"
-        body="$(preamble_round "${M_N[$i]}" "${k}")
+        body="$(preamble_round "${M_N[$i]}" "${k}" "${M_BASE[$i]}" "${M_PUSH_BASE[$i]}")
 
 ---
 

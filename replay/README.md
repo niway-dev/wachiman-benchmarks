@@ -61,7 +61,7 @@ For a Wachi repository, `create`, `push` and `open` decide this from `BENCH_FOCU
 | `BENCH_FOCUS` | What the base branch gets |
 | --- | --- |
 | `check` (default) | Nothing; the command stops if a base has the file only under a name Wachiman ignores |
-| `rename` | One commit on top of the manifest base that copies the file to `.github/wachiman.md`, unchanged. Its date and author are fixed, so every run computes the same SHA. The PR body names it |
+| `rename` | One commit on top of the manifest base that copies the file to `.github/wachiman.md`, unchanged. Its author, committer and date are fixed, so every machine computes the same SHA. The PR bodies of `open` and `rounds` name it, and both stop if the remote base branch is not at that commit |
 | `as-is` | The manifest base unchanged: the review runs without the repository's rules. Say so in the report |
 
 The extra commit does not change what is reviewed: GitHub diffs a pull request from the merge base
