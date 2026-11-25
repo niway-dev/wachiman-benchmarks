@@ -13,9 +13,11 @@
 ## Result
 
 **No. With the focus file restored, v1.21.0 catches 27 of 81 known-bug chances, against 30 for
-v1.20.1 without it and 35 for v1.4.0. And the whole gap is in one pull request, #467, the biggest,
+v1.20.1 without it and 35 for v1.4.0. Most of the gap is in one pull request, #467, the biggest,
 where the newer engines leave files unreviewed.** On the four smaller pull requests the three
-versions catch the same: 24, 23 and 23 of 51 chances.
+versions catch about as many: 24, 23 and 23 of 51 chances. There, though, the catches spread over
+fewer distinct bugs (13, 12 and 10): #463 E1 and #464 E1, which v1.20.1 caught, no v1.21.0 run
+did.
 
 The focus file was a real difference between the runs, and it is now fixed in kaipu-record
 ([kaipu-record#728](https://github.com/niway-dev/kaipu-record/pull/728)), but it is not what made
@@ -36,7 +38,7 @@ the newer engine find less.
 | Per run | W4 12, W5 11, W6 12 | W7 10, W8 9, W9 11 | W10 9, W11 8, W12 10 |
 | Distinct known bugs caught by any run (of 27) | 19 | 16 | 13 |
 | Cost per known bug caught | $0.60 | $0.71 | $0.82 |
-| #467 reviews left partial | 0 of 3 | 2 of 3 (8 of 47 files unread) | 3 of 3 (19, 19 and 11 of 47 files unread) |
+| #467 reviews left partial | 0 of 3 | 2 of 3 (8 and 11 of 47 files unread) | 3 of 3 (19, 19 and 11 of 47 files unread) |
 
 Known bugs caught by at least one of the three runs:
 
@@ -57,13 +59,15 @@ Known bugs caught by at least one of the three runs:
   real cost, and read all 47 files in every run. Here every v1.21.0 run of #467 was partial: E9's
   file (`library-page.module.css`) went unread in all three, and E7's (`sidebar.test.tsx`) in two.
   That is where the known bugs were lost.
-- **More files went unread with the focus file than without it** (11–19 against 8). Why is not
-  established. The focus file adds about 1.5 KB to every batch prompt, which makes each batch cost
-  a little more, and so leaves less for the last ones. Run-to-run variation is the other candidate.
-  Either way, the cause underneath is the budget reservation.
-- **The four smaller pull requests: no loss.** Every batch there ended on `success`. The newer
-  engine takes fewer turns per call (8.5 against 13.7) and posts fewer findings, but it catches the
-  same known bugs (23 against 24 of 51). Why it takes fewer turns is not identified. One candidate
+- **More files went unread with the focus file than without it:** 19, 19 and 11, against 8, 11 and
+  none. Why is not established. The focus file adds about 1.5 KB to every batch prompt, which makes
+  each batch cost a little more and leaves less for the last ones; run-to-run variation is the other
+  candidate (W12 and W8 both left 11). Either way, the cause underneath is the budget reservation.
+- **The four smaller pull requests: about the same count, fewer distinct bugs.** Every batch there
+  ended on `success`, so the budget did not cut them. The newer engine takes fewer turns per call
+  (8.5 against 13.7) and posts fewer findings, and catches nearly as many (23 against 24 of 51),
+  but repeats the same bugs more across runs: 10 distinct against 13. Three runs cannot say whether
+  that is a loss or variation. Why it takes fewer turns is not identified. One candidate
   is the risk paragraph that v1.12.0 adds to every batch prompt; it is untested.
 - **Not the cause:** the optional settings. `verify`, `pr_confidence` and `memory_proposals` are off
   in every run here. The review rules and flow questions in the prompt, the tools, `max_turns` and
@@ -114,7 +118,7 @@ Everything below is the same in the three sets of runs unless the row says other
 ## Limits
 
 - **Three runs per version is a small sample.** The small pull requests' 24, 23 and 23 are the
-  same within run-to-run variation. #467's 11, 7 and 4 follow the number of files left unread,
+  same within run-to-run variation; their distinct bugs (13, 12, 10) may not be. #467's 11, 7 and 4 follow the number of files left unread,
   which is the signal worth acting on.
 - **The known-bug list was built from earlier versions' runs.** A bug only a newer version sees
   counts as "new", not "known", so this table cannot reward it. 8 findings were new here.

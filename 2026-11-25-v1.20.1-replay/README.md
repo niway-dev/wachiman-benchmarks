@@ -33,7 +33,7 @@ not read the repository's review focus file (see Method); the
 | Per run | W4 12, W5 11, W6 12 | W7 10, W8 9, W9 11 |
 | Distinct known bugs caught by any of the 3 runs (of 27) | 19 | 16 |
 | Cost per known bug caught | $0.60 | $0.71 |
-| Partial reviews | 0 | 2 (#6 and #11: 8 of 47 files left) |
+| Partial reviews | 0 | 2 (#6: 8 of 47 files left, #11: 11) |
 
 What the matched findings were (`labels.csv`, `label_kind`): v1.4.0 34 expected, 17 additional,
 16 new. v1.20.1 33 expected, 11 additional, 16 new. The new v1.20.1 findings cover 16 distinct
@@ -56,7 +56,7 @@ Known bugs caught by at least one of the three runs:
   v1.20.1 run posted them.
 - **Gained:** #466 E2, which all three v1.20.1 runs caught.
 - **#467 is the biggest pull request.** v1.20.1 splits it into 6 batches. In two of the three runs,
-  one batch ran out of its budget and left 8 files unreviewed. The known bugs missed there may sit
+  batches ran out of budget and left 8 and 11 files unreviewed. The known bugs missed there may sit
   in those files; the per-PR doc does not settle it.
 
 ## Method
@@ -73,7 +73,8 @@ Same setup as W4–W6, except for the engine version, the credential and the rev
   [`replay/manifest-2026-10-31.tsv`](../replay/manifest-2026-10-31.tsv) (kaipu-record #463–#467),
   at the same commits.
 - **Runs:** three runs, started with `/wachi review` by
-  [`replay/bench.sh`](../replay/bench.sh) (`create`, `open`, `rounds 2 3`, `collect`).
+  [`replay/bench.sh`](../replay/bench.sh) (`create`, `open`, `rounds 2 3`, `collect`). To reproduce them with today's `bench.sh`, set `BENCH_FOCUS=as-is` (the default now stops on
+  these bases) and use the workflow at the commit linked below.
 - **Settings:** Claude Opus 5.5, effort `high`, `verify: false`, engine pinned to v1.20.1
   (`793a64d`) in [`replay/wachi-workflow.yml` as of these runs](https://github.com/niway-dev/wachiman-benchmarks/blob/55dea9c/replay/wachi-workflow.yml).
 - **Credential:** the review ran on a Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`), not an
