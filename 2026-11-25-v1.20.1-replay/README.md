@@ -67,7 +67,7 @@ Same setup as W4–W6, except for the engine version, the credential and the rev
   `.github/agent-review.md`. v1.4.0 read it. v1.20.1 did not, because v1.14.0 stopped reading that
   name, so these runs were reviewed without the repository's rules. The
   [follow-up run](../2026-11-25-v1.21.0-focus-replay/README.md) restored the file on v1.21.0 and
-  caught 27 known bugs, not more, so the missing file does not explain the gap below.
+  caught 27 known bugs, not more, so the missing file does not explain the gap above.
 
 - **Pull requests:** the five pull requests in
   [`replay/manifest-2026-10-31.tsv`](../replay/manifest-2026-10-31.tsv) (kaipu-record #463–#467),
@@ -75,7 +75,7 @@ Same setup as W4–W6, except for the engine version, the credential and the rev
 - **Runs:** three runs, started with `/wachi review` by
   [`replay/bench.sh`](../replay/bench.sh) (`create`, `open`, `rounds 2 3`, `collect`).
 - **Settings:** Claude Opus 5.5, effort `high`, `verify: false`, engine pinned to v1.20.1
-  (`793a64d`) in [`replay/wachi-workflow.yml`](../replay/wachi-workflow.yml).
+  (`793a64d`) in [`replay/wachi-workflow.yml` as of these runs](https://github.com/niway-dev/wachiman-benchmarks/blob/55dea9c/replay/wachi-workflow.yml).
 - **Credential:** the review ran on a Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`), not an
   API key. **Every v1.20.1 cost here is the engine's API-equivalent estimate, not a bill.** It uses
   the same per-token computation the API runs of W4–W6 reported, so the two columns compare. Nothing

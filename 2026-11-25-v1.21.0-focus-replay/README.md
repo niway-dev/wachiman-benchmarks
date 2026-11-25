@@ -13,11 +13,13 @@
 ## Result
 
 **No. With the focus file restored, v1.21.0 catches 27 of 81 known-bug chances, against 30 for
-v1.20.1 without it and 35 for v1.4.0.** It posts about as many findings as v1.20.1 (65 against 61),
-and its batch calls are as short (8.5 turns per call against 8.2; v1.4.0: 13.7). The focus file
-was a real difference between the runs, and it is now fixed in kaipu-record
-([kaipu-record#728](https://github.com/niway-dev/kaipu-record/pull/728)), but it is not what
-made the newer engine find less.
+v1.20.1 without it and 35 for v1.4.0. And the whole gap is in one pull request, #467, the biggest,
+where the newer engines leave files unreviewed.** On the four smaller pull requests the three
+versions catch the same: 24, 23 and 23 of 51 chances.
+
+The focus file was a real difference between the runs, and it is now fixed in kaipu-record
+([kaipu-record#728](https://github.com/niway-dev/kaipu-record/pull/728)), but it is not what made
+the newer engine find less.
 
 | Per review (15 reviews each) | v1.4.0 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0 + focus file (W10–W12) |
 | --- | --- | --- | --- |
@@ -29,10 +31,12 @@ made the newer engine find less.
 | Findings posted | 80 | 61 | 65 |
 | Turns per batch call | 13.7 | 8.2 | 8.5 |
 | Known bugs caught (of 81: 27 bugs × 3 runs) | 35, plus 4 in part | 30, plus 2 in part | 27, plus 3 in part |
+| … on #463–#466 (of 51) | 24, plus 2 in part | 23, plus 1 in part | 23 |
+| … on #467 (of 30) | 11, plus 2 in part | 7, plus 1 in part | 4, plus 3 in part |
 | Per run | W4 12, W5 11, W6 12 | W7 10, W8 9, W9 11 | W10 9, W11 8, W12 10 |
 | Distinct known bugs caught by any run (of 27) | 19 | 16 | 13 |
 | Cost per known bug caught | $0.60 | $0.71 | $0.82 |
-| Partial reviews | 0 | 2 (#467) | 3 (#467: 28, 28 and 36 of 47 files reviewed) |
+| #467 reviews left partial | 0 of 3 | 2 of 3 (8 of 47 files unread) | 3 of 3 (19, 19 and 11 of 47 files unread) |
 
 Known bugs caught by at least one of the three runs:
 
@@ -46,19 +50,21 @@ Known bugs caught by at least one of the three runs:
 
 ## What the gap comes from
 
-- **#467, the 47-file pull request: the budget, confirmed.** Since v1.16.0 the engine runs up to 4
-  batches at once, and each running batch reserves its full cap ($0.75) from the review's budget
-  before it starts. The batches started last get little or none, end on `budget`, and leave files
-  unread. All three v1.21.0 runs of #467 were partial. E9's file (`library-page.module.css`) was
-  unread in all three, and E7's file (`sidebar.test.tsx`) in two. v1.4.0 ran batches one after
-  another and charged each its real cost, so it read all 47 files. This explains the losses on
-  #467, not those on the four small PRs, which finished every batch.
-- **The four small pull requests: shorter batch calls, cause not found.** Every batch there ended on
-  `success`, so the budget did not cut them. The model simply takes fewer turns per call (8.5
-  against 13.7) and reads less before answering. What changed between v1.4.0 and v1.14.0 to cause
-  that is not identified. One candidate is the risk paragraph that v1.12.0 adds to every batch
-  prompt. It is untested: finding the cause needs the same pull request run on releases between
-  v1.4.0 and v1.14.0 (a bisection), which this run does not do.
+- **#467, the 47-file pull request: files left unreviewed, from the budget.** Since v1.16.0 the
+  engine runs up to 4 batches at once, and each running batch reserves its full cap ($0.75) from
+  the review's budget before it starts. The batches started last get little or none, end on
+  `budget`, and leave their files unread. v1.4.0 ran batches one after another, charged each its
+  real cost, and read all 47 files in every run. Here every v1.21.0 run of #467 was partial: E9's
+  file (`library-page.module.css`) went unread in all three, and E7's (`sidebar.test.tsx`) in two.
+  That is where the known bugs were lost.
+- **More files went unread with the focus file than without it** (11–19 against 8). Why is not
+  established. The focus file adds about 1.5 KB to every batch prompt, which makes each batch cost
+  a little more, and so leaves less for the last ones. Run-to-run variation is the other candidate.
+  Either way, the cause underneath is the budget reservation.
+- **The four smaller pull requests: no loss.** Every batch there ended on `success`. The newer
+  engine takes fewer turns per call (8.5 against 13.7) and posts fewer findings, but it catches the
+  same known bugs (23 against 24 of 51). Why it takes fewer turns is not identified. One candidate
+  is the risk paragraph that v1.12.0 adds to every batch prompt; it is untested.
 - **Not the cause:** the optional settings. `verify`, `pr_confidence` and `memory_proposals` are off
   in every run here. The review rules and flow questions in the prompt, the tools, `max_turns` and
   the per-batch cap are the same as in v1.4.0.
@@ -87,7 +93,9 @@ Everything below is the same in the three sets of runs unless the row says other
 - **Setup:** [`replay/bench.sh`](../replay/bench.sh) with `BENCH_BRANCH_PREFIX=replay-focus` and
   `BENCH_FOCUS=rename`: `push`, `open`, `rounds 2 3`, `collect`. The prefix keeps these branches
   apart from W7–W9's in the same repository. The rename mode builds the extra base commit with a
-  fixed author and date, so it is reproducible, and the pull request body names it. The
+  fixed author and date, so it is reproducible, and the round-1 pull request body names it. `main`'s
+  workflow was updated to the v1.21.0 pin through the contents API before round 1 (`push` does not
+  touch `main`). The
   [replay README](../replay/README.md#review-focus-file) explains the modes. Without a mode,
   `bench.sh` now stops when a base has the focus file only under a name Wachiman ignores, so a run
   cannot lose it silently again.
@@ -105,9 +113,9 @@ Everything below is the same in the three sets of runs unless the row says other
 
 ## Limits
 
-- **Three runs per version is a small sample.** The step from 30 to 27 is within run-to-run
-  variation. The step from 35 to 27, together with the drop in turns per call, is the signal worth
-  chasing.
+- **Three runs per version is a small sample.** The small pull requests' 24, 23 and 23 are the
+  same within run-to-run variation. #467's 11, 7 and 4 follow the number of files left unread,
+  which is the signal worth acting on.
 - **The known-bug list was built from earlier versions' runs.** A bug only a newer version sees
   counts as "new", not "known", so this table cannot reward it. 8 findings were new here.
 - **The cost is an estimate:** subscription token, API prices, no bill. The stop rule (stop after
