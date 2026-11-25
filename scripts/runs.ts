@@ -34,6 +34,7 @@ interface Label {
 const D0201 = "2026-11-01/README.md, table \"The runs\"";
 const D0202 = "2026-11-02/README.md (W4 = #16–#20, W5 = #21–#25, W6 = #26–#30)";
 const DE1 = "2026-11-02-e1-sonnet/README.md (S7 = #31–#35, S8 = #36–#40, S9 = #41–#45)";
+const D1125 = "2026-11-25-v1.20.1-replay/README.md (W7 = #2–#6, W8 = #7–#11, W9 = #12–#16)";
 
 /** `r<n>` of a kaipu-bench-wachi replay → the label the docs use. */
 function wachiLabel(round: string): Label | null {
@@ -61,6 +62,10 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
         notes: "Replay of the bug-catalogue PRs on 2026-11-02; version and model come from the run log",
       };
     }
+  }
+  if (repo === "kaipu-bench-wachi-v3" && SET1.has(original)) {
+    const n = Number(round.slice(1));
+    if (n >= 1 && n <= 3) return { label: `W${n + 6}`, confidence: "derived", basis: D1125, model: "claude-opus-5-5", version: "v1.20.1", notes: "Opus 5.5, effort high, verify off, Claude subscription token: cost is an API-equivalent estimate" };
   }
   if (repo === "kaipu-bench-wachi-v2") {
     return { label: "W-v2", confidence: "guessed", basis: "no analysis doc names this repo's runs", notes: "agent-review.yml failed on all five PRs; no review was posted" };
@@ -181,7 +186,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
           tool, source_repo: repo, bench_pr: pr.number, original_pr: original, commit: (mine[0]?.rv.commit_id ?? pr.head.sha).slice(0, 7),
           round_tag: round, run_label: l.label, model: model || l.model || "", version: version || l.version || "",
           date: (mine[0]?.rv.submitted_at ?? pr.created_at).slice(0, 10), review_ids: mine.map((b) => b.rv.id).join(" "), run_ids: runIds.join(" "),
-          doc_set: l.label ? (/docs\/[^\s,()]+/.exec(l.basis)?.[0] ?? "") : "", confidence: l.confidence === "derived" && (fromLog || tool !== "wachiman") ? "derived" : l.confidence,
+          doc_set: l.label ? (/^\d{4}-\d{2}-\d{2}[^\s,()\/]*\/README\.md/.exec(l.basis)?.[0] ?? "") : "", confidence: l.confidence === "derived" && (fromLog || tool !== "wachiman") ? "derived" : l.confidence,
           basis: l.basis, notes: notes.filter(Boolean).join("; "),
         });
         continue;

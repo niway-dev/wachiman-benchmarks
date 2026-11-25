@@ -1,0 +1,92 @@
+# kaipu-bench-wachi-v3#7 [replay r2] fix(desktop): turning the camera off and on mid-take keeps the face in its own track - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-25T21:53:39Z · commit 3ec7a13
+
+👮 **Wachiman** · 🟠 **1 to fix in this PR** · 1 question for you · 3 to consider · whole PR at `3ec7a13`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 1 to fix · 🟡 3 to consider · ⚪ 0 for your information (4) · 3 Should · 1 Could |
+| **Risk** | Medium: top fact `public-contract` at `recorder-store.ts:1109`, see Risk facts |
+| **Needs a person** | 1 direction, in `camera-bubble-window.ts:262` |
+| **Coverage** | 23 of 23 files reviewed, whole pull request |
+| **Read first** | `recorder-engine.ts`, `recorder-store.ts`, `webcam-track.ts`, `camera-bubble-window.ts`, `recording-hub.ts` |
+
+### To fix (1)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟠 Fix · Should · 🐛 bug | [`recording-hub.ts:304`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/main/recording/recording-hub.ts#L304) | A reopen that fails after the bubble is re-shown leaves the face in neither the webcam file nor the screen |
+
+### To consider (3)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Should · 📝 docs | [`recorder-store.ts:938`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L938) | Comment says a following off waits on the queue, but the off path runs synchronously |
+| 🟡 Consider · Should · 🧪 tests | [`webcam-relay.test.ts:79`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.test.ts#L79) | The "late frame is dropped and closed" path is never exercised or asserted |
+| 🟡 Consider · Could · 📝 docs | [`0032-…-capture.mdx:71`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/documentation/src/content/docs/architecture/decisions/0032-webcam-is-its-own-track-and-the-bubble-is-excluded-from-capture.mdx#L71) | Is "the webcam file keeps running, holding its last frame" verified against mediabunny? |
+
+### Questions for you (1)
+
+- [`camera-bubble-window.ts:262`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/main/recording/camera-bubble-window.ts#L262) · direction — Parking hands camera release over to the bubble renderer instead of guaranteeing it by destroying the window. A person should decide whether relying on the renderer during a take is acceptable.
+
+### Risk facts
+
+- `public-contract` · [`recorder-store.ts:1109`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L1109) — The webcam sidecar meta now carries a `gaps` array, which the editor seeds as hidden segments.
+- `concurrency` · [`recorder-engine.ts:810`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts#L810) — Overlapping on/off toggles are settled by a `cameraRequest` counter while the camera open and the first-frame wait are in flight.
+- `public-contract` · [`webcam-track.ts:72`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/shared/webcam-track.ts#L72) — The sidecar's persisted `webcam` field gains an optional `gaps` array that the editor reads to seed hidden segments.
+
+<details><summary>What the change connects to (5 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Camera toggled off mid-take parks the bubble instead of destroying it (`apps/kaipu-record/src/main/recording/recording-hub.ts:309`) — The bubble hides. The in-use light goes off once both the bubble preview and the engine have stopped their tracks. If it fails: If the bubble renderer misses the broadcast, the parked hidden window keeps the camera open until the take ends; `releaseParkedBubble` destroys it on finalize, abort, stop or reset (recording-hub.ts:… Evidence: `apps/kaipu-record/src/main/recording/recording-hub.ts:309-335`, `apps/kaipu-record/src/renderer/src/features/camera-bubble/camera-bubble.tsx:44-61`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:769-777`.
+- Camera toggled on mid-take reopens the camera into the same webcam file through the relay (`apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:779`) — The face comes back in the webcam file. The gap closes at the first fed frame (recorder-store.ts:939-944). If it fails: The whole wait is bounded at about 6 s (3 s open + 3 s first frame). On failure the file ends and main un-protects the window it already re-showed, which the running capture may still leave out (see… Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:779-819`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:1130-1145`, `apps/kaipu-record/src/main/recording/recording-hub.ts:456-460`.
+- Bubble renderer subscribes to recording settings to follow the Camera toggle (`apps/kaipu-record/src/renderer/src/features/camera-bubble/camera-bubble.tsx:44`) — The preview stream stops while the toggle is off. If it fails: A rejected read is swallowed and the preview stays on (default true), which matches the old behaviour. Evidence: `apps/kaipu-record/src/renderer/src/features/camera-bubble/camera-bubble.tsx:44-61`, `apps/kaipu-record/src/renderer/src/features/recording/hooks/use-recording-settings.ts:30-35`.
+- Renderer-supplied webcam.gaps sanitized before landing on the sidecar (`apps/kaipu-record/src/shared/webcam-track.ts:131`) — seedWebcamScene turns each gap into a hidden segment, so the lane stripes it and the face is hidden there. If it fails: Malformed/backwards/empty gaps dropped silently; overlapping merged; capped at 1000. Evidence: `apps/kaipu-record/src/shared/webcam-track.ts:131-154`, `apps/kaipu-record/src/shared/webcam-track.ts:184-185`, `apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.ts:106-158`.
+- Camera toggled off/on mid-take records a gap (store) via engine turnWebcamOff/turnWebcamOn (`apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:928`) — Gaps are sent with finalize; a failed reopen shows the webcamUnavailable toast after the take is saved. If it fails: openWebcamWithin timeout or a feed with no frame within WEBCAM_OPEN_TIMEOUT_MS ends the file (endWebcam) and returns "unavailable". An off arriving while it opens bumps cameraRequest and the late cam… Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924-953`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:769-819`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:1015-1018`, `apps/kaipu-record/src/renderer/src/features/recording/webcam-gaps.ts:15-30`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** I reviewed all 14 files in this part and have two findings: one bug at severity "fix" (medium confidence) and one comment fix at "consider".
+
+**The bug (`recording-hub.ts:304`):** when the camera is turned back on mid-take, main shows the parked bubble again before the renderer has reopened the camera. If that reopen then fails (it can take up to about 6 s), the webcam file ends and main only turns off the window's content protection. The hub's own comments say a running capture leaves out windows that were on screen when it started, so un-protecting this window does not bring it back into the recording. For the rest of the take the face is likely in neither the webcam file nor the screen recording. The user is still told the face went to the screen, which would be wrong. Confidence is medium because that capture behaviour comes from the hub's comments, not from code I could check. The suggested fix is to replace the window with a fresh one when the file ends after a re-show, as line 304 already does when it ends before.
+
+**The comment (`recorder-store.ts:938`):** it says a following "off" waits on the queue, but the off path runs straight away; the engine's request counter is what releases a camera that opens late.
+
+Everything else holds up:
+
+- **Relay:** camera-off gaps are tracked and passed to the editor.
+- **Bounded waits:** the camera reopen is limited to roughly 6 s in total.
+- **Parked bubble cleanup:** a parked bubble is destroyed on finalize, abort, stop and reset.
+- **Editor:** gaps become hidden segments, stretched to the minimum length and merged where they overlap.
+- **Tests:** they assert what their names say.
+
+**Batch 2 of 2.** In part 2 I found no defects. The sidecar sanitizer for `webcam.gaps`, `WebcamGapLog`, and the way the editor seeds gaps as hidden segments match their tests. The engine and store tests assert what the code at recorder-engine.ts:769-819 and recorder-store.ts:924-953 actually does. That includes the race where the camera is turned off again while it is reopening: the late camera is stopped and its gap stays open. Two optional notes. First, one relay test claims to cover the \"late frame dropped and closed\" path, but it never exercises or asserts it. Second, the ADR claims the webcam file keeps running and holds its last frame while the camera is off, and I couldn't confirm that because mediabunny isn't installed in this checkout, so I've asked whether the ADR should list it as unverified.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 14 | 851 | 5 | reviewed | 7 | $0.55 |
+| Batch 2 of 2 | 9 | 606 | 4 | reviewed | 11 | $0.54 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 20 in / 13k out / 371k cache read / 93k cache write · Claude subscription: API-equivalent estimate, not a bill · $1.09</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=3ec7a138c3a878b38284fd13c801ab7226a34abb -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjAuMSIsImhlYWQiOiIzZWM3YTEzOGMzYTg3OGIzODI4NGZkMTNjODAxYWI3MjI2YTM0YWJiIiwiYXR0ZW1wdCI6ImFkYzhlZGJiLTEyNzQtNGE1OS05NTE0LWU2MmQ5OGE1MDk2YiIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6NCwiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjoxLCJjb25zaWRlciI6MywiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjQsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=adc8edbb-1274-4a59-9514-e62d98a5096b -->

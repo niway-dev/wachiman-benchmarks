@@ -1,0 +1,73 @@
+# kaipu-bench-wachi-v3#8 [replay r2] feat(desktop): ready copy shows up in the Library; minimizable export widget - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-25T21:53:51Z · commit e45c845
+
+👮 **Wachiman** · 🟠 **1 to fix in this PR** · 1 to consider · whole PR at `e45c845`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 1 to fix · 🟡 1 to consider · ⚪ 0 for your information (2) · 1 Should · 1 Could |
+| **Risk** | Low: no risk facts reported, no risky paths |
+| **Coverage** | 31 of 31 files reviewed, whole pull request |
+| **Read first** | `ready-copy-card.tsx`, `export-status-cards.tsx`, `library-page.tsx`, `export-widget-state.ts`, `ready-copies.ts` |
+
+### To fix (1)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟠 Fix · Should · 🐛 bug | [`ready-copy-card.tsx:80`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L80) | Show in Finder / drag on the Library ready card do not mark the copy seen, unlike the ready toast |
+
+### To consider (1)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Could · 🐛 bug | [`ready-copy-card.tsx:93`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L93) | Drag name and displayed file name disagree for an untitled copy |
+
+<details><summary>What the change connects to (5 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Show in Finder and the native drag on the Library "Ready to upload" card (`apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:80`) — The file is revealed or dragged, but the ready card, the "copy ready" chip and the unseen outline all stay. If it fails: revealLocalRecording's promise is voided, the same as the sibling and use-local-library, so a failure is silent there too. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:277-295`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:10-13`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:76-79`.
+- Minimized export widget state read from sessionStorage (`apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:10`) — The widget opens expanded when storage is unavailable. If it fails: Treating unreadable storage as empty loses only the minimize preference. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:10-35`.
+- Ready cards are retired when the route leaves the Library (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:102`) — On the next Library visit the plain grid shows, with the outline and chip still there for unseen copies. If it fails: If the Sidebar remounts, the ref resets to false. Leaving the Library right after a remount still works, because the effect first sets the ref true while on the Library. Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:95-104`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:97-100`.
+- Ready to upload card's drag button label and poster tag are rendered from the new `dragTo` / `destinationTag` messages (`apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:97`) — The card and toast show e.g. "Drag to YouTube Studio". The poster tag shows "For YouTube" on the destination's colour, and the colours match destination-logo.module.css. Evidence: `apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:97`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:298`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:36-43`, `packages/i18n/messages/en.json:1430-1431`, `packages/i18n/messages/es.json:1430-1431`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destination-tag.tsx:18-19`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destination-logo.module.css:11-28`.
+- Ready card spans two grid columns at the top of the Library grid (`apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.module.css:4`) — The ready card takes two of the three columns, and regular cards fill the rest. Evidence: `apps/kaipu-record/src/renderer/src/pages/library/library-page.module.css:366-371`, `apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:407-413`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** The changes in this part are mostly consistent. The new Library \"Ready to upload\" card skips a step its sibling takes: the ready toast calls markCopySeen before Show in Finder and before the drag, and the new card does not. After the user acts on the card in the Library, the copy stays unseen (the card stays, the chip keeps counting it, the outline remains). The PR body describes email wording and a FOR EMAIL tag, but this checkout has no email destination and no email strings, so that part of the description does not match this head.
+
+**Batch 2 of 2.** I found nothing to flag in this part: the four stylesheets, the three backlog docs, and the en/es messages.
+
+- **Stylesheets.** Every design token they use is defined in packages/tokens/css/tokens.css or base.css. The one exception is `--bg-hover`, which has a fallback, and tag-editor.module.css already uses it the same way. The destination-tag colours match destination-logo.module.css, as its comment says. The ready card's `span 2` is safe because the Library grid always has exactly three columns.
+- **Messages.** Every destination has a branch in the new `select` messages in both locales, including "archive", which `destinationTag` covers under `other`. The removed keys `hide` and `readyDragToUpload` have no remaining callers.
+- **Docs.** The new backlog doc's status banner and index row follow the CLAUDE.md legend.
+
+One point is about the PR description, not the code. It describes "Email wording" ("Exporting for email", "Email copy ready", "Drag to an email", FOR EMAIL) for an Email destination brought in from #467. There is no "email" destination at this head commit, since DESTINATION_IDS lists only youtube, vertical, square, github, chat and archive. The messages have no email branches either. The PR also says it is stacked on #466, while the docs say it is stacked on #459. Either the description is ahead of the code, or the merge it mentions is not in this head.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 22 | 835 | 4 | reviewed | 8 | $0.53 |
+| Batch 2 of 2 | 9 | 427 | 1 | reviewed | 19 | $0.58 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 40 in / 12k out / 762k cache read / 91k cache write · Claude subscription: API-equivalent estimate, not a bill · $1.11</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=e45c845143ba72f35fea4fac2f9d62a186dff986 -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjAuMSIsImhlYWQiOiJlNDVjODQ1MTQzYmE3MmYzNWZlYTRmYWMyZjlkNjJhMTg2ZGZmOTg2IiwiYXR0ZW1wdCI6IjNiZTdlYjk2LWQzOWYtNDc2Zi04NmVlLTVjMTk4Y2Y4MjEyMiIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6MiwiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjoxLCJjb25zaWRlciI6MSwiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjIsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=3be7eb96-d39f-476f-86ee-5c198cf82122 -->

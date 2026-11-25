@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   extractRunLog, hasWachimanSignature, isWachimanComment, parseLegacyNote, parseBodyFindings, parseCodeRabbit, parseCodeRabbitBody, parseContractLine, parseContracts, parseCsv,
-  parsePullfrog, parseWachimanHeader, parseWachimanReview, splitLogLine, toCsv,
+  PINNED_SHAS, parsePullfrog, parseWachimanHeader, parseWachimanReview, reviewState, splitLogLine, toCsv,
 } from "./parse.ts";
 
 // Every fixture below is a real string from the snapshots in dataset/raw.
@@ -332,5 +332,59 @@ describe("snapshots", () => {
       }
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe("v1.20 formats", () => {
+  // kaipu-bench-wachi-v3 PR #2, comment 4701272101 (first lines).
+  test("the table header of an inline comment", () => {
+    const body = [
+      "| 👮 **Wachiman** | A superseded turn-on closes the gap before the next camera sends a frame |",
+      "|:--|:--|",
+      "| **Priority** | **Should** · a change is expected; answer if you disagree |",
+      "| **Severity** | 🟠 Fix |",
+      "| **Area** | 🐛 bug |",
+      "| **Confidence** | 🟥🟥🟥 High |",
+      "| **Track record** | no record yet · seed |",
+      "",
+      "Take the sequence on → off → on",
+    ].join("\n");
+    expect(parseWachimanHeader(body)).toEqual({
+      severity: "fix", topic: "bug", confidence: "high",
+      title: "A superseded turn-on closes the gap before the next camera sends a frame",
+    });
+  });
+
+  // kaipu-bench-wachi-v3 PR #3: the For your information block holds the only body-only finding.
+  test("a body-only finding in the For your information table", () => {
+    const body = [
+      "<details><summary>For your information (1)</summary>",
+      "",
+      "| | Where | Finding |",
+      "| --- | --- | --- |",
+      "| ⚪ Info · FYI · 📝 docs | [`en.json:1413`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/i18n/en.json#L1413) | A key is unused |",
+      "",
+      "</details>",
+      "",
+      "### To consider (1)",
+      "",
+      "| 🟡 Consider · Should · 🐛 bug | [`a.ts:1`](https://github.com/o/r/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/a.ts#L1) | Not body-only |",
+    ].join("\n");
+    const f = parseBodyFindings(body);
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({
+      severity: "info", topic: "docs", section: "for-your-information", line: 1413,
+      path: "apps/kaipu-record/src/renderer/src/i18n/en.json", title: "A key is unused",
+    });
+  });
+
+  test("the wachi:state marker gives status and counts", () => {
+    const json = { status: "partial", findings: { total: 4, by_placement: { inline: 4, body: 0 } } };
+    const body = `x\n<!-- wachi:state ${Buffer.from(JSON.stringify(json)).toString("base64url")} -->\n`;
+    expect(reviewState(body)).toEqual(json);
+  });
+
+  test("a SHA pin maps to its release tag", () => {
+    expect(PINNED_SHAS["793a64df5775b606ea5b2253569f4e6cd216c3ef"]).toBe("v1.20.1");
   });
 });

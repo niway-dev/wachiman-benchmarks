@@ -1,0 +1,103 @@
+# kaipu-bench-wachi-v3#3 [replay] feat(desktop): ready copy shows up in the Library; minimizable export widget - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-25T21:49:51Z · commit e45c845
+
+👮 **Wachiman** · 🟣 **1 question for you** · 6 to consider · whole PR at `e45c845`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 0 to fix · 🟡 6 to consider · ⚪ 1 for your information (7) · 3 Should · 3 Could · 1 FYI |
+| **Risk** | Low: no risk facts reported, no risky paths |
+| **Needs a person** | 1 direction, in `ready-copy-card.tsx:80` |
+| **Coverage** | 31 of 31 files reviewed, whole pull request |
+| **Read first** | `ready-copy-card.tsx`, `export-status-cards.tsx`, `library-page.tsx`, `export-widget-state.ts`, `ready-copies.ts` |
+
+### To consider (6)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Should · 🐛 bug | [`ready-copy-card.tsx:80`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L80) | Show in Finder / drag on the Library card do not mark the copy seen, unlike the ready toast |
+| 🟡 Consider · Could · 🐛 bug | [`sidebar.tsx:102`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/shell/sidebar.tsx#L102) | Leaving the Library retires cards the user never saw (list view, filtered out) |
+| 🟡 Consider · Should · 🧪 tests | [`library-page.test.tsx:225`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/pages/library/library-page.test.tsx#L225) | "opening the copy goes to its page and forgets it" never checks that it forgets |
+| 🟡 Consider · Should · 🧹 cleanup | [`ready-copy-card.tsx:97`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L97) | Different fallback select value from the toast ("other" vs "export") |
+| 🟡 Consider · Could · 🐛 bug | [`export-status-cards.tsx:216`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx#L216) | progressbar role inside a button is not exposed to assistive tech |
+| 🟡 Consider · Could · 📝 docs | [`ready-copy-in-library.md:8`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/documentation/src/content/docs/backlog/ready-copy-in-library.md#L8) | Status banner names a different base PR than the description |
+
+### Questions for you (1)
+
+- [`ready-copy-card.tsx:80`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L80) · direction — A person has to decide whether acting on the Library card should clear the copy's unseen state. If it should, the card also disappears on click, because markCopySeen removes it.
+
+<details><summary>For your information (1)</summary>
+
+| | Where | Finding |
+| --- | --- | --- |
+| ⚪ Info · FYI · 📝 docs | [`en.json:1413`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/packages/i18n/messages/en.json#L1413) | The PR description promises email wording that is not in the messages |
+
+</details>
+
+<details><summary>What the change connects to (5 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Show in Finder / drag from the Library's Ready to upload card (`apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:80`) — The copy stays unseen: the chip and outline remain after acting on it. If it fails: revealLocalRecording's promise is voided, the same as the sibling, so a rejection is silent in both paths. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:277-295`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:9-13`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:76-79`.
+- Retire the Ready to upload cards when the route leaves the Library (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:102`) — The next Library visit shows the plain grid with outlined copies. If it fails: Also retires cards that were never rendered (list view, filtered out). Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:95-104`, `apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:126-132`, `apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:407-409`.
+- Session-wide minimized widget state in sessionStorage (`apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:10`) — The pill or the full widget, bottom right. If it fails: If storage is unreadable it falls back to expanded, which is harmless UI state (no data is lost). Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:10-35`.
+- Removed message keys `backgroundCopy.hide` and `backgroundCopy.readyDragToUpload`; added `minimize`, `expand`, `pill`, `dragTo`, `destinationTag`, `readyToUplo… (`packages/i18n/messages/en.json:1412-1436`) — Widget title, pill label, drag button, destination tag and ready card text all come from these keys. Callers pass `job.destination ?? "export"` or `destination ?? "other"`, and both land on the `other` branch. If it fails: A destination missing from a select falls back to `other`. For `destinationTag` that means `archive` (and anything unknown) reads "Archive copy", which is the intended text for archive. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:62-64`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:141`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:153`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:223`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:298`, `apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:97`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destination-tag.tsx:19`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:53-55`.
+- Export widget and ready card moved to a fixed bottom-right stack that ignores clicks except on its cards (`apps/kaipu-record/src/renderer/src/features/status-cards/status-stack.module.css:19-29`) — The widget, pill and ready toast sit 40px above the bottom edge on every screen, and clicks pass through the empty stack area. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/status-stack.tsx:24-29`, `apps/kaipu-record/src/renderer/src/features/status-cards/status-card.module.css:5`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.module.css:77`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** Part 1 has nothing that blocks the merge; I found five things worth a look, all "consider". The `copyPresetOf` revision fix is correct, and the widget and pill logic hold together. The main finding: Show in Finder and drag on the Library's Ready to upload card skip the `markCopySeen` call that the ready toast makes, so the two paths disagree on whether acting on a copy marks it seen. Second, retiring cards on leaving the Library also clears cards that never rendered: in list view, or when a filter hides the copy. Smaller points: a test named for \"forgets it\" never checks it, the two cards use different fallback values for the same \"no destination\" text, and the pill's progressbar is hidden from screen readers.
+
+**Batch 2 of 2.** I found no defects in this part's stylesheets, messages or docs; the review has two minor findings.
+
+**What I checked**
+
+- **Messages:** en.json and es.json have the same keys. Every new key is used by `export-status-cards.tsx`, `ready-copy-card.tsx` or `destination-tag.tsx`, and nothing in the renderer still uses the removed `hide` and `readyDragToUpload`.
+- **Stylesheets:**
+  - The tag colours match `destination-logo.module.css`.
+  - The ready card's `grid-column: span 2` sits in the Library's fixed three-column `.grid`, so it cannot push the grid wider.
+  - The bottom-right export stack takes no clicks itself; its cards and the pill do (pointer-events: auto).
+- **Docs:** the doc's claims about the minimized state hold. `export-widget-state.ts` keeps it in sessionStorage, so a reload keeps it and a relaunch starts expanded.
+
+**Findings**
+
+- **Email wording (info):** the PR description promises email-specific text ("Exporting for email", a FOR EMAIL tag). None of the messages has an email branch, and the destination list at this head commit has no email destination. The code is consistent with itself; the description is what's wrong.
+- **Stale banner (consider):** the backlog doc's status banner and its index row say the branch is stacked on #459, while the description says #466.
+
+No risk facts in this part.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 22 | 835 | 4 | reviewed | 7 | $0.53 |
+| Batch 2 of 2 | 9 | 427 | 1 | reviewed | 17 | $0.49 |
+
+</details>
+
+<details><summary>Details of findings with no thread (1)</summary>
+
+**The PR description promises email wording that is not in the messages (confidence high)** ([`en.json:1413`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/packages/i18n/messages/en.json#L1413))
+
+The PR body says email is now its own destination, with "Exporting for email", "Email copy ready", "Drag to an email" and a FOR EMAIL tag. None of the `select` messages here (`progressTitle`, `readyTitle`, `pill`, `dragTo`, `destinationTag`, in en.json and es.json) has an `email` branch. The destination list at this head is only youtube/vertical/square/github/chat/archive (`apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:53-55`), so the code is consistent with itself. The description is the part that is wrong, probably because it was written for the merged upstream branch. If email ever lands as a destination, these selects will fall through to `other` ("Exporting your video", "Archive copy").
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 30 in / 13k out / 506k cache read / 83k cache write · Claude subscription: API-equivalent estimate, not a bill · $1.02</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=e45c845143ba72f35fea4fac2f9d62a186dff986 -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjAuMSIsImhlYWQiOiJlNDVjODQ1MTQzYmE3MmYzNWZlYTRmYWMyZjlkNjJhMTg2ZGZmOTg2IiwiYXR0ZW1wdCI6ImE3NTFhNmRmLWMxN2ItNGE3ZS05YzM2LTg0Mjc5OTM3OTM2MyIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6NywiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjowLCJjb25zaWRlciI6NiwiaW5mbyI6MX0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjYsImJvZHkiOjEsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=a751a6df-c17b-4a7e-9c36-842799379363 -->

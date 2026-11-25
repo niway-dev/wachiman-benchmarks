@@ -1,0 +1,95 @@
+# kaipu-bench-wachi-v3#2 [replay] fix(desktop): turning the camera off and on mid-take keeps the face in its own track - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-25T21:49:36Z · commit 3ec7a13
+
+👮 **Wachiman** · 🟠 **1 to fix in this PR** · 1 question for you · 2 to consider · whole PR at `3ec7a13`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 1 to fix · 🟡 2 to consider · ⚪ 0 for your information (3) · 1 Should · 2 Could |
+| **Risk** | Medium: top fact `public-contract` at `recorder-store.ts:1109`, see Risk facts |
+| **Needs a person** | 1 direction, in `camera-bubble-window.ts:262` |
+| **Coverage** | 23 of 23 files reviewed, whole pull request |
+| **Read first** | `recorder-engine.ts`, `recorder-store.ts`, `camera-bubble-window.ts`, `recording-hub.ts`, `bubble-protection.ts` |
+
+### To fix (1)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟠 Fix · Should · 🐛 bug | [`recorder-store.ts:943`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L943) | A superseded turn-on closes the gap before the next camera sends a frame |
+
+### To consider (2)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Could · 🐛 bug | [`recorder-engine.ts:803`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts#L803) | A reopen can wait up to twice \`WEBCAM_OPEN_TIMEOUT_MS\` |
+| 🟡 Consider · Could · 🧪 tests | [`webcam-relay.test.ts:79`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.test.ts#L79) | The late-frame drop path is never exercised or asserted |
+
+### Questions for you (1)
+
+- [`camera-bubble-window.ts:262`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/main/recording/camera-bubble-window.ts#L262) · direction — Parking relies on ScreenCaptureKit continuing to exclude a window that was hidden and shown again. The author lists this as unverified, and it needs an owner check on real hardware.
+
+### Risk facts
+
+- `public-contract` · [`recorder-store.ts:1109`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L1109) — The webcam sidecar meta gains an optional `gaps` field, which the editor's seeding reads.
+- `concurrency` · [`recorder-engine.ts:790`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts#L790) — Camera reopen requests are superseded through a counter. Toggles that land while a reopen is still opening decide whether a camera stream is released and how gaps are logged.
+
+<details><summary>What the change connects to (6 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Camera turned off mid-take parks the bubble instead of destroying it (`apps/kaipu-record/src/main/recording/recording-hub.ts:309`) — The bubble hides and comes back as the same native window. The renderer preview follows `isCameraEnabled`, so the camera light goes off. If it fails: Without a relay, main parks but the renderer ends the file. `recordingWebcamEnded` then clears `recordsWebcam`, and the next on replaces the window (line 304). After the take, `releaseParkedBubble` r… Evidence: `apps/kaipu-record/src/main/recording/recording-hub.ts:299-335`, `apps/kaipu-record/src/main/recording/bubble-protection.ts:49-51`, `apps/kaipu-record/src/main/recording/camera-bubble-window.ts:262-271`, `apps/kaipu-record/src/renderer/src/features/camera-bubble/camera-bubble.tsx:44-61`.
+- Finalize reads the parked bubble's bounds before releasing it (`apps/kaipu-record/src/main/recording/recording-hub.ts:498`) — A take that ends with the camera off still records where the bubble sat. Evidence: `apps/kaipu-record/src/main/recording/recording-hub.ts:497-499`, `apps/kaipu-record/src/main/recording/recording-hub.ts:844-846`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:1042`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:1068`.
+- What bounds the whole wait of turnWebcamOn (`apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:784`) — The face stays out of both files for up to two timeouts, then falls back into the screen capture. If it fails: The worst case is twice the timeout. The pump left running after the timeout is cut by `releaseWebcam` inside `endWebcam`. Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:784-819`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:741-754`, `apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.ts:66-114`.
+- Gap log open/close driven by the live-settings forwarder (`apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924`) — Gaps become hidden segments in the editor. If it fails: A superseded on whose `webcamOn` was re-set by a later toggle closes the gap too early (finding). Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924-953`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:789-793`, `apps/kaipu-record/src/renderer/src/features/recording/webcam-gaps.ts:14-24`.
+- Sidecar accepts renderer-supplied `webcam.gaps` through sanitizeWebcamTrackMeta (`apps/kaipu-record/src/shared/webcam-track.ts:184`) — The editor seeds each gap as a hidden webcam segment (webcam-model.ts:111, 135-158), so the face is hidden and the lane is striped there. If it fails: Malformed input degrades to no gaps (the face shows the held frame). It never makes the whole meta unusable. Evidence: `apps/kaipu-record/src/shared/webcam-track.ts:131-154`, `apps/kaipu-record/src/shared/webcam-track.ts:184-185`, `apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.ts:106-158`, `apps/kaipu-record/src/renderer/src/features/video-editor/scene.ts:140`.
+- Store records camera-off gaps from live toggles and sends them with finalize (`apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924-953`) — finalize carries webcam.gaps in screen ms. A trailing gap is closed at durationMs (recorder-store.ts:1017). If it fails: If turnWebcamOn reports "unavailable", the gap ends there, webcamReopenFailed is set and the user gets a toast after the save. Later toggles leave the file alone, as recorder-store.test.ts:1625-1644… Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:806-809`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924-962`, `apps/kaipu-record/src/renderer/src/features/recording/webcam-gaps.ts:10-31`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** I reviewed all 14 files in part 1 and found one bug worth fixing before merge.
+
+**Fix:** in `recorder-store.ts:943`, toggling the camera on, off and on while the first reopen is still opening closes the off-period too early. The editor then shows the frozen held frame until the next camera sends a frame, or until the file ends if that reopen fails. Nothing tells the user.
+
+**Consider:** a reopen can wait up to twice `WEBCAM_OPEN_TIMEOUT_MS` before the face falls back into the screen recording. The interface doc (`recorder-engine.ts:164`) describes one timeout, and the PR's test plan says about 3 s.
+
+What checks out:
+
+- **Hub:** the park-or-destroy choice and the releases at finalize, abort, stop and reset are consistent. Finalize reads the parked bubble's position before the window is released, so a take that ends with the camera off still records where the bubble sat.
+
+**Batch 2 of 2.** I found no defects in this part's files; the only finding is a test that doesn't check what its comment says. I read the code these tests and docs describe, outside this part: `webcam-relay.ts`, `webcam-gaps.ts`, `webcam-model.ts` and the toggle and gap handling in `recorder-store.ts`. The tests and docs here match that code.
+
+- **Sanitizing (`webcam-track.ts`):** malformed, empty or backwards gaps are dropped one at a time, overlapping ones are merged, a start before 0 is clamped, and at most 1000 are kept. The key is left out when nothing survives, so old sidecars read the same.
+- **Store:** it opens a gap when the camera goes off and closes it once the camera is back. A gap stays open if the camera is turned off again while it reopens, and closes at the failure point if the camera can't be reopened.
+- **Editor tests:** they correctly check how short gaps are stretched and merged into hidden segments, and how a segment is clamped at the end of the recording.
+
+**Finding (consider, tests):** in `webcam-relay.test.ts` around line 79, the comment says a frame from the old camera after `cut()` is dropped and closed, but nothing asserts that. `cut()` has already cancelled the stream, so the push most likely just throws. The drop branch in `webcam-relay.ts` (lines 91–93) therefore never runs, and the test would still pass without it.
+
+The ADR and spec both list the same unverified assumption: that a window hidden and shown again stays excluded from a running ScreenCaptureKit capture. They state it plainly as unverified, which matches what was tested.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 14 | 851 | 5 | reviewed | 6 | $0.63 |
+| Batch 2 of 2 | 9 | 606 | 4 | reviewed | 10 | $0.57 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 22 in / 14k out / 406k cache read / 105k cache write · Claude subscription: API-equivalent estimate, not a bill · $1.20</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=3ec7a138c3a878b38284fd13c801ab7226a34abb -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjAuMSIsImhlYWQiOiIzZWM3YTEzOGMzYTg3OGIzODI4NGZkMTNjODAxYWI3MjI2YTM0YWJiIiwiYXR0ZW1wdCI6IjQ5ZTkwMDMxLTNmMzktNDVjOC1iNDRmLWNjYjcyNjZjNmQ4YiIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6MywiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjoxLCJjb25zaWRlciI6MiwiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjMsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=49e90031-3f39-45c8-b44f-ccb7266c6d8b -->

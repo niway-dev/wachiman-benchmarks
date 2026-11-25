@@ -52,12 +52,39 @@ const BRAND_PREFIX = "👮 **Wachiman** · ";
 /** Before the brand existed (engine up to v1.2.x) a finding started with the label itself: `🟡🧪 **Consider · tests: …**`. */
 const BRANDLESS = /^\S+ \*\*(?:Blocker|Fix|Consider|Info) · (?:bug|security|rules|adr|docs|tests|perf|cleanup|question): /u;
 
+const TABLE_PREFIX = "| 👮 **Wachiman** | ";
+
+/**
+ * The header of a v1.20 inline comment is a two-column table: the title on the brand row, then
+ * `| **Severity** | 🟠 Fix |`, `| **Area** | 🐛 bug |` and `| **Confidence** | 🟥🟥🟥 High |` rows.
+ */
+export function parseTableHeader(body: string): WachimanLabel | null {
+  const lines = body.split("\n");
+  const title = /^\| 👮 \*\*Wachiman\*\* \| (.+?) \|\s*$/.exec(lines[0] ?? "")?.[1];
+  if (!title) return null;
+  const rows = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    const m = /^\| \*\*([A-Za-z ]+)\*\* \| (.*?) \|\s*$/.exec(line);
+    if (m) rows.set((m[1] as string).toLowerCase(), m[2] as string);
+    else if (!/^\|[:\- |]+\|\s*$/.test(line)) break;
+  }
+  const sev = /\b(Blocker|Fix|Consider|Info)\b/.exec(rows.get("severity") ?? "")?.[1];
+  const topic = /\b(bug|security|rules|adr|docs|tests|perf|cleanup|question)\b/.exec(rows.get("area") ?? "")?.[1];
+  if (!sev || !topic) return null;
+  const conf = /\b(High|Medium|Low)\b/i.exec(rows.get("confidence") ?? "")?.[1]?.toLowerCase() ?? "";
+  return {
+    severity: sev.toLowerCase() as WSeverity, topic: topic as WTopic, confidence: conf as WConfidence | "",
+    title: title.replace(/\\`/g, "`").trim(),
+  };
+}
+
 /**
  * The first line of an inline comment: `👮 **Wachiman** · <label>`, or the bare label of the older
  * engine. Null when it is not a Wachiman finding.
  */
 export function parseWachimanHeader(body: string): WachimanLabel | null {
   const first = body.split("\n", 1)[0] ?? "";
+  if (first.startsWith(TABLE_PREFIX)) return parseTableHeader(body);
   if (first.startsWith(BRAND_PREFIX)) return parseLabel(first.slice(BRAND_PREFIX.length));
   return BRANDLESS.test(first) ? parseLabel(first) : null;
 }
@@ -145,6 +172,25 @@ const SECTION_HEADINGS: [RegExp, BodyFinding["section"]][] = [
   [/^### On their lines \(GitHub refused them inline\)\s*$/, "moved-from-lines"],
 ];
 
+/** v1.20 lists body-only findings in a table inside a `<details>` block with these summaries. */
+const DETAILS_HEADINGS: [RegExp, BodyFinding["section"]][] = [
+  [/^<details><summary>Outside the diff\b/, "outside-diff"],
+  [/^<details><summary>For your information\b/, "for-your-information"],
+];
+
+/**
+ * A v1.20 table row: `| ⚪ Info · FYI · 📝 docs | [`en.json:1413`](…/blob/<sha>/<path>#L1413) | <title> |`.
+ * The link text names only the file, so the path and line come from the link.
+ */
+function parseTableRow(line: string, section: BodyFinding["section"]): BodyFinding | null {
+  const m = /^\| \S+ (Blocker|Fix|Consider|Info) · [^|]*?(bug|security|rules|adr|docs|tests|perf|cleanup|question) \| \[[^\]]*\]\(https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/[0-9a-f]+\/([^#)]+)(?:#L(\d+)[^)]*)?\) \| (.+?) \|\s*$/u.exec(line);
+  if (!m) return null;
+  return {
+    severity: (m[1] as string).toLowerCase() as WSeverity, topic: m[2] as WTopic, confidence: "",
+    title: (m[5] as string).trim(), path: m[3] as string, line: Number(m[4] ?? 0), section, text: "",
+  };
+}
+
 /** `- <label> (`path:line`): text` (the form `listed` writes) or `- `path:line`: 👮 **Wachiman** · <label> text` (moved). */
 function parseListItem(first: string, section: BodyFinding["section"]): (Omit<BodyFinding, "text"> & { rest: string }) | null {
   if (section === "moved-from-lines") {
@@ -172,12 +218,26 @@ export function parseBodyFindings(body: string): BodyFinding[] {
   };
   for (const line of lines) {
     const heading = SECTION_HEADINGS.find(([re]) => re.test(line));
+    const detailsHeading = DETAILS_HEADINGS.find(([re]) => re.test(line));
+    if (detailsHeading) {
+      flush();
+      section = detailsHeading[1];
+      continue;
+    }
+    if (section && line.startsWith("| ")) {
+      const row = parseTableRow(line, section);
+      if (row) {
+        flush();
+        out.push(row);
+        continue;
+      }
+    }
     if (heading) {
       flush();
       section = heading[1];
       continue;
     }
-    if (/^### /.test(line) || /^<details>|^<sub>|^<!-- /.test(line)) {
+    if (/^### /.test(line) || /^<\/?details>|^<sub>|^<!-- /.test(line)) {
       flush();
       section = null;
       continue;
@@ -269,6 +329,17 @@ export function parseContracts(body: string): { header: string; contracts: Contr
   return { header: m[1] as string, contracts, hidden };
 }
 
+/** The `<!-- wachi:state <base64url JSON> -->` marker of v1.20 reviews: status and finding counts. */
+export function reviewState(body: string): { status?: string; findings?: { total?: number; by_placement?: { inline?: number } } } | null {
+  const raw = [...body.matchAll(/<!-- wachi:state (\S+) -->/g)].at(-1)?.[1];
+  if (!raw) return null;
+  try {
+    return JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
 export function parseWachimanReview(body: string): WachimanReview | null {
   if (!hasWachimanSignature(body)) return null;
   const head = /review\*{0,2} of (.+?), at `([0-9a-f]+)`: all (\d+) files reviewed/.exec(body);
@@ -277,7 +348,7 @@ export function parseWachimanReview(body: string): WachimanReview | null {
   const countLine = /^.*finding\(s\).*$/m.exec(body)?.[0] ?? "";
   // Footer: `<model> via <runtime> · effort <e> · [<mode> · <usage> ·] [N batches ·] $<cost>`. v1.8 adds the
   // mode and a usage line between the effort and the cost, so each field is read on its own.
-  const subText = /<sub>(.+?)<\/sub>/.exec(body)?.[1] ?? "";
+  const subText = [...body.matchAll(/<sub>(.+?)<\/sub>/g)].at(-1)?.[1] ?? "";
   const subParts = subText.split(" · ");
   const sub = subText.includes(" via ") && /\$[\d.]+$/.test(subText)
     ? [subText, subParts[0]!.split(" via ")[0]!, subParts[0]!.split(" via ")[1] ?? "",
@@ -285,6 +356,7 @@ export function parseWachimanReview(body: string): WachimanReview | null {
        /^(\d+) batches$/.exec(subParts.find((x) => / batches$/.test(x)) ?? "")?.[1],
        /\$([\d.]+)$/.exec(subText)![1]] as (string | undefined)[]
     : null;
+  const state = reviewState(body);
   const { header, contracts, hidden } = parseContracts(body);
   const batches: BatchRow[] = [];
   for (const row of body.matchAll(/^\| (Batch [^|]+?) \| (\d+) \| (\d+) \| (\d+) \| ([^|]+?) \| (\d+) \| \$([\d.]+) \|$/gm)) {
@@ -297,9 +369,9 @@ export function parseWachimanReview(body: string): WachimanReview | null {
     head_sha_short: head?.[2] ?? partial?.[4] ?? "",
     scope: head?.[1] ?? partial?.[3] ?? "",
     files_reviewed: head ? `${head[3]}/${head[3]}` : partial ? `${partial[1]}/${partial[2]}` : "",
-    partial: Boolean(partial),
-    findings_total: count ? Number(count[1]) : null,
-    inline_count: count ? Number(count[2]) : null,
+    partial: state ? state.status === "partial" : Boolean(partial),
+    findings_total: state?.findings?.total ?? (count ? Number(count[1]) : null),
+    inline_count: state?.findings?.by_placement?.inline ?? (count ? Number(count[2]) : null),
     count_line: countLine,
     body_findings: parseBodyFindings(body),
     contracts,
@@ -426,6 +498,16 @@ export function splitLogLine(raw: string): { ts: string; text: string } {
 const RUNNER_NOISE = /^(##\[(group|endgroup|debug)\]|\[command\]|Post job cleanup|Cleaning up orphan|Temporarily overriding|Adding repository|Removing |remote: )/;
 
 /**
+ * Release tags of the engine commits the bench workflow pins by SHA (`replay/wachi-workflow.yml`).
+ * A pin by SHA names no version in the log, so it is mapped here; an unknown SHA gives "" and the
+ * run map's version applies.
+ */
+export const PINNED_SHAS: Record<string, string> = {
+  "0536f89466cb3c0c981848acae1c9df52bfb8c4a": "v1.10.1",
+  "793a64df5775b606ea5b2253569f4e6cd216c3ef": "v1.20.1",
+};
+
+/**
  * Model, version, cost, duration and every engine line of a run log. Engine lines are what the
  * engine printed during its step: everything after the `AGENT_REVIEW_*` environment block up to
  * the first post-step cleanup, minus runner noise. Cost and duration are summed over the per-batch
@@ -445,9 +527,10 @@ export function extractRunLog(log: string): RunLog {
     const uses = /^Uses: (\S+\/review\.yml@\S+)/.exec(text);
     if (uses) {
       out.workflow_ref = uses[1] as string;
-      out.version = /@refs\/tags\/(\S+)$/.exec(out.workflow_ref)?.[1] ?? /@(\S+)$/.exec(out.workflow_ref)?.[1] ?? "";
+      const pin = /@(\S+)$/.exec(out.workflow_ref)?.[1] ?? "";
+      out.version = /@refs\/tags\/(\S+)$/.exec(out.workflow_ref)?.[1] ?? (/^[0-9a-f]{40}$/.test(pin) ? (PINNED_SHAS[pin] ?? "") : pin);
     }
-    const env = /^\s*AGENT_REVIEW_(MODEL|EFFORT|PROVIDER):\s*(\S*)/.exec(text);
+    const env = /^\s*(?:AGENT_REVIEW|WACHIMAN)_(MODEL|EFFORT|PROVIDER):\s*(\S*)/.exec(text);
     if (env) {
       sawEnv = true;
       if (env[1] === "MODEL" && !out.model) out.model = env[2] as string;
@@ -466,7 +549,7 @@ export function extractRunLog(log: string): RunLog {
     }
     if (inEngine && !RUNNER_NOISE.test(text) && text.trim().length > 0) {
       out.engine_lines.push(text);
-      const call = /^\{"is_error":.*"cost_usd":.*\}$/.exec(text);
+      const call = /^\{"(?:label|is_error)":.*"cost_usd":.*\}$/.exec(text);
       if (call) {
         try {
           const j = JSON.parse(text) as Record<string, unknown>;

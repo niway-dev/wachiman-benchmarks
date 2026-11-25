@@ -338,6 +338,7 @@ const REPLAY_DOCS = [
   { dir: "2026-11-01/prs", name: "2026-11-01" },
   { dir: "2026-11-02/prs", name: "2026-11-02" },
   { dir: "2026-11-02-e1-sonnet/prs", name: "2026-11-02-e1-sonnet" },
+  { dir: "2026-11-25-v1.20.1-replay/prs", name: "2026-11-25-v1.20.1-replay" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
 const REPLAY_PRS = ["463", "464", "465", "466", "467"];
@@ -347,6 +348,7 @@ const FIELD_PRS = ["439", "449", "478", "479", "482", "483", "484"];
 export const PRIMARY_DOC: Record<string, string> = {
   "W-R1": "2026-11-01", "W-R2": "2026-11-01", "W-R3": "2026-11-01", "PF-v1": "2026-11-01", "PF-v2": "2026-11-01", "CR-v1": "2026-11-01", "CR-v2": "2026-11-01",
   W4: "2026-11-02", W5: "2026-11-02", W6: "2026-11-02", S7: "2026-11-02-e1-sonnet", S8: "2026-11-02-e1-sonnet", S9: "2026-11-02-e1-sonnet",
+  W7: "2026-11-25-v1.20.1-replay", W8: "2026-11-25-v1.20.1-replay", W9: "2026-11-25-v1.20.1-replay",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {
