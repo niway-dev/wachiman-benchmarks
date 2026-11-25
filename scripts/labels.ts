@@ -147,6 +147,41 @@ export function parseReplayDoc(md: string, doc: string, originalPr: string): Ver
   return out;
 }
 
+export interface LabelledRun {
+  run_label: string;
+  original_pr: string;
+  doc: string;
+  expected_total: number;
+  expected_caught: string[];
+  expected_partial: string[];
+}
+
+/**
+ * The runs a replay doc labelled: one entry per run column of its Expected issues table, so a run
+ * that caught no expected issue is still on record as labelled (`labels.csv` has rows only for
+ * findings that matched).
+ */
+export function labelledRuns(md: string, doc: string, originalPr: string): LabelledRun[] {
+  const t = mdTables(md).find((x) => /^Expected/i.test(x.heading) && (x.header[0] ?? "").trim() === "ID");
+  if (!t) return [];
+  const out: LabelledRun[] = [];
+  t.header.forEach((col, i) => {
+    const run = SINGLE_RUN.exec(col.trim())?.[1];
+    if (!run) return;
+    const r: LabelledRun = { run_label: run, original_pr: originalPr, doc, expected_total: 0, expected_caught: [], expected_partial: [] };
+    for (const row of t.rows) {
+      const id = normaliseId(row[0] ?? "");
+      if (!id) continue;
+      r.expected_total++;
+      const cell = (row[i] ?? "").trim();
+      if (/^partial|^~/i.test(cell)) r.expected_partial.push(id);
+      else if (foundCell(cell)) r.expected_caught.push(id);
+    }
+    out.push(r);
+  });
+  return out;
+}
+
 /** Verdicts of one field doc (`2026-11-02-field/prs/pr-<n>.md`). */
 export function parseFieldDoc(md: string, doc: string, originalPr: string): Verdict[] {
   const out: Verdict[] = [];
@@ -365,6 +400,11 @@ const LABEL_COLUMNS = [
   "same_as", "match_score", "match_basis", "shares_verdict_with",
 ] as const;
 
+const LABELLED_COLUMNS = [
+  "run_label", "original_pr", "doc", "label_kind", "expected_total", "expected_caught", "expected_partial", "expected_caught_ids",
+  "expected_partial_ids", "findings_labelled",
+] as const;
+
 async function main() {
   const argv = process.argv.slice(2);
   const arg = (n: string) => {
@@ -382,10 +422,14 @@ async function main() {
   }));
 
   const replay: Verdict[] = [];
+  const labelled: LabelledRun[] = [];
   for (const d of REPLAY_DOCS) {
     for (const pr of REPLAY_PRS) {
       const md = readDoc(ref, `${d.dir}/pr-${pr}.md`);
-      if (md) replay.push(...parseReplayDoc(md, d.name, pr));
+      if (!md) continue;
+      replay.push(...parseReplayDoc(md, d.name, pr));
+      // A run's own doc is the one that labels it; later docs copy its columns for comparison.
+      labelled.push(...labelledRuns(md, d.name, pr).filter((r) => PRIMARY_DOC[r.run_label] === d.name));
     }
   }
   const field: Verdict[] = [];
@@ -438,6 +482,13 @@ async function main() {
     });
   }
   writeFileSync(join(dataset, "labels.csv"), toCsv(LABEL_COLUMNS, labelRows));
+  const labelledRows = labelled.map((r) => ({
+    run_label: r.run_label, original_pr: r.original_pr, doc: r.doc, label_kind: "expected", expected_total: r.expected_total,
+    expected_caught: r.expected_caught.length, expected_partial: r.expected_partial.length,
+    expected_caught_ids: r.expected_caught.join("|"), expected_partial_ids: r.expected_partial.join("|"),
+    findings_labelled: labelRows.filter((x) => x.run_label === r.run_label && x.original_pr === r.original_pr).length,
+  }));
+  writeFileSync(join(dataset, "labelled-runs.csv"), toCsv(LABELLED_COLUMNS, labelledRows));
 
   const lines: string[] = [
     "# Findings the verdict join could not match",
@@ -465,7 +516,7 @@ async function main() {
     lines.push("");
   }
   writeFileSync(join(dataset, "ambiguous.md"), lines.join("\n"));
-  console.log(`labels ${labelRows.length}; ambiguous ${ambiguous.length}; outside analysed sets ${unlabelled.length}; verdicts replay ${replay.length}, field ${field.length}`);
+  console.log(`labels ${labelRows.length}; labelled runs ${labelledRows.length}; ambiguous ${ambiguous.length}; outside analysed sets ${unlabelled.length}; verdicts replay ${replay.length}, field ${field.length}`);
 }
 
 if (import.meta.main) await main();

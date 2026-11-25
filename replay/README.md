@@ -71,6 +71,12 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
 - `pullfrog.yml` is read from `origin/main` of the clone (`KAIPU_PULLFROG_REF`), not from the
   working tree, which may predate it. The commit message of the repository's `main` records the
   kaipu-record SHA it came from.
+- Use a bare clone as `KAIPU_CLONE` (`git clone --bare <kaipu-record checkout> /tmp/kaipu-mine/repo`).
+  A working checkout runs its own `pre-push` hooks on the replay push, and they check that checkout's
+  files, not the replay; a bare clone has none installed.
+- The Wachi workflow passes `CLAUDE_CODE_OAUTH_TOKEN` (a token from `claude setup-token`, which runs
+  the review on a Claude subscription) as well as `ANTHROPIC_API_KEY`. Either secret is enough; with
+  both, the engine uses the token, and every cost it reports is an API-equivalent estimate.
 - `open` and `rounds` trigger only the PRs they create. To re-trigger a skipped one, comment by hand.
 - `--dry-run` still reads the manifest and checks the local clone; it never calls `gh`, pushes or
   creates files outside what it prints.
