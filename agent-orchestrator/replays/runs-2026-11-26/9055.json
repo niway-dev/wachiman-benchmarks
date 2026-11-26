@@ -1,0 +1,150 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9055` of ao-replay-9055 against 16ae7588fe8c5a9b67e995296cde180b079da91c (merge-base 16ae758)",
+    "repository": {
+      "name": "ao-replay-9055"
+    },
+    "base": {
+      "sha": "16ae7588fe8c5a9b67e995296cde180b079da91c",
+      "ref": "16ae7588fe8c5a9b67e995296cde180b079da91c"
+    },
+    "head": {
+      "sha": "fb22a438eafe7cc3e1dba99681e052223caacee3",
+      "ref": "ao-replay/9055"
+    },
+    "title": "ao-replay/9055",
+    "description": "fix(chat): take files while an archived chat restores",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.test.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "line": 108,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Only the happy path of attaching during an optimistic send is covered",
+      "body": "The `optimisticSend` relaxation (`attachBlocked`, `acceptsFiles`, `onDragOver`, the disabled attach controls) applies to every optimistic send, not just archived-session restores. The new test only covers a send that lands first. It does not cover a send the daemon definitively refuses (e.g. `SESSION_RESTORE_FAILED`) while a next-message file is already staged or staging. In that case `clearRejectedChatComposerDelivery` (frontend/src/renderer/lib/chat-drafts.ts:1150) keeps the delivery beside the newer attachments instead of restoring the refused draft. That is the exact failure the PR's feature (restore failing) produces, so a test for it would be worth having.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "A file attached while an archived chat's restore (started by sending) is running is staged only after the restore finishes",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2438",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:1249-1268",
+        "frontend/src/renderer/hooks/useConversation.ts:1700-1713",
+        "frontend/src/renderer/hooks/useConversation.ts:2437-2443",
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:955",
+        "frontend/src/renderer/lib/composer-send-failure.ts:12"
+      ],
+      "equivalent_path": "The restore itself in `resume` mutationFn (useConversation.ts:1249-1268), which the send waits on before `send.mutateAsync` (useConversation.ts:1706-1707). The new staging path now waits on the same restore promise.",
+      "before_after": "Before: attachments were not offered at all on a terminated session (onStageAttachments undefined). After: SessionChatSurface passes stageAttachments while `commands.resumingAgent` is true, and the stager awaits `restoresInFlight.get(key)` after `toWireAttachments` and before the POST. The key `${hostId ?? \"local\"}:${sessionId}` is built identically at set and get.",
+      "visible_effect": "The chip is pending until the worktree is back, then lands in the composer as the next message's file. After the restore, `resumingAgent` is false and the session is active, so the attach controls stay available.",
+      "failure_mode": "If the restore fails, the shared promise rejects with a SESSION_RESTORE_FAILED error and the staging rejects with it, so no POST is made; the composer shows its attachment error, and the send path separately shows the refusal. The promise is awaited by the mutation, so there is no unhandled rejection. Staging is not abortable while it waits, so a file cancelled during the restore may still be POSTed after it (pre-existing: the POST never took the signal).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Two calls in flight: restoresInFlight map written by concurrent resume mutations",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:1258",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:1258-1263",
+        "frontend/src/renderer/hooks/useConversation.ts:1695",
+        "frontend/src/renderer/hooks/useConversation.ts:1764",
+        "frontend/src/renderer/hooks/useConversation.ts:1779"
+      ],
+      "equivalent_path": "`claimConversationDispatch` serializes sends per session (useConversation.ts:1695), but `resumeAgent` and `chooseStartSettings` call `resume.mutateAsync()` without that claim (useConversation.ts:1764, 1779).",
+      "before_after": "Each mutation sets `restoresInFlight[key]` and deletes it in `finally`. With two overlapping restores on one key, the first to finish deletes the entry the second set, so a stager arriving after that no longer waits on the second. The second restore comes after a successful first one and would normally answer SESSION_NOT_RESTORABLE, which is treated as already live, so the window is brief.",
+      "visible_effect": "Only a staging POST racing a restore that is still running could hit a worktree that is not back yet. This is unlikely, since sends are serialized and the second restore is normally a no-op.",
+      "failure_mode": "The staging POST fails and the user sees an attachment error; they can retry. No data is lost.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Attach controls, paste and drop stay live while an optimistic send is in flight; accepted-send reconciliation must not drop the new file",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:1174",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:697",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:732-734",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:956",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1174-1182",
+        "frontend/src/renderer/hooks/useFileAttachments.ts:604-634",
+        "frontend/src/renderer/lib/chat-drafts.ts:1150-1152",
+        "frontend/src/renderer/lib/chat-drafts.ts:1665-1667"
+      ],
+      "equivalent_path": "Typing the next draft during an optimistic send is already supported (`nextDraftHasChanged`, clearAcceptedChatComposer keeping `current.composer.attachments` when `delivery.draft` exists, chat-drafts.ts:1665).",
+      "before_after": "Before: `draftMutationPending` and `submitInFlight` blocked all file intake during the send. After: `acceptsFiles()` allows it when `optimisticSend`, but still blocks while `fileAttachments.preparing`. On acceptance, `clear()` (which bumps the generation and would cancel pending work) is skipped while preparing, and the else-branch removes only sent attachments that are not kept (pending files live in a separate list, useFileAttachments.ts:604-608). `persistAttachments` filters sent ids out of the durable write (ChatComposer.tsx:732-734).",
+      "visible_effect": "The new file shows in the strip, minus the sent ones (ChatComposer.tsx:929-932), and survives the send landing. The new test asserts this.",
+      "failure_mode": "The send is refused: `clearRejectedChatComposerDelivery` keeps the delivery beside the newer attachments (chat-drafts.ts:1150). That branch is not covered by a test for the attachment case.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no defects in this part, and I read all six files. The one finding is a \"consider\" on tests. The change does what its title says: during the restore that sending triggers, `SessionChatSurface` now passes `stageAttachments`, and the stager waits on the same restore promise before posting. A failed restore rejects the staging with `SESSION_RESTORE_FAILED` and makes no POST. The `ChatComposer` relaxation applies to every optimistic send, not just archived restores. It keeps the new file safe when the send lands first, and the refused-send branch in `chat-drafts.ts` already allows for newer attachments. No test covers a refused send with a new file attached. The `restoresInFlight` map can be overwritten by overlapping resume mutations. Sends are serialized, so I judged this negligible and listed it as a closed contract entry, not a finding.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 153,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 24,
+      "costUsd": 0.45000939999999995
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "16ae7588fe8c5a9b67e995296cde180b079da91c"
+  },
+  "execution": {
+    "costUsdEstimate": 0.45000939999999995,
+    "usage": {
+      "input": 28,
+      "output": 13187,
+      "cacheRead": 668274,
+      "cacheWrite": 62814
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 24,
+    "durationMs": 121144,
+    "stop": "complete",
+    "notices": []
+  }
+}
