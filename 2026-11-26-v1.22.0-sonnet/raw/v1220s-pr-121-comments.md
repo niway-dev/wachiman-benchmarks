@@ -1,0 +1,141 @@
+# kaipu-bench-wachi-v3#121 [replay r3] feat(desktop): Export screen with its own rail entry (replaces Prepare) - bot inline comments
+
+## apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:85 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | Library loses its window-wide drop guard, so a file dropped there can navigate the window to the file |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟠 Fix |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+`useFileDrop` is the only place that calls `preventDefault` on `dragover` and `drop`. Its own doc (`features/library/hooks/use-file-drop.ts:9-11`) says a file dropped where nothing handles it makes Electron navigate the window to that file. This PR removes `useFileDrop` from the Library page (`library-page.tsx` no longer references it). The only remaining mount is `usePrepareImport`, called here, so only Export is protected. I found no `will-navigate` guard in `src/main` (`index.ts:400` only sets `setWindowOpenHandler`). The PR body says that after this change "dropping a file there does nothing" (step 12). On the real window, that is probably false: dropping a video on the Library most likely replaces the app with the raw file. The new Library test (`library-page.test.tsx:80-85`) only checks that nothing is imported. jsdom does not navigate, so the test cannot catch this. Recording and Editor were already unguarded, but the Library is the screen people drag Finder files onto. Fix: keep a drop guard that only calls `preventDefault` on the Library, or add a `will-navigate` guard in main, and test the `defaultPrevented` result.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:384 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | \`isPrimaryEnter\` has no dialog guard, unlike \`destinationStep\` |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥⬜⬜ Low |
+| **Track record** | no record yet · seed |
+
+`destinationStep` returns null inside `[role='dialog']` (line 364), but `isPrimaryEnter` does not. The Change video / Pick from Library panel is a `role="dialog"` (`video-picker.tsx:71`). If focus is on a non-button element while it is open, or on `body` after a click on its empty space, Enter starts an export or opens the existing copy. The export would run behind the open list, and Enter does not close the list. A focused button is already excluded, so this needs an unusual focus state. Add the same `target.closest("[role='dialog']")` check.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:112 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | Library detail URL is a template literal, not \`ROUTES.libraryDetail\` |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 📜 rules |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+Lines 112 and 162 build `/library/${assetId}` by hand. `shared/routes.ts:4-8` exists so paths are not repeated as literals. The page itself uses `ROUTES.export` and `ROUTES.exportNew` for the others. Use `ROUTES.libraryDetail.replace(":assetId", encodeURIComponent(id))`, as `preparePath` does.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:53 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | A video dropped on the Library window is no longer intercepted; Electron's default navigates the window to the file |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟠 Fix |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+The Library used to mount `useFileDrop`, which calls `preventDefault` on `dragover` and `drop` at the window. Its own doc comment (`use-file-drop.ts:10-11`) says that a file dropped where nothing handles it makes Electron navigate the window to that file. This PR removes the hook from the Library, and the only remaining caller is `usePrepareImport` (`use-prepare-import.ts:55`), which is mounted only by `ExportPage`. The main process has no `will-navigate` guard (`main/index.ts:400` only sets `setWindowOpenHandler`). The Library is the screen where someone is most likely to drop a video, because it used to show a drop zone. After this change a drop there takes the renderer to `file:///…`, and the app UI is gone until the user reloads it. The comment on line 53 says outside videos now go through Export, but nothing stops a drop on the Library. Fix: keep a drop guard on the Library or in the shell. For example, call `preventDefault` on window `dragover` and `drop` for file drags in the shell, or deny `will-navigate` in main. Optionally also route the drop to Export. The same default applies to every other screen that has no handler (Editor, Settings), so the shell or main process is the right place for one guard.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.test.tsx:64 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | A file dropped on the Library now navigates the window away; the PR says it "does nothing" |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟠 Fix |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥🟥 High |
+| **Track record** | no record yet · seed |
+
+The PR removes the Library's window-wide drop handling and says (test step 12) that dropping a file there "does nothing". `useFileDrop` is now mounted only through `usePrepareImport` in the Export page (`pages/export/export-page.tsx:85`). It is the only code in the renderer that calls `preventDefault` on `drop`. A search of `src/main` finds no `will-navigate` guard. The hook's own comment (`use-file-drop.ts:10-11`) says "a file dropped where nothing handles it makes Electron navigate the window to that file", and the unmount test here (line 64-72) asserts `defaultPrevented` is false after unmount. So on the Library, where users used to drop videos, dropping a file loads `file://…` into the app window. That replaces the app UI, and the in-memory export runner and ready-copies state are lost with the renderer. Fix: keep a drop guard on the Library (and ideally app-wide, e.g. a `will-navigate` handler in main or a global `dragover`/`drop` `preventDefault` in the shell), and correct the PR description.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/pages/library/library-page.test.tsx:80 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | Dropping a video on the Library now falls through to Electron's default (navigate the window to the file) |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+The Library used to mount `useFileDrop`, which calls `preventDefault` on dragover/drop for the whole window. `library-page.tsx` no longer mounts it, and this test pins that a drop imports nothing. It doesn't check what the drop does instead. `use-file-drop.ts:10-11` says that a file dropped where nothing handles it makes Electron navigate the window to that file. The main process has no `will-navigate` guard (`apps/kaipu-record/src/main/index.ts` only sets `setWindowOpenHandler`, line 400). A user who still drops a video on the Library, the screen that used to accept it, would replace the app UI with a bare file page. Only `ExportPage` (via `usePrepareImport`) still mounts `useFileDrop`, so every other page is unguarded too, as it already was before this PR. Consider a main-side `will-navigate` guard, or a drop-swallowing handler on the Library, and assert `fireEvent.drop(...)` returns false in this test, as `dropFiles` does in the Export tests.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/shell/sidebar.test.tsx:39 · github-actions[bot] · 2026-11-26T20:09:25Z
+
+| 👮 **Wachiman** | Test name promises "with and without a video" but only covers the with-video URL |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧪 tests |
+| **Confidence** | 🟥🟥🟥 High |
+| **Track record** | no record yet · seed |
+
+The test renders only `/export/asset-1` and asserts `aria-current`. The no-video route `/export` (`ROUTES.exportNew`, which is what the NAV link points at) is never asserted active. Add `renderAt(ROUTES.exportNew)` with the same assertion, or rename the test.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/shell/sidebar.test.tsx:48 · github-actions[bot] · 2026-11-26T20:09:26Z
+
+| 👮 **Wachiman** | The "in progress" half of the Export badge is untested |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧪 tests |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+`useExportBadge` in sidebar.tsx:121-122 adds 1 while `status === "exporting"`, and the label is "copy in progress or ready". Every test here only feeds `noteFinishedCopy`. Nothing checks that a running export raises the badge, or that a running export and a finished copy add up. This behaviour is new in this PR, since the old Library badge counted finished copies only.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/pages/library/library-page.module.css:108 · github-actions[bot] · 2026-11-26T20:09:26Z
+
+| 👮 **Wachiman** | Orphaned comment about the removed drop strip |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧹 cleanup |
+| **Confidence** | 🟥🟥🟥 High |
+| **Track record** | no record yet · seed |
+
+The `.importZone` rule was removed but its comment ("NIW2-579: the \"Drop a video here\" strip, between the header and the toolbar") stayed. It now sits directly above the `.stickyBar` comment and describes something that no longer exists. Delete it.
+
+<!-- wachi:finding -->
+
+## apps/documentation/src/content/docs/backlog/index.mdx:33 · github-actions[bot] · 2026-11-26T20:09:26Z
+
+| 👮 **Wachiman** | Prepare backlog rows and pages still present the removed screen as pending validation |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 📝 docs |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+Export replaces Prepare (`router.tsx` now redirects `/prepare*` to Export), and `pages/prepare/*` is deleted. The rows at lines 33–34 and their pages `backlog/prepare-screen.md` and `backlog/prepare-drop-zone.md` still carry "🟢 Ready to validate · owner QA pending" and describe the two-column screen and Library drop strip as live. `export-presets.md` and `background-copy-toasts.md` also link to `prepare-screen` as the current flow. A reader cannot tell Prepare no longer exists. Add a "Replaced by Export" banner and status to those pages, or fold them into `export-screen`, and update the index rows.
+
+<!-- wachi:finding -->

@@ -1,0 +1,160 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9086` of ao-replay-9086 against 707eeff96e6640f0c8a3f4f40e495b1a6c894ec4 (merge-base 707eeff)",
+    "repository": {
+      "name": "ao-replay-9086"
+    },
+    "base": {
+      "sha": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4",
+      "ref": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4"
+    },
+    "head": {
+      "sha": "a4542d6c630184148510fd43d2a3a83eb7d32b87",
+      "ref": "ao-replay/9086"
+    },
+    "title": "ao-replay/9086",
+    "description": "fix(devices): power off a simulator AO started once its session ends",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/devices/leasestore.go",
+      "backend/internal/devices/leasestore_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/skillassets/using-ao/commands/device.md"
+    ],
+    "reviewed": [
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/leasestore.go",
+      "backend/internal/devices/leasestore_test.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/skillassets/using-ao/commands/device.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/devices/service.go",
+      "line": 295,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "A slow power-off pass holds up lease pruning in the reaper loop for up to 2 minutes",
+      "body": "`reap` runs `pruneEnded` and then `retireParked` in one goroutine, so `retireParked` (bounded only by `retireTimeout`, 2 minutes, covering the session lookups, `List` and every sequential `Shutdown`) delays the next `pruneEnded` by up to that long. The ticker drops the missed ticks. `Open` and `Status` still call `pruneEnded` themselves, so leases are not stuck. But the idle-daemon guarantee in the comment at line 273 and in `device.md` (\"within half a minute\") no longer holds while a simulator is slow to shut down. Running `retireParked` in its own goroutine, or on its own ticker, would keep the two bounds independent. If you keep it sequential, loosen the wording.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Reaper powers off a parked device (retireParked) once the session that last held it has ended",
+      "location": "backend/internal/devices/service.go:306",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:306-385",
+        "backend/internal/devices/service.go:389-395",
+        "backend/internal/devices/service.go:282-300",
+        "backend/internal/devices/service.go:696-718",
+        "backend/internal/adapters/device/local/provider.go:1057-1063"
+      ],
+      "equivalent_path": "Open's failed-boot rollback (service.go:696-718) and Close(shutdown=true) via finishRelease (service.go:237-246) are the existing paths that call Provider.Shutdown.",
+      "before_after": "Before: the lease was pruned and the device kept running forever. After: finishRelease parks owned devices under the session, and retireParked checks idleLocked, looks up the session, lists the provider, re-checks under s.mu, clears owned and parked, marks releasing, shuts down, and on failure re-parks. Open's rollback does not check idleLocked and does not mark releasing. retireParked does both, so it is stricter.",
+      "visible_effect": "A simulator or emulator AO booted stops running after its session ends. Devices that were already running when the session took them are left on. Status lists drop the device after the next list.",
+      "failure_mode": "List error: devices stay parked and the pass retries on the next tick, logged at Debug. Shutdown error: the device is re-parked and owned again, retried every 30s, logged at Warn. Setup not ready: the pass returns early and the devices wait. Service.Shutdown cancels the reaper context, so an in-flight shutdown fails and is re-parked and saved. The state is persisted in leases.json, so a restart resumes the retry. The pass is bounded by retireTimeout (2 min) via ctx, which Provider.Shutdown passes to hubJSON (provider.go:1057-1063).",
+      "evidence_checked": true
+    },
+    {
+      "action": "finishRelease parks an owned device under the releasing session instead of leaving it only in owned",
+      "location": "backend/internal/devices/service.go:228",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:228-257",
+        "backend/internal/devices/service.go:918-922",
+        "backend/internal/devices/service.go:1122-1132",
+        "backend/internal/devices/service.go:767-769"
+      ],
+      "equivalent_path": "All callers now pass the session id: pruneEnded, Open (replaced lease), releaseIfGone, LiveLease, HubTarget and Close. releaseIfGone deletes owned first, so a vanished device is not parked.",
+      "before_after": "Before: finishRelease returned after releaseControl and an optional Shutdown. After: it also deletes owned and parked on a successful shutdown, and parks the device when owned. The saveLocked call and the releasing delete (deferred) both happen under s.mu, so nobody can take the device between those steps.",
+      "visible_effect": "`ao device close` without --shutdown still leaves the device on for reuse, but it is now powered off when the releasing session ends. With --shutdown, AO's claim is dropped.",
+      "failure_mode": "A failed shutdown on an owned device is parked, so it is retried later, and the error is still returned to the caller as DEVICE_SHUTDOWN_FAILED. A crash between endLeaseLocked's save and finishRelease's save leaves the device owned but unparked, and it is never powered off. This is a narrow window.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Open drops AO's claim on idle owned devices that are listed as not booted (forgetStoppedLocked)",
+      "location": "backend/internal/devices/service.go:791",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:669-677",
+        "backend/internal/devices/service.go:787-805",
+        "backend/internal/devices/service.go:389-395",
+        "backend/internal/devices/service_test.go:1585-1611"
+      ],
+      "equivalent_path": "The `wasBooted` / `owned` bookkeeping in Open (service.go:757-759) decides ownership from the listing, and forgetStoppedLocked now uses the same listing to expire it.",
+      "before_after": "Before: owned entries stayed forever, so a device the user later booted themselves could be treated as AO's. After: each Open clears owned and parked for idle devices that list as off. idleLocked covers held, reserved, booting and releasing devices, so an in-flight open is not affected.",
+      "visible_effect": "A device the user boots later is not powered off when a session that borrowed it ends. This is covered by TestAStoppedDeviceIsNoLongerAOs.",
+      "failure_mode": "The device list is taken before s.mu is locked, so it can be stale. Every commit and reservation touches s.mu and idleLocked reads it, so a stale 'off' entry cannot clear a device that is now held or reserved. A List failure returns before this runs, so nothing is cleared.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Parked devices are persisted in leases.json and reloaded on daemon start",
+      "location": "backend/internal/devices/leasestore.go:89",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/leasestore.go:62-97",
+        "backend/internal/devices/leasestore.go:100-123",
+        "backend/internal/devices/leasestore_test.go:77-99"
+      ],
+      "equivalent_path": "Leases and owned are persisted and reloaded by the same loadLeases and saveLocked.",
+      "before_after": "Before: the file held leases and owned. After: it also holds parked entries, and an entry whose device is not in owned is dropped on load. An old file with no `parked` key loads as empty, and a corrupt file gives empty maps for all three.",
+      "visible_effect": "A device released warm before a restart is still powered off when its session ends afterwards (TestParkedDevicesSurviveADaemonRestart).",
+      "failure_mode": "A write failure is only logged, as for the other fields. The worst case is the old behaviour of a device left running. Devices owned and unleased before the upgrade have no parked entry, so they are never powered off.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change parks owned devices when their lease ends and powers them off from the reaper once the last holding session has ended. It forgets owned devices that have stopped, and persists the parked set across restarts. I checked the main lock-ordering and race scenarios against `idleLocked`, `releasing` and `reserved`. I traced the new tests against the fake provider and found nothing that fails or asserts the wrong thing. The one finding is minor: the power-off pass runs in the same reaper goroutine as `pruneEnded` and can hold it up for up to 2 minutes. Powering off a device without being asked is a behaviour change, so it is listed under judgement.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 577,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.43064249999999993
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.43064249999999993,
+    "usage": {
+      "input": 14,
+      "output": 12471,
+      "cacheRead": 324605,
+      "cacheWrite": 68361
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 107676,
+    "stop": "complete",
+    "notices": []
+  }
+}

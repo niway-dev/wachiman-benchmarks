@@ -1,0 +1,77 @@
+# kaipu-bench-wachi-v3#109 [replay] feat(desktop): recording detail — title on top, destinations strip, copies from this original - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T20:03:55Z · commit dac8318
+
+👮 **Wachiman** · 🟡 **Nothing to fix · 5 to consider** · whole PR at `dac8318`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 0 to fix · 🟡 5 to consider · ⚪ 0 for your information (5) · 2 Should · 3 Could |
+| **Risk** | Low: no risk facts reported, no risky paths |
+| **Coverage** | 14 of 14 files reviewed, whole pull request |
+| **Read first** | `library-detail-page.tsx`, `master-copies-panel.tsx`, `destinations-panel.tsx`, `where-is-this-going-strip.tsx`, `library-detail-page.test.tsx` |
+
+### To consider (5)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Could · 🐛 bug | [`master-copies-panel.tsx:174`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/dac8318b631e64780f65ce94b4aaa57261d7d63d/apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx#L174) | Dragging a copy out of this panel does not mark it seen |
+| 🟡 Consider · Could · 🐛 bug | [`destinations-panel.tsx:91`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/dac8318b631e64780f65ce94b4aaa57261d7d63d/apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx#L91) | Unreadable file leaves every card size as "…" forever |
+| 🟡 Consider · Should · 🧪 tests | [`master-copies-panel.test.tsx:98`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/dac8318b631e64780f65ce94b4aaa57261d7d63d/apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.test.tsx#L98) | Drag test overwrites the global \`window.electronAPI.startFileDrag\` and never restores it |
+| 🟡 Consider · Should · 🧪 tests | [`master-copies-panel.test.tsx:140`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/dac8318b631e64780f65ce94b4aaa57261d7d63d/apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.test.tsx#L140) | "Open in Export →" test name promises an absence check that is not there |
+| 🟡 Consider · Could · 🐛 bug | [`master-copies-panel.tsx:104`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/dac8318b631e64780f65ce94b4aaa57261d7d63d/apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx#L104) | Copy picture size is recomputed from the preset and the current probe, not read from the copy |
+
+<details><summary>What the change connects to (9 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Drag handle on each ready copy row hands the vault file to main for a native drag (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:171`) — The OS drag starts with the file under the copy's title. The Library page's unseen outline and chip for that copy stay on. If it fails: startFileDrag is an ipcRenderer.send with no reply (preload/index.ts:87). Main validates the id (main/library/index.ts:163), so a bad id is silently ignored. The button renders only when copy.id !==… Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:164-175`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:232-235`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:9-10`, `apps/kaipu-record/src/preload/index.ts:87`, `apps/kaipu-record/src/main/library/index.ts:161-163`.
+- The page always probes the recording's file; DestinationsPanel and MasterCopiesPanel take the probe (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`) — The resolution appears in the metadata line, and cards and rows get sizes once the probe resolves. With a failed probe the cards show "…" and the rows show only the file size. If it fails: A failed probe maps to status error with a null probe (use-prepare-copy.ts:55-58). Nothing says so: the cards keep showing "…". Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:41-43`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:91`.
+- "Where is it going?" panel replaces the strip; "Not now" hides it, and the Export a copy button appears (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:190`) — Picking a card opens Prepare on that destination (openPrepare(destination)). Dismissing, or the first copy, brings back Export a copy and, for a heavy file, the banner. If it fails: While the panel shows, the primary Export a copy button is hidden and no control opens Prepare without a destination. Prepare is reachable only through a card, Not now, or the post-recording card. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:139`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:189-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:489-505`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:517`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:68-70`.
+- "Saved to your Library" notice over the player of a fresh recording, dismissed by ✕ and keyed on location.key (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:137`) — The notice reappears on Back navigation. This matches the card's existing behaviour. If it fails: No failure path: purely local state. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:101`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:128-137`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:394-412`.
+- Destination card click on the recording page opens Prepare on that destination (`apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:78`) — The router goes to /prepare/:assetId?to=<dest>. 'Export a copy' with no argument gives no ?to=, and Prepare then defaults to YouTube. If it fails: No async work. The size estimate shows '…' until the probe resolves and stays '…' if the probe fails. The card still works, because it does not depend on the estimate. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:149-151`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:489-494`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:41-56`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`.
+- 'Not now' on the destinations panel, and the Export a copy button that replaces it (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:139`) — The panel disappears. The 'Export a copy' button appears among the actions. A heavy master gets the HeavyToSendBanner instead of the in-panel note. If it fails: No async work. Leaving the page and coming back resets the state, and the panel returns. The doc says 'for that visit', which matches. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:190-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436-441`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:517-523`.
+- Dismissable 'Saved to your Library' notice shown when location.state.fromRecording is set (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:136`) — A green role=status banner appears. After ✕, the standing masterNote appears instead. If it fails: No async work. Prepare's own navigations go forward to a new entry without state, so the notice does not return after normal use. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:101`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:128-137`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:341-346`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:394-412`, `apps/kaipu-record/src/renderer/src/pages/prepare/prepare-page.tsx:95`, `apps/kaipu-record/src/renderer/src/pages/prepare/prepare-page.tsx:153`.
+- Drag button on each ready copy starts a native file drag (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:164`) — The user can drag the copy's file into Finder or another app. If it fails: startFileDrag is fire-and-forget (ipcRenderer.send), so a failure in main gives no UI feedback. This is the same as for the existing callers. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:164-180`, `apps/kaipu-record/src/preload/index.ts:87`, `apps/kaipu-record/src/main/library/index.ts:161`, `apps/kaipu-record/src/shared/types/electron-api.ts:259`.
+- The page probes the file for every local recording, not only a heavy one (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`) — The resolution joins the metadata line. The destination cards and each copy's picture size are filled in. If it fails: If the probe errors, probe stays null: no resolution, '…' on the cards, and file size only on copy rows. The page remains usable. The stale-id guard in useSourceProbe handles a change of recording. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:282-289`, `apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:104-114`, `apps/documentation/src/content/docs/backlog/prepare-screen.md:112-113`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** The new layout holds together: the page replaces the strip with `DestinationsPanel` before the first copy and `MasterCopiesPanel` after, and the hooks stay above the early returns. I found one behaviour gap and four smaller issues, none blocking.
+
+- **Drag skips `markCopySeen`:** the panel's Drag handle never calls `markCopySeen`, unlike the ready card's drag (`export-status-cards.tsx:232-235`). A copy dragged out from here stays "unseen" in the Library.
+- **Probe failure shows "…":** if the file can't be read, every card in `DestinationsPanel` shows "…" indefinitely, which looks like loading.
+- **Inferred copy size:** a copy's picture size in `MasterCopiesPanel` is computed from the preset and the master's probe, not read from the copy's file.
+- **Test cleanup:** the drag test overwrites the global `window.electronAPI.startFileDrag` and never restores it.
+- **Test gap:** the "Open in Export →" test never checks that the button is absent without `onOpenExport`.
+
+I did not build or run anything. `where-is-this-going-strip.tsx` was deleted and its only caller is the page, which now imports `DestinationsPanel` instead.
+
+**Batch 2 of 2.** I found nothing to flag in the nine files of this part. I read the tests, stylesheets, docs and messages in full, and the page and panel components they exercise. The CSS custom properties all resolve in `packages/tokens/css/tokens.css` or `base.css`. The removed i18n keys have no remaining users, and `sendTo` stays because the library card and row still use it. `en.json` and `es.json` carry the same keys. The test assertions match the component output, and the doc's description matches the code. One cosmetic point: `sendTo` now sits between `metaCopies` and `copyExporting` in both message files.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 5 | 852 | 4 | reviewed | 14 | $0.31 |
+| Batch 2 of 2 | 9 | 763 | 2 | reviewed | 19 | $0.33 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 32 in / 21k out / 850k cache read / 142k cache write · Claude subscription: API-equivalent estimate, not a bill · $0.64</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=dac8318b631e64780f65ce94b4aaa57261d7d63d -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjIuMCIsImhlYWQiOiJkYWM4MzE4YjYzMWU2NDc4MGY2NWNlOTRiNGFhYTU3MjYxZDdkNjNkIiwiYXR0ZW1wdCI6IjFmMjk0YWM2LTM1MDItNDM4OC04NWFjLTllN2VjNzM5ZGYwOSIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6NSwiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjowLCJjb25zaWRlciI6NSwiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjUsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=1f294ac6-3502-4388-85ac-9e7ec739df09 -->
