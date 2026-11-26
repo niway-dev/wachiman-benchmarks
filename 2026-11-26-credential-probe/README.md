@@ -91,8 +91,9 @@ so 7 issues are within reach.
 - **A plain prompt finds far less than Wachiman:** 0 to 3 of 7 per call, where Wachiman's batches
   found 4 to 8 of these issues per review in the release bisect. The probe isolates the credential;
   it is not a measure of review quality.
-- Three calls per set: a difference of one issue per call is inside the spread. The 0.7 set is
-  the only one below every call of the others but one.
+- **Three calls per set:** a difference of one issue per call is inside the spread. The 0.7 set
+  is the lowest mean, not a measured loss on its own; it points the same way as the release
+  bisect, where Wachiman on the token found fewer of these issues than on the key.
 
 ## What it means, and what it does not show
 
