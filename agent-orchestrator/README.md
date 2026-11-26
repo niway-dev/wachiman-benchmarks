@@ -54,6 +54,16 @@ What this says:
   `fix` and `blocker` findings were real in 9 cases.
 - **Neither tool was often wrong.** CodeRabbit had 3 false and 2 unsure, Wachiman none.
 
+Why CodeRabbit found the 47: [`coderabbit-only-why.tsv`](replays/judging-2026-11-26/coderabbit-only-why.tsv)
+classifies each one by where the decisive fact sits and what a reviewer must know to see it (Sonnet 5.5
+high, reading the code at the event head; every `why_missed` is a hypothesis). In 20 of 47 the decisive
+fact is outside the changed hunks (10 in an unchanged file). 16 need reasoning about two async steps
+interleaving, 13 a caller or sibling elsewhere in the repo, 8 a rule of an outside API, 4 a failure between
+two steps; only 6 are visible from the diff alone. In 17 rows Wachiman had a finding on the same function
+but stated a weaker or different problem. In 4 of those (9036-r1-i02, 8714-r3-i04, 8764-r1-i03,
+8764-r1-i06) it may be the same defect, which the judge did not merge; if so, the counts become 12
+shared, 43 only CodeRabbit.
+
 Limits of this comparison: one judge, one pass, one model. The judge never saw the tool names, but the two
 tools write differently (CodeRabbit leads with a bold title), so the blinding is imperfect. "Fixed later"
 favors CodeRabbit by construction: its comments were posted on the PR and the authors answered them.
