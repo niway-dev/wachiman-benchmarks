@@ -52,6 +52,7 @@ describe("run map", () => {
     expect(benchLabel("kaipu-bench-wachi-v3", 73, "467", "r3", "[replay r3] x").label).toBe("W24");
     expect(benchLabel("kaipu-bench-wachi-v3", 74, "465", "r1", "[replay] x")).toMatchObject({ label: "W25", version: "v1.15.0" });
     expect(benchLabel("kaipu-bench-wachi-v3", 79, "467", "r3", "[replay r3] x").label).toBe("W27");
+    expect(benchLabel("kaipu-bench-wachi-v3", 80, "465", "r1", "[replay] x")).toMatchObject({ label: "W-v3-unassigned", confidence: "guessed" });
     expect(benchLabel("kaipu-bench-coderabbit-v2", 4, "465", "r1", "[replay] x").label).toBe("CR-v2");
     expect(benchLabel("kaipu-bench-wachi-v3", 4, "465", "r1", "[replay] x")).toMatchObject({ label: "W7", version: "v1.20.1" });
     expect(benchLabel("kaipu-bench-wachi-v3", 17, "463", "r1", "[replay] x")).toMatchObject({ label: "W10", version: "v1.21.0" });

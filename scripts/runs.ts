@@ -69,8 +69,12 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
   }
   if (repo === "kaipu-bench-wachi-v3" && SET1.has(original)) {
     const n = Number(round.slice(1));
-    // #68-#73: the replay-v190/ branches, v1.9.0 on #465 and #467 only (release bisect, BENCH_FOCUS=as-is).
+    // Each set below is matched by a lower bound only, so a PR past the last known set would take
+    // the newest rule's label. It stays unlabelled until a rule names it.
+    if (pr >= 80) return { label: "W-v3-unassigned", confidence: "guessed", basis: "no analysis doc names this run yet", notes: "kaipu-bench-wachi-v3 PR past the last labelled set (#79)" };
+    // #74-#79: the replay-v1150/ branches, v1.15.0 on #465 and #467 only (release bisect, BENCH_FOCUS=rename).
     if (pr >= 74 && pr <= 79 && n >= 1 && n <= 3) return { label: `W${n + 24}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.15.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, verify false, focus file at .github/wachiman.md (BENCH_FOCUS=rename), subscription token: estimated cost" };
+    // #68-#73: the replay-v190/ branches, v1.9.0 on #465 and #467 only (release bisect, BENCH_FOCUS=as-is).
     if (pr >= 68 && pr <= 73 && n >= 1 && n <= 3) return { label: `W${n + 21}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.9.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, focus file at .github/agent-review.md (read with a notice), API key: billed cost" };
     // #62-#67: the replay-v150/ branches, v1.5.0 on #465 and #467 only (release bisect, BENCH_FOCUS=as-is).
     if (pr >= 62 && pr <= 67 && n >= 1 && n <= 3) return { label: `W${n + 18}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.5.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, focus file at .github/agent-review.md, API key: billed cost" };

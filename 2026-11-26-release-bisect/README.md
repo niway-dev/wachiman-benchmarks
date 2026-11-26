@@ -44,8 +44,8 @@ cannot tell the engine from the credential.
   subscription call would take fewer turns is not measured here.
 - **Cost does not move with the turns.** Every set spends about $3 on #467. On the token the
   figure is Claude Code's API-price estimate, not a bill.
-- **v1.15.0 caught fewer known bugs on #465** (4 of 9, the lowest of any set) and as many as
-  v1.9.0 on #467. Three runs per set cannot separate that from the spread between runs.
+- **v1.15.0 caught fewer known bugs on #465** (4 of 9, the lowest of any set) and about as many
+  as v1.9.0 on #467 (10 plus 4 in part, against 11 plus 4). Three runs per set cannot separate that from the spread between runs.
 - **New findings:** across both PRs, the v1.5.0 runs posted 8 that matched no known or
   earlier bug (#465 N7 and #467 N23–N29: 5 valid, 3 partly valid). The v1.9.0 runs posted 2 more
   (#465 N8 and #467 N30, both valid) and re-posted v1.5.0's #467 N24. The v1.15.0 runs posted 3
@@ -82,8 +82,9 @@ and v1.15.0 and v1.21.0 with it, and all three are low.
 | Runs | 3 per PR, `/wachi review` | same | same |
 
 Model, effort (`high`), turn limit (40) and batch cap ($0.75) are the same in every set of the table
-above: every review records them (`reviews.csv`), and one run log of W13–W15 and one of W16–W18
-were read to confirm the inputs the engine received.
+above. Every review records the model and the effort (`reviews.csv`). One run log of W13–W15 and
+one of W16–W18 were read to confirm the inputs the engine received. The turn limit and the batch cap
+are the callers' defaults, which are 40 and $0.75 in v1.9.0's and v1.15.0's `review.yml` too.
 
 ## Method
 
