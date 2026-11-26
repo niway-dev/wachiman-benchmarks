@@ -6,7 +6,8 @@
 - **Engine:** Wachiman v1.22.0 (`79ce0f0`), pinned with `WACHIMAN_DIR` (a `git archive v1.22.0`
   export; the installed CLI was 1.17.0), `claude-sonnet-5-5`, effort `high`, no verifier,
   `AGENT_REVIEW_BUDGET_USD=10`, two queues, `wachiman local` on the owner's subscription
-  (`ANTHROPIC_API_KEY` unset). Same inputs and judge route as the v1.9.0 rows.
+  (`ANTHROPIC_API_KEY` unset). Same inputs, judge model and prompts as the v1.9.0 rows; the judge calls
+  differed in one way, see "Judge cost rose".
 - **Command:** `JUDGE_PORT=8897 WACHIMAN_DIR=/tmp/wachiman-1.22.0 QUEUES=2 ./scripts/run-weekly.sh 2026-11-26-v1.22.0-sonnet-5-5-high claude-sonnet-5-5 high`
 
 ## Against v1.9.0, same model and effort
@@ -56,7 +57,7 @@ and the Claude Code CLI loaded their tool definitions into every call even with 
 test call measured 65,389 cached prompt tokens and $0.063 as the shim ran; with
 `--strict-mcp-config` and an empty MCP config, 714 tokens and $0.005. `scripts/judge_shim.py`
 now passes both. Wachiman's own reviews already pass `--strict-mcp-config`
-([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/main/src/providers/claude-code.ts)), so its product cost
+([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215/src/providers/claude-code.ts#L225)), so its product cost
 is not affected. The judge model is the same, so the scores stay comparable, though that the
 extra tool definitions did not sway this run's judgments is not checked.
 
@@ -72,10 +73,10 @@ shim does not start.
 ## Limits
 
 - One run against three. A difference within the v1.9.0 spread is not a change.
-- Same judge model, prompts and shim as every row in [history.md](../../history.md), but this
-  run's judge calls also carried the connector tool definitions that the earlier rows' calls did
-  not (see "Judge cost rose"). That they did not move the scores is not checked. Not comparable
-  with Martian's stored numbers.
+- Same judge model, prompts and `judge_shim.py` (as it was before the MCP fix) as every row in
+  [history.md](../../history.md), but this run's judge calls also carried the connector tool
+  definitions that the earlier rows' calls did not (see "Judge cost rose"). That they did not
+  move the scores is not checked. Not comparable with Martian's stored numbers.
 - **Raw data kept as produced.** Three of the 50 review summaries end with a stray quote or carry
   literal `\n` sequences (for example `cal.com/22532`, `cal.com/14740`). v1.9.0 r3 has two such
   summaries, so this is an older Wachiman output defect, not new in v1.22.0. It does not reach
