@@ -4,7 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
+- **Last updated:** 2026-11-26, why the older versions look better on known bugs: v1.3.0's share comes from Low items; on Medium bugs it catches the fewest.
+- **Earlier on 2026-11-26:** credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
 - **Previous update:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
@@ -13,6 +14,40 @@ no claim the reports do not.
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 - **t3code cases (2026-11-12):** escaped and replayed bugs of pingdotgg/t3code as a second unit next to Martian, one row per run set in [t3code/history.md](t3code/history.md); the key is [t3code/cases.tsv](t3code/cases.tsv).
+
+## Why the older versions look better on known bugs (2026-11-26, kaipu-record #465 and #467)
+
+**Short version: v1.3.0 is not better than the later versions. Its higher known-bug share comes
+from Low test-quality items, and it catches the fewest Medium bugs.**
+
+- **The list leans toward v1.2.0.** The expected issues were built on 2026-11-01 from the live
+  reviews of Wachiman v1.2.0 and Pullfrog; 17 of the 26 were v1.2.0's own findings, mostly Low
+  test quality ([2026-11-01](2026-11-01/README.md)). v1.3.0 reviews much like v1.2.0, so it finds
+  them again in every run. On #467 it wins on E2, E3 and E4, all Low.
+- **It is not noise.** v1.3.0 posted 0 invalid findings. Later versions post more findings (about
+  10 per run on #467 against 6), and the extra ones were mostly labelled valid but outside the list.
+- **On the Medium bugs** (#465 E3, #467 E1 and E10), full catches over runs, from `labelled-runs.csv`:
+
+| Configuration | Runs | #465 E3 | #467 E10 | #467 E1 | Medium per run |
+| --- | --- | --- | --- | --- | --- |
+| v1.3.0 Opus (W-R1–W-R3) | 3 | 0 | 2 | 0 | 0.67 |
+| v1.4.0 Opus (W4–W6, W16–W18) | 6 | 4 | 3 | 0 (1 partial) | 1.17 |
+| v1.15.0 Opus, API key (W28–W30) | 3 | 3 | 1 | 0 (2 partial) | 1.33 |
+| v1.21.0 Opus, token (W10–W15) | 6 | 4 | 2 | 0 | 1.00 |
+| v1.21.0 Sonnet, token (W31–W33) | 3 | 1 | 2 | 0 | 1.00 |
+| v1.21.0 + 5-minute cache, token (W34–W36) | 3 | 2 | 0 (1 partial) | 0 | 0.67 |
+
+- **The "drop on #467 since v1.20.1" is in Low items, not Medium.** E8 (a Low test gap) went from
+  5 of 6 runs on v1.4.0 to 1 of 6 on v1.21.0; on Medium bugs v1.21.0 is near v1.4.0.
+- **Time follows turns.** Median run time per configuration tracks its turns at about 4–5 s per
+  turn on Opus, so the later versions are slower because they take more turns, not because of
+  local processing. This is read from the data; the split between model time and tool time was
+  not measured.
+- **Limit:** 3 Medium bugs and 3–6 runs per configuration. One catch more or less moves a row
+  from 0.67 to 1.33, so this ranks nothing; it only shows that the all-bugs share misleads.
+- **Consequence:** compare versions on Medium-or-higher bugs caught per run, with Low items in a
+  separate column, and build known-bug lists from later fixes in the code's history, not from one
+  reviewer's findings.
 
 ## Replay of v1.20.1 and v1.21.0 against v1.4.0 (2026-11-25, kaipu-record, five PRs)
 
