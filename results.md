@@ -4,7 +4,7 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, v1.5.0, v1.9.0 and v1.15.0 added to find the release that cut the turns per batch call.
+- **Last updated:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token), not the release.
 - **Previous update:** 2026-11-12, Martian model arms and false-positive audit added.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
@@ -81,11 +81,11 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
   engine puts in it changed across many releases (`src/engine.ts` alone changed by about 5,400
   lines between the two), and batches now run four at once instead of one after another. Running
   releases between v1.4.0 and v1.21.0 on #465 and #467 would show in which release the turns
-  dropped. **First answer (2026-11-26):** v1.5.0 and v1.9.0 keep about 15 turns per call on both
-  PRs, and v1.15.0, which still reviews one batch at a time, is down to about 9, so parallel
-  batches are not the cause ([release bisect](2026-11-26-release-bisect/README.md)). The
-  credential changes at the same point: every set at about 15 turns ran on an API key, every set
-  at about 9 on a subscription token. A v1.15.0 run on the API key would separate the two.
+  dropped. **Answer (2026-11-26): the credential, not the release.** The same v1.15.0 makes
+  about 15 turns per call on an API key and about 9 on a Claude subscription token, and v1.5.0
+  and v1.9.0 on the key make about 15 ([release bisect](2026-11-26-release-bisect/README.md)).
+  v1.4.0 ran on the key and v1.21.0 on the token, so this comparison mixes credentials: its gap in
+  turns, and part of its gap in findings, measure the credential.
 - **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
   every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
   full, which is the whole default budget. Every partial review in this table is a #467 review.

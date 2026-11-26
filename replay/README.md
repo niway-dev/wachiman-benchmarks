@@ -111,11 +111,12 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   links it; `wachi-workflow.yml` now has the same inputs. `bench.sh` never installs them: they were
   put on the repository's `main` through the contents API for those runs, then `main` went back to
   `wachi-workflow.yml`.
-- `wachi-workflow-v1.5.0.yml`, `wachi-workflow-v1.9.0.yml`, `wachi-workflow-v1.15.0.yml` and
-  `manifest-2026-11-26-bisect.tsv`: the release bisect (W19–W27): each release pinned by SHA with
+- `wachi-workflow-v1.5.0.yml`, `wachi-workflow-v1.9.0.yml`, `wachi-workflow-v1.15.0.yml`,
+  `wachi-workflow-v1.15.0-api-key.yml` and `manifest-2026-11-26-bisect.tsv`: the release bisect
+  (W19–W30): each release pinned by SHA with
   W4–W6's inputs plus `budget_usd: 10` (and `verify: false` for v1.15.0), on kaipu-record #465 and
-  #467 only. v1.5.0 and v1.9.0 pass only `ANTHROPIC_API_KEY`, v1.15.0 only
-  `CLAUDE_CODE_OAUTH_TOKEN`. Put on `main` the same way.
+  #467 only. v1.5.0, v1.9.0 and the `-api-key` file pass only `ANTHROPIC_API_KEY`;
+  `wachi-workflow-v1.15.0.yml` only `CLAUDE_CODE_OAUTH_TOKEN`. Put on `main` the same way.
 
 ## Details worth knowing
 
@@ -128,6 +129,9 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
 - The Wachi workflow passes `CLAUDE_CODE_OAUTH_TOKEN` (a token from `claude setup-token`, which runs
   the review on a Claude subscription) as well as `ANTHROPIC_API_KEY`. Either secret is enough; with
   both, the engine uses the token, and every cost it reports is an API-equivalent estimate.
+  **Compare releases on one credential:** a batch call on the token makes about 9 turns where the
+  same call on a key makes about 15 ([release bisect](../2026-11-26-release-bisect/README.md)).
+  Name the credential in every report.
 - `open` and `rounds` trigger only the PRs they create. To re-trigger a skipped one, comment by hand.
 - `--dry-run` still reads the manifest and checks the local clone; it never calls `gh`, pushes or
   creates files outside what it prints. With `BENCH_FOCUS=rename` it still builds the focus commit
