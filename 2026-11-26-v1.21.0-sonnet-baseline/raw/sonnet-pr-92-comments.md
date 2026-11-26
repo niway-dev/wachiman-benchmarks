@@ -1,0 +1,71 @@
+# kaipu-bench-wachi-v3#92 [replay] fix(desktop): turning the camera off and on mid-take keeps the face in its own track - bot inline comments
+
+## apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:928 · github-actions[bot] · 2026-11-26T17:31:18Z
+
+| 👮 **Wachiman** | Camera-off is applied immediately but camera-on is queued, so an off that follows a queued on is undone |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟠 Fix |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+The comment at line 938 says the on is queued "so an off that follows waits for this camera to open and releases it". The off branch does not wait: it calls `handle.turnWebcamOff()` synchronously at line 928, outside `queue`. Sequence: off (parked) → on (`turnWebcamOn` queued behind another queued step, e.g. a noise-suppression `reopenMic` or a mic acquisition, recorder-store.ts:866-878/902) → off again before the queue reaches it. The second off runs `turnWebcamOff()` while `cameraWanted` is already false, so it only bumps `cameraRequest`. When the queued `turnWebcamOn` finally runs, it reads `cameraWanted === false` (recorder-engine.ts:781), sets it true, takes a new `request` and opens the camera. Nothing supersedes it, so it feeds the relay. The store has `webcamOn = false`, so the 'ok' result at line 943 does not close the gap, and the editor hides the footage. The camera is lit and recording while the user's toggle is off and the bubble is hidden. It lasts until the next on/off or the take ends. Fix: queue the off as well, or have the queued closure return early when `!webcamOn` before calling `turnWebcamOn()`. A test for the off→on→off sequence with a blocked queue would pin it.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/main/recording/recording-hub.test.ts:2065 · github-actions[bot] · 2026-11-26T17:31:18Z
+
+| 👮 **Wachiman** | Test title promises the hub-reset path but only abort is exercised |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧪 tests |
+| **Confidence** | 🟥🟥🟥 High |
+| **Track record** | no record yet · seed |
+
+"a bubble parked when the take is aborted or the hub reset is destroyed too" only calls `recordingAbort`. The reset path (`releaseParkedBubble()` after `bubbleProtection.reset()`, recording-hub.ts:1022) and the stop path (`applyStopWindowState`, recording-hub.ts:846) have no test. Add them, or narrow the title.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.test.ts:105 · github-actions[bot] · 2026-11-26T17:31:18Z
+
+| 👮 **Wachiman** | Seeded gap segments get random ids, which breaks Share's reuse fingerprint for takes with gaps |
+|:--|:--|
+| **Priority** | **Should** · a change is expected; answer if you disagree |
+| **Severity** | 🟠 Fix |
+| **Area** | 🐛 bug |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+`seedWebcamScene` now gives each gap segment `crypto.randomUUID()` (webcam-model.ts:155), and this test pins only that the ids are unique. Share builds its scene with `initialScene(...)` inside a `useMemo` (share-recording.tsx:126-129). It then fingerprints it with `wholeFingerprint(scene.webcam)` (share-recording.tsx:130), which hashes the whole layer including segments through `stableStringify` (export-reuse.ts:81-84, 30-39), so segment ids are part of the hash. Before this change `segments` was always `[]`, so the hash was stable. Now, for any take with a camera-off gap, every mount of Share (and each recompute after the probe lands) produces a different `whole:<hash>`. A Share export already made therefore never matches `findReusableExports`, and the user silently re-encodes each time. The comment at share-recording.tsx:123-125 says a second Share reuses the file. The gap tests assert nothing about determinism, so this passes CI. Derive the ids from the gap (for example `webcam-gap-${index}`) and add a test that two seeds of the same meta are `toEqual`.
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/features/recording/recorder-store.test.ts:1602 · github-actions[bot] · 2026-11-26T17:31:18Z
+
+| 👮 **Wachiman** | "On the take's own timeline" assertion is only a lower bound and cannot tell the timelines apart |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧪 tests |
+| **Confidence** | 🟥🟥⬜ Medium |
+| **Track record** | no record yet · seed |
+
+The comment says the gap starts "on the take's own timeline, not the wall clock's", but the assertion is `startMs >= 2000`. `fakeEngine`'s `firstMediaTimestamp` resolves `rendererMs: 0` (line 90), and `takeTimeMs()` (recorder-store.ts:806-809) then measures from `performance.now()`. With fake timers advanced by the 3 s countdown first, the start would be about 5000 on that clock, and about 2000 on a wall clock that starts at the take. Both satisfy `>= 2000`. The test would still pass if the gap were opened on the wrong clock. Give this test an engine with a known `rendererMs` (as lines 504/526 do) and assert the exact start, and ideally cover a pause inside the take (pauses are removed from the timeline).
+
+<!-- wachi:finding -->
+
+## apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.test.ts:78 · github-actions[bot] · 2026-11-26T17:31:18Z
+
+| 👮 **Wachiman** | The cut test never exercises the "frame from a superseded camera is closed" branch |
+|:--|:--|
+| **Priority** | **Could** · worth a look; change on the merits |
+| **Severity** | 🟡 Consider |
+| **Area** | 🧪 tests |
+| **Confidence** | 🟥⬜⬜ Low |
+| **Track record** | no record yet · seed |
+
+The comment says a frame the old camera still delivers "is dropped (and closed)". But `relay.cut()` cancels the reader, so `first.push(late)` throws on the cancelled stream and is swallowed by the `try/catch`. `late.close` is never asserted, so the `current !== reader` / `value.close()` path in webcam-relay.ts:91-94 has no coverage. The test passes only because the `written` list is unchanged. Either assert on that branch directly (a frame read before the cut, resolved after it) or reword the comment.
+
+<!-- wachi:finding -->

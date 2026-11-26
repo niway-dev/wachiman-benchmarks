@@ -1,0 +1,67 @@
+# kaipu-bench-wachi-v3#98 [replay r2] feat(desktop): ready copy shows up in the Library; minimizable export widget - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T17:34:32Z · commit e45c845
+
+👮 **Wachiman** · 🟣 **1 question for you** · 3 to consider · whole PR at `e45c845`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 0 to fix · 🟡 3 to consider · ⚪ 0 for your information (3) · 3 Could |
+| **Risk** | Low: no risk facts reported, no risky paths |
+| **Needs a person** | 1 trade-off, in `export-widget-state.ts:8` |
+| **Coverage** | 31 of 31 files reviewed, whole pull request |
+| **Read first** | `ready-copy-card.tsx`, `export-status-cards.tsx`, `library-page.tsx`, `export-widget-state.ts`, `ready-copies.ts` |
+
+### To consider (3)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Could · 🐛 bug | [`ready-copy-card.tsx:80`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx#L80) | Library ready card's Show in Finder / drag don't mark the copy seen |
+| 🟡 Consider · Could · 🐛 bug | [`export-status-cards.tsx:216`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx#L216) | role="progressbar" nested inside the pill's <button> |
+| 🟡 Consider · Could · 📝 docs | [`en.json:1413`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/packages/i18n/messages/en.json#L1413) | PR body describes email wording that is not in the messages |
+
+### Questions for you (1)
+
+- [`export-widget-state.ts:8`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/e45c845143ba72f35fea4fac2f9d62a186dff986/apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts#L8) · trade-off — A minimize choice that sticks for the whole session means a user who minimized once and forgot sees later exports only as a small pill, with Cancel behind a click. It is stated as intentional, but a product owner should confirm it over resetting on each export.
+
+<details><summary>What the change connects to (4 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Leaving the Library retires every Ready-to-upload card (route watch in the sidebar hook) (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:92`) — The cards show on the Library's grid view while the user stays; a later visit opens on the plain grid, and the copies stay outlined as unseen. If it fails: None found. On browser Back to /library the ref was set false by the previous route, and no cards exist because they were retired. A copy that finishes while the user is away keeps card:true and show… Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:92-105`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:97-100`, `apps/kaipu-record/src/renderer/src/shell/sidebar.test.tsx:50-63`.
+- Reveal in Finder and native drag from the Library ready card (`apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:80`) — The file is revealed or dragged out. The copy stays flagged unseen. If it fails: startFileDrag returns silently if the poster is missing, and reveal is fire-and-forget (`void`). Both behave the same as the toast path. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:277-299`, `apps/kaipu-record/src/main/library/index.ts:161-173`, `apps/kaipu-record/src/renderer/src/features/library/components/ready-copy-card.tsx:74-100`.
+- Export widget minimized state kept in module memory and sessionStorage (`apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:8`) — The user minimizes once and later exports start as pills. Errors are always visible with Retry. If it fails: If sessionStorage throws, the choice is memory-only and is lost on reload. That is acceptable and visible only as an expanded widget. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-widget-state.ts:10-35`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:36-52`.
+- Minimized export widget shown as a pill, and export cards moved to a bottom-right fixed stack (`apps/kaipu-record/src/renderer/src/features/status-cards/status-stack.module.css:19`) — The pill and the cards stay clickable above the page and below modals (z-index 50). They clear the 28px status bar. If it fails: If an element placed in `.exportStack` did not set pointer-events auto, it would not be clickable. `.pill` and `status-card.module.css` both set it, so the CSS is correct. Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/status-stack.module.css:19-29`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.module.css:76-78`, `apps/kaipu-record/src/renderer/src/features/status-cards/status-card.module.css:5`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** The change is sound overall. I found no blocker or wrong-result bug in this part. The i18n keys the new components use all exist in en.json. `copyPresetOf` correctly strips the `#revision` suffix from the sidecar fingerprint. The sidebar's route watch handles StrictMode and Back correctly. Two small items: the Library ready card's Show in Finder and drag actions don't call `markCopySeen`, unlike the toast's ready card and the `ready-copies.ts` comment; and the pill nests `role=\"progressbar\"` inside a `<button>`, which assistive tech will likely ignore.
+
+**Batch 2 of 2.** I reviewed the four stylesheets, the three docs and both message files in this part and found one small issue. The PR body describes email-specific wording (\"Exporting for email\", a FOR EMAIL tag) that is in neither en.json nor es.json. `DESTINATION_IDS` has no email destination either. Everything else checked out. The CSS tokens all exist in `packages/tokens/css/tokens.css`. The destination tag colours match `destination-logo.module.css`. The new `pointer-events: none` stack is safe because the pill and `status-card.module.css` re-enable pointer events. The new doc page is registered in `astro.config.mjs`. The `backgroundCopy.hide` and `readyDragToUpload` keys that were removed have no remaining references in `.ts` or `.tsx` files.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 22 | 835 | 4 | reviewed | 11 | $0.33 |
+| Batch 2 of 2 | 9 | 427 | 1 | reviewed | 21 | $0.22 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 22 in / 15k out / 368k cache read / 91k cache write · Claude subscription: API-equivalent estimate, not a bill · $0.55</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=e45c845143ba72f35fea4fac2f9d62a186dff986 -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjEuMCIsImhlYWQiOiJlNDVjODQ1MTQzYmE3MmYzNWZlYTRmYWMyZjlkNjJhMTg2ZGZmOTg2IiwiYXR0ZW1wdCI6IjNjYTcxNWMwLWMyYTItNGFkYi04YmQyLTMwOTA0NDM5NTU3NCIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6MywiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjowLCJjb25zaWRlciI6MywiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjMsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=3ca715c0-c2a2-4adb-8bd2-309044395574 -->

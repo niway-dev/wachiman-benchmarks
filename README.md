@@ -14,6 +14,9 @@ This repository holds data and reports only. The reviewer's code, specs and deci
   The centre of the current conclusions.
 - **[results.md](results.md)**: every result so far in one page, newest first, each line linked to
   its full report. Read this first.
+- **[replay/reproduce-the-evidence.md](replay/reproduce-the-evidence.md)**: how to reproduce, from
+  zero, why Wachiman 1.20.x found fewer known bugs than 1.4 and why the baseline runs Sonnet 5.5 on
+  the subscription token, with one table of every measured set.
 - **[dataset/](dataset/README.md)**: one row per posted finding (Wachiman, Pullfrog, CodeRabbit),
   with contracts, run logs, the run map and the verdict labels. Query it with `duckdb`, `jq` or a
   spreadsheet instead of re-reading the reports.

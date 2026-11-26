@@ -1,0 +1,87 @@
+# kaipu-bench-wachi-v3#97 [replay r2] fix(desktop): turning the camera off and on mid-take keeps the face in its own track - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T17:35:03Z · commit 3ec7a13
+
+👮 **Wachiman** · 🟠 **2 to fix in this PR** · 1 question for you · 3 to consider · whole PR at `3ec7a13`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 2 to fix · 🟡 3 to consider · ⚪ 0 for your information (5) · 3 Should · 2 Could |
+| **Risk** | Medium: top fact `concurrency` at `recorder-store.ts:939`, see Risk facts |
+| **Needs a person** | 1 trade-off, in `webcam-relay.ts:1` |
+| **Coverage** | 23 of 23 files reviewed, whole pull request |
+| **Read first** | `recorder-store.ts`, `camera-bubble-window.ts`, `recording-hub.ts`, `bubble-protection.ts`, `recorder-engine.ts` |
+
+### To fix (2)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟠 Fix · Should · 🐛 bug | [`recorder-store.ts:939`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L939) | A queued camera-on can reopen the camera after the user turned it off again |
+| 🟠 Fix · Should · 🐛 bug | [`webcam-model.test.ts:105`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.test.ts#L105) | Gap segments get random ids, so Share's "whole" fingerprint changes on every mount for a take with gaps |
+
+### To consider (3)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Should · 🧪 tests | [`recording-hub.test.ts:2065`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/main/recording/recording-hub.test.ts#L2065) | Test name claims the hub reset is covered, but only abort is exercised |
+| 🟡 Consider · Could · 🧪 tests | [`webcam-relay.test.ts:79`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.test.ts#L79) | The "dropped and closed" late-frame case is not exercised |
+| 🟡 Consider · Could · 📝 docs | [`2026-10-30-webcam-track-design.md:329`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/documentation/src/content/docs/specs/2026-10-30-webcam-track-design.md#L329) | Protection paragraph still says a turned-off camera ends the webcam file |
+
+### Questions for you (1)
+
+- [`webcam-relay.ts:1`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/webcam-relay.ts#L1) · trade-off — The mid-take camera toggle relies on Chromium-only Insertable Streams (MediaStreamTrackProcessor/Generator) and on mediabunny repeating the last frame when given an explicit frameRate. Neither could be checked from the repo. Without a relay it falls back to ending the file. The author should decide whether this is acceptable for a recording-critical path.
+
+### Risk facts
+
+- `concurrency` · [`recorder-store.ts:939`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts#L939) — Camera-on is serialised on a promise queue while camera-off acts immediately, so rapid toggles can interleave and leave the camera open against the toggle.
+
+<details><summary>What the change connects to (5 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Camera toggled off mid-take parks the bubble window instead of destroying it; toggled on shows the same window (`apps/kaipu-record/src/main/recording/recording-hub.ts:299`) — The bubble disappears when the camera is turned off and reappears in place. The face stays out of the screen capture because the same protected native window is reused. If it fails: If the renderer cannot keep the file going (no relay), `turnWebcamOff` returns false, the renderer ends the file, and main drops the protection on the hidden window. Turning the camera on again then… Evidence: `apps/kaipu-record/src/main/recording/recording-hub.ts:299-335`, `apps/kaipu-record/src/main/recording/recording-hub.ts:494-499`, `apps/kaipu-record/src/main/recording/recording-hub.ts:846`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:1037-1068`, `apps/kaipu-record/src/main/recording/camera-bubble-window.ts:236-266`.
+- Turning the camera on again mid-take opens a new camera and feeds the same webcam file (turnWebcamOn) (`apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:779`) — On failure the file ends, `onWebcamEnded` fires, main puts the bubble back in the capture, and the user gets the webcamUnavailable toast after save. If it fails: If a queued on runs after a later off, the camera is reopened with the toggle off: `cameraWanted` is false at that point, so it passes the guard. Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:779-819`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:935-953`.
+- Finalize now carries `webcam.gaps` from the renderer and main persists it in the sidecar after sanitizing (`apps/kaipu-record/src/shared/webcam-track.ts:184`) — The editor seeds each gap as a hidden webcam segment; the lane stripes it and exports leave the face out there. If it fails: Malformed input never rejects the meta; it only loses its gaps (the face shows over a held frame). Gaps are not bounded above by the duration, but the editor clamps stretched ones when it knows the d… Evidence: `apps/kaipu-record/src/shared/webcam-track.ts:131-154`, `apps/kaipu-record/src/shared/webcam-track.ts:184-185`, `apps/kaipu-record/src/shared/webcam-track.ts:170-183`, `apps/kaipu-record/src/shared/webcam-track.test.ts:152-203`.
+- Seeding the webcam layer from sidecar gaps (hidden segments) feeds Share's reuse fingerprint (`apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.ts:155`) — Share cannot reuse its previous export for a take with a camera-off gap, so it re-encodes every time. If it fails: Silent extra work, no error. Also `reconcileWebcam` seeds without the duration (scene.ts:153), so a stretched trailing gap is not clamped there. Evidence: `apps/kaipu-record/src/renderer/src/features/video-editor/webcam/webcam-model.ts:155`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-reuse.ts:81-83`, `apps/kaipu-record/src/renderer/src/features/library/components/share-recording.tsx:126-130`, `apps/kaipu-record/src/renderer/src/features/video-editor/scene.ts:153`.
+- Store forwards a mid-take camera toggle to the engine: off parks (turnWebcamOff), on reopens through the queue (turnWebcamOn), and gaps open or close on the ta… (`apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924`) — Gaps reach the sidecar through `webcamFinalizeMeta`; a failed reopen shows the `record.webcamUnavailable` toast after the save. If it fails: turnWebcamOn rejecting is not caught in the queued callback (recorder-store.ts:939-952), but the engine method catches its own failures and returns "unavailable". The off call is not queued, unlike t… Evidence: `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:924-953`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts:1017-1018`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts:769-819`, `apps/kaipu-record/src/renderer/src/features/recording/recorder-store.test.ts:1567-1662`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** The mid-take camera toggle is mostly consistent between the hub, the bubble window, the engine relay and the store. The stop, finalize and abort paths release a parked bubble in the right order, and the bubble placement is read before the release. One bug: the store queues `turnWebcamOn` but not `turnWebcamOff`. On an on, off, on, off sequence, or when the queue is held by a mic open, the camera is reopened and recorded while the user's toggle is off. The comment at recorder-store.ts:938 claims the opposite. Smaller note: a test is named as covering the hub reset but only exercises abort. I could not read the mediabunny types (`node_modules` is not installed), so the `sizeChangeBehavior` and `frameRate` options and the repeat-last-frame behaviour in the engine are unchecked.
+
+**Batch 2 of 2.** I reviewed the nine files of part 2. They are the gap sanitizer, the new store, engine, relay, gap-log and webcam-model tests, and the ADR 0032 and spec updates. The tests assert what they claim, and the gap sanitizer handles malformed input safely. I found one real defect: Share's \"whole\" fingerprint changes on every mount for a take with camera-off gaps. I also found a relay test whose comment overstates its coverage, and a spec paragraph (`2026-10-30-webcam-track-design.md:329`) that still says a turned-off camera ends the webcam file. The `shared/` file takes only relative value imports, so the preload rule holds. I did not run anything.\n\nThe defect: `seedWebcamScene` (`webcam-model.ts:155`) gives each gap segment a random id, and `wholeFingerprint` hashes the whole seeded layer, ids included. A second Share of such a take therefore never reuses the earlier file and re-encodes. Takes without gaps are unaffected. Fix by deriving ids from the gap index. That change belongs in `webcam-model.ts`, which is in part 1."
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 14 | 851 | 5 | reviewed | 19 | $0.57 |
+| Batch 2 of 2 | 9 | 606 | 4 | reviewed | 21 | $0.48 |
+
+</details>
+
+<details><summary>Details of findings with no thread (1)</summary>
+
+**Protection paragraph still says a turned-off camera ends the webcam file (confidence medium)** ([`2026-10-30-webcam-track-design.md:329`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/3ec7a138c3a878b38284fd13c801ab7226a34abb/apps/documentation/src/content/docs/specs/2026-10-30-webcam-track-design.md#L329))
+
+Lines 326-332 say a take "whose webcam file ended (turned off, unplugged, encoder failure)" leaves the bubble in the screen capture. Item 7 and ADR 0032 decision 6 now say that where a relay exists, turning the camera off keeps the file running and parks the bubble, still protected. Only the failure to reopen, unplugged and encoder failure end the file there. Drop "turned off" here, or qualify it with "(no relay)". `testing/webcam-track-check.md:41` has a similar stale line: it says a mid-take camera-off makes the webcam file end there. That file is outside this part.
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 46 in / 26k out / 1.4M cache read / 163k cache write · Claude subscription: API-equivalent estimate, not a bill · $1.05</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=3ec7a138c3a878b38284fd13c801ab7226a34abb -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjEuMCIsImhlYWQiOiIzZWM3YTEzOGMzYTg3OGIzODI4NGZkMTNjODAxYWI3MjI2YTM0YWJiIiwiYXR0ZW1wdCI6IjlhYjRiM2Y0LWNiMTItNDlmYS1hMDNhLWM5OGZlMzNlMmQ0YyIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6NSwiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjoyLCJjb25zaWRlciI6MywiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjQsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MX0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=9ab4b3f4-cb12-49fa-a03a-c98fe33e2d4c -->
