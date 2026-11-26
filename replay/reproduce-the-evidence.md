@@ -177,10 +177,10 @@ After the last round, put `wachi-workflow.yml` back on `main` with the same call
    in part), an extra already seen, a new finding, or invalid. These reports used one Claude
    Sonnet 5.5 pass per pull request, not blind. Its judgement calls are written in each report's
    `prs/` files.
-3. Counts for W4–W30 come from [`dataset/labelled-runs.csv`](../dataset/labelled-runs.csv)
-   (`run_label`); that file stops at W30. The Sonnet baseline's counts (W31–W33) are in its
-   [README](../2026-11-26-v1.21.0-sonnet-baseline/README.md) and its
-   [`prs/`](../2026-11-26-v1.21.0-sonnet-baseline/prs/) files.
+3. Counts for W4–W36 come from [`dataset/labelled-runs.csv`](../dataset/labelled-runs.csv)
+   (`run_label`). The Sonnet baseline (W31–W33) and the prompt-cache set (W34–W36) are in it too; their
+   reports ([baseline](../2026-11-26-v1.21.0-sonnet-baseline/README.md),
+   [prompt cache](../2026-11-26-prompt-cache-5m/README.md)) give the same counts with the judgement calls.
 4. Check first that every review body says the whole pull request was reviewed. A partial review
    is not comparable with a full one.
 
