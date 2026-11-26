@@ -6,7 +6,7 @@ reports; it does not repeat their reasoning. Every figure below comes from those
 ## One-minute summary
 
 **Question.** On the same five kaipu-record pull requests (#463 to #467, 27 known bugs), Wachiman
-v1.4.0 caught about 12 known bugs per run and v1.20.1 and v1.21.0 caught 8 to 11. Why? And why does
+v1.4.0 caught about 12 known bugs per run and v1.20.1 and v1.21.0, with a $3 review budget, caught 8 to 11. Why? And why does
 the release baseline now run Sonnet 5.5 on the subscription token?
 
 **Answer.**
@@ -75,8 +75,8 @@ inputs of its sets.
 Not confirmed from the sources: `bench.sh` hardcodes these values in its first lines, and anyone
 else has to change them before it runs: `OWNER` (`niway-dev`), `SOURCE_REPO`
 (`niway-dev/kaipu-record`), `SSH_HOST` (`github-csdev`), `GH_LOGIN` (`csdev19`) and `GIT_EMAIL`
-(the owner's address; the commit author of the replay commits). `GIT_NAME` falls back to the owner's
-name when `git config user.name` is empty. Every caller workflow in this folder also sets
+(the maintainer's personal address; the commit author of the replay commits). `GIT_NAME` falls back to
+the maintainer's personal name when `git config user.name` is empty. Every caller workflow in this folder also sets
 `operator: csdev19`; change it in your copy.
 
 ### 2. Create the replay repository
