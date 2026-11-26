@@ -84,7 +84,9 @@ partial (the right place, not the right mechanism) is not counted.
 | **Total (27)** | **13** | **14** | **12** |
 
 #466's 4 in R2 includes a borderline E1 call (explained in its file); a strict reading gives 3,
-and R2's total 13. Caught in part (not counted): 2, 2 and 1 (baseline: 2, 2 and 1). Invalid findings: 0, 1 and 2
+and R2's total 13. #463's E1 in R3 is also borderline (a hedged question with no fix); a strict
+reading gives 2 there, and R3's total 11. Even then, R1 and R2 stay inside 12 to 16, so the
+verdict below holds. Caught in part (not counted): 2, 2 and 1 (baseline: 2, 2 and 1). Invalid findings: 0, 1 and 2
 (one on #466 in R2, two on #467 in R3; baseline: 1 across its three runs).
 
 The 27 include #464's E4, which is not present at that pull request's head, so no run can find it.
