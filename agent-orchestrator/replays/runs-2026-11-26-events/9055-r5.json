@@ -1,0 +1,151 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9055-r5` of ao-replay-9055-r5 against 859c3b7d0beb32234f88f4939b9948cdc21eedd4 (merge-base 859c3b7)",
+    "repository": {
+      "name": "ao-replay-9055-r5"
+    },
+    "base": {
+      "sha": "859c3b7d0beb32234f88f4939b9948cdc21eedd4",
+      "ref": "859c3b7d0beb32234f88f4939b9948cdc21eedd4"
+    },
+    "head": {
+      "sha": "f767aefea07165e996fa14ce3dde80b559d53457",
+      "ref": "ao-replay/9055-r5"
+    },
+    "title": "ao-replay/9055-r5",
+    "description": "refactor(chat): keep attaching during a restore to the case that needs it",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.ts",
+      "line": 2433,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Abort signal no longer reaches the attachments POST",
+      "body": "The diff drops `signal` from the `POST /sessions/{sessionId}/attachments` call. `signal` still goes to `toWireAttachments`, but only the large-file upload honours it (`frontend/src/renderer/lib/attachment-uploads.ts:35-42`). `ChatComposer.prepareAttachments` still passes the signal (`ChatComposer.tsx:753`), and `useFileAttachments` documents it as aborting 'when the person removes every file it prepares while they wait' (`useFileAttachments.ts:63-64`). A file removed while its inline bytes are in flight is now still staged by the daemon. That leaves an orphan file in the session worktree, and the cancel no longer stops the request. Nothing in the PR title or body mentions dropping it. Restore `signal` on the POST.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "line": 577,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Cancelled batch now reports 'Files couldn't be saved' for files the user removed",
+      "body": "The diff deletes `if (acceptedFresh.every((attachment) => cancelled(attachment.id))) return [];` from the catch of the non-`prepareEach` path. Removing a file aborts its signal (`useFileAttachments.ts:652`), and `whenAllAborted` aborts the batch signal once all are removed (`:568-569`). `toWireAttachments` then rejects for a large file whose upload is aborted. The catch now sets the error 'Files couldn't be saved. Nothing was attached.' (`:578-581`) for files the person just cancelled. The `prepareEach` path still suppresses this case via `signal.aborted` (`:555`), so the two paths now disagree. Nothing in the PR explains why the guard goes. Restore it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 2510,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Restore-failure reason can now be hidden by lower-priority notices; all file errors are muted",
+      "body": "Before, a `SESSION_RESTORE_FAILED` send error was the first alert unless a draft-persistence error was present. Now the chain checks `draftPersistenceError`, `deliveryRecoveryNotice` (when not `optimisticSend`) and `attachmentsRefusal` before reaching `sendError?.message` (`:2511-2514`). Any of those can mask why the restore failed. The `fileAttachments.error` mute is also total while the restore error is set. An unrelated file error such as 'Each file must be under N MB' or 'up to 8 files' is dropped for as long as the send error is displayed. The error text could be moved above the notices, as it was before, and the mute limited to the staging failure.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "line": 119,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Removed tests drop coverage for remount, hidden-chat and held-message-with-files cases",
+      "body": "The removed tests covered a next file surviving a remount of the chat, a hidden `Activity` chat, a refused message beside a taken next file, and a held Enter whose files changed. The new gating is `takesNextFiles = optimisticSend && restoring && !sentFiles` (`ChatComposer.tsx:700-701`), and the replacement tests cover only the no-sent-files case. Removing `dropSent` and the `unsentAttachments` filter is now unexercised for these cases. Nothing in the tests checks that sent files do not reappear after a remount while a send lands. The new `it.each` 'takes no file during %s' only covers the sending composer itself.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Stage pasted/picked files for an archived session by waiting on the pending `resume-agent` mutation via `restore.continue()` instead of the removed `restoreInFlight` map",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2426",
+      "status": "open",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:1241-1259",
+        "frontend/src/renderer/hooks/useConversation.ts:2426-2429",
+        "frontend/src/renderer/lib/use-session-link-navigation.ts:102-110",
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:953",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2509-2517"
+      ],
+      "equivalent_path": "Removed `restoreInFlight`/`assertRestored` in useRestoreSession.ts, which awaited any restore for the session. It was keyed per host and session, whichever surface started it, and threw SESSION_RESTORE_FAILED on failure.",
+      "before_after": "Before: waited on every `restoreSession` call, including those from CommandPalette, NotificationCenter, TerminalPane and the archive views. Now: waits only on pending mutations with key [\"resume-agent\", host, session]. That covers the chat's own `resume` mutation (useConversation.ts:1242) and the session-link navigation (use-session-link-navigation.ts:102-110). Restores called directly through `useRestoreSession` elsewhere are not awaited. `onStageAttachments` is only offered when the session is active or `commands.resumingAgent` is true (SessionChatSurface.tsx:953), which limits exposure.",
+      "visible_effect": "A file pasted while the send's restore runs waits, then stages after the worktree is back.",
+      "failure_mode": "If the restore rejects, `Promise.all` rejects with the restore error, which carries code SESSION_RESTORE_FAILED. Staging fails and the composer shows the restore reason (ChatComposer.tsx:2510-2514). I did not read TanStack `Mutation.continue()` for v5.101; I believe it re-executes the mutation if no retryer exists yet, which would double-restore.",
+      "open_question": "Does `Mutation.continue()` in @tanstack/query-core 5.101 only join the running attempt for a pending mutation? Does it re-execute it when the retryer has not been created yet, between the pending dispatch and the first await?",
+      "candidates": [
+        "node_modules/@tanstack/query-core/src/mutation.ts"
+      ],
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Part 1 of 1, reviewed. Two behaviour regressions, both in the attachment-cancel path: `signal` is no longer passed to the attachments POST (`useConversation.ts`), and the all-cancelled guard is gone from the non-`prepareEach` catch (`useFileAttachments.ts`). A third finding notes the restore-failure alert can now be hidden by other notices. A fourth notes that the removed tests drop remount and held-message coverage. The wait on a pending `resume-agent` mutation is only partly verified: I could not read TanStack's `continue()`, so that contract is open.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 409,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 24,
+      "costUsd": 0.5167592
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "859c3b7d0beb32234f88f4939b9948cdc21eedd4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5167592,
+    "usage": {
+      "input": 30,
+      "output": 13949,
+      "cacheRead": 875092,
+      "cacheWrite": 72425
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 24,
+    "durationMs": 128673,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8720` of ao-replay-8720 against fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8 (merge-base fc15acf)",
+    "repository": {
+      "name": "ao-replay-8720"
+    },
+    "base": {
+      "sha": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8",
+      "ref": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8"
+    },
+    "head": {
+      "sha": "06f399b87ed0bd9bfb0d68708c3dc8b882516316",
+      "ref": "ao-replay/8720"
+    },
+    "title": "ao-replay/8720",
+    "description": "perf(spawn): stop new chats waiting on repeat git downloads",
+    "author": "ronish"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+      "backend/internal/gitdefault/resolver.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager.go",
+      "backend/internal/session_manager/manager_test.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/gitdefault/resolver.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager_test.go",
+      "backend/internal/session_manager/manager.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "line": 2062,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Repos with no usable cached HEAD pay a full lookup on every start, and the 5s bound is per repo",
+      "body": "`resolveAutomaticDefault` only short-circuits when `Inspect` succeeds (workspace.go:2055). A repo with no cached HEAD (a never-fetched clone, or an offline first run) falls through to `Resolve` on every start, even inside `automaticDefaultRecheck`. The comment at 2063-2064 says an offline machine does not start another lookup for every start in the window. That holds only when a cached HEAD exists.\n\nThe 5s budget is created per `ResolveDefaultBranch` call (workspace.go:198). The caller loops over all targets before its shared `fetchCtx` starts (manager.go:2236-2251). The worst case for a workspace project with N unreachable, uncached child repos is therefore about N×5s of resolution, then up to 5s of fetches, on every spawn.\n\nThat is still better than the old unbounded `Resolve(ctx, ctx, ...)`. The comments at manager.go:2234-2235 (\"which the adapter bounds\") and workspace.go:2063 overstate the bound. Either tighten the comments, or share one deadline across the targets in the resolve loop. A negative cache for failed lookups is another option.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "line": 120,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No test for the unreachable-remote path or the Fetched=false fallback",
+      "body": "The new window logic has an explicit offline branch: the attempt is recorded even when `Resolve` errors (workspace.go:2063-2068). `Resolve` also falls back to the cached HEAD with `SourceCachedRemoteHead` when the fetch fails, and that case must report `Fetched=false`. The tests here cover only the all-success path. Add a case where `ls-remote` or `fetch` fails and check three things: the cache answer is returned, `Fetched` is false, and a second resolve inside the window issues no new lookup.\n\n`TestWorktreeRefsReuseTheRefreshLookup` (line 136) has a related weakness. The fake returns success for every unmatched `rev-parse`, so `FindCachedRemoteBranch` sees `ao/work` as existing. The test never asserts `seedRef`, so that is not checked.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/session_manager/manager.go",
+      "line": 2274,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Overlapping background fetches of the same base are possible",
+      "body": "`defaultBranchFetchedRecently` stamps `defaultBranchFetchedAt` when the fetch is attempted. The background fetch is allowed up to `defaultBranchBackgroundFetchTimeout` (1 min, manager.go:2324), but the skip window is only 30s. A slow fetch that is still running at +30s lets the next start launch a second `git fetch` of the same refspec (`defaultBranchFresh` is still true because freshness is only recorded on success). Two concurrent fetches into the same remote-tracking ref can hit ref-lock contention. The loser is only logged as a warning, so it self-heals. An in-flight marker per key, or recording the attempt time as the dedupe key until the fetch completes, would avoid it.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Automatic default branch resolved from cached HEAD with a background `ls-remote` lookup (new `resolveAutomaticDefault`, `RefreshRemoteHead`)",
+      "location": "backend/internal/adapters/workspace/gitworktree/workspace.go:2051",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2051-2070",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2074-2086",
+        "backend/internal/gitdefault/resolver.go:94-111",
+        "backend/internal/gitdefault/resolver.go:196-225",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:198-209"
+      ],
+      "equivalent_path": "Previously `ResolveDefaultBranch` and `resolveWorktreeRefs` each called `gitdefault.Resolver.Resolve` (live `ls-remote`, fetch of the branch, set cached HEAD) on every call. `Resolve` at resolver.go:139-194 is still the path taken when the cache is unusable.",
+      "before_after": "Before: two live lookups plus fetches per spawn (refresh, then worktree creation). After: within `automaticDefaultRecheck` (10 min) both answer from `Inspect`. Past it, the refresh path answers from the cache and starts one background `RefreshRemoteHead`. The attempt is recorded before the goroutine starts, so concurrent spawns launch one lookup. Worktree creation (`background=false`) past the window with a usable cache waits for the live lookup as before.",
+      "visible_effect": "Spawn no longer waits for `ls-remote` and fetch when a cached HEAD exists. A remote that renames its default branch is picked up only by the start after the background lookup, and only after the 10-min window. Until then the session is seeded from the old default.",
+      "failure_mode": "Background lookup failure is only logged via `logf` (workspace.go:2083). The window stays marked current for the full 10 min, so the cached default is kept. If the cached HEAD is unusable, `Inspect` fails and `Resolve` runs with the 5s budget on every start (see the finding at workspace.go:2062). The goroutine uses `context.Background()` with a 5s timeout, so it cannot hang past 5s and is not cancelled on daemon shutdown.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Manager skips or backgrounds the base-ref fetch using `Fetched` and a 10-min fresh window",
+      "location": "backend/internal/session_manager/manager.go:2261",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/session_manager/manager.go:2257-2283",
+        "backend/internal/session_manager/manager.go:2289-2299",
+        "backend/internal/session_manager/manager.go:2328-2381",
+        "backend/internal/session_manager/chat_spawn_async.go:640-651"
+      ],
+      "equivalent_path": "The existing 30s `defaultBranchFetchedRecently` skip at manager.go:2269 and the synchronous `FetchDefaultBranch` at manager.go:2278. Resolution is still called first for every target at manager.go:2237, so each repo's own ref is resolved before any fetch.",
+      "before_after": "Before: every spawn outside the 30s window fetched synchronously within `fetchCtx` (5s shared). After: `Fetched=true` records the fetch and skips it. A base last fetched successfully under 10 min ago is used as is, and the fetch runs via `runInBackground` with `backgroundContext` and a 1-min timeout. Otherwise (first start, after a restart, or past 10 min) the fetch is synchronous as before, and success records freshness.",
+      "visible_effect": "A start inside the fresh window is not delayed by a fetch. The session branch is seeded from a base that can be up to 10 min old, with no indication to the user. Creation reads the ref while the background fetch may still be updating it.",
+      "failure_mode": "A background fetch failure is logged as a warning and does not update freshness. After 10 min without a success, the next start waits for the fetch again. The map state is in-memory, so a daemon restart resets it. `runInBackground` counts the worker in `backgroundWorkers`, and the context derives from `backgroundContext`, so shutdown cancels it. Overlapping background fetches are possible (see the finding at manager.go:2274).",
+      "evidence_checked": true
+    },
+    {
+      "action": "What bounds the whole wait: automatic-default resolution in the spawn refresh path",
+      "location": "backend/internal/adapters/workspace/gitworktree/workspace.go:198",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:198-200",
+        "backend/internal/session_manager/manager.go:2236-2256",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2051-2070"
+      ],
+      "equivalent_path": "The refresh's shared `fetchCtx` at manager.go:2255, which bounds all fetches to one 5s deadline.",
+      "before_after": "Before: `Resolve(ctx, ctx, repo)` had no time budget beyond the caller's context. After: each `ResolveDefaultBranch` call creates its own 5s `remoteCtx`, shared between `ls-remote` and fetch inside `Resolve`. The manager calls it once per target in a sequential loop before `fetchCtx` starts, so the bound is per repo, not per spawn.",
+      "visible_effect": "Worst case for a workspace project with N repos that need a live lookup: about N×5s before the fetch phase, then up to 5s of fetches. A single-repo project is bounded at 5s plus 5s. Cached repos answer without waiting.",
+      "failure_mode": "The wait is not silent in logs: failures are logged and the spawn continues with the adapter fallback. Nothing shows the user the delay. Repos with no cached HEAD re-pay the wait on every start.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is coherent and its core flows check out against the code: `Fetched` skips a duplicate fetch, the Inspect-based window skips repeat lookups, and the background fetch and lookup are tracked and cancellable. I found no blocker or silent data-loss bug. Two things are worth a look. First, the 5s bound on automatic-default resolution is per repo, so a workspace project with many cold or unreachable repos can wait N×5s per spawn. Repos with no cached HEAD re-pay it on every start, which contradicts the comment at workspace.go:2063. Second, background fetches of the same base can overlap, because the 30s skip window is shorter than the 1-min fetch timeout. The tests miss the offline and fallback paths, and one fake treats every unmatched `rev-parse` as existing. The deliberate tradeoff of seeding sessions from a base up to 10 min old is listed under judgement.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 517,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.5335502999999999
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5335502999999999,
+    "usage": {
+      "input": 20,
+      "output": 15818,
+      "cacheRead": 550143,
+      "cacheWrite": 80079
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 133625,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9095` of ao-replay-9095 against b9f1ca73999d1192bad5f190dab8560af33fc89f (merge-base b9f1ca7)",
+    "repository": {
+      "name": "ao-replay-9095"
+    },
+    "base": {
+      "sha": "b9f1ca73999d1192bad5f190dab8560af33fc89f",
+      "ref": "b9f1ca73999d1192bad5f190dab8560af33fc89f"
+    },
+    "head": {
+      "sha": "dbf9107df4b9b7ee26ea0603599273f6383f2a7f",
+      "ref": "ao-replay/9095"
+    },
+    "title": "ao-replay/9095",
+    "description": "feat(agents): list an agent's skills without a session\nfeat(chat): show skills in the new chat page's / menu before the first chat",
+    "author": "ronish"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/httpd/api.go",
+      "backend/internal/httpd/apispec/openapi.yaml",
+      "backend/internal/httpd/apispec/specgen/build.go",
+      "backend/internal/httpd/controllers/agents.go",
+      "backend/internal/httpd/controllers/agents_skills_test.go",
+      "backend/internal/httpd/controllers/dto.go",
+      "backend/internal/service/chat/skill_scan.go",
+      "backend/internal/service/chat/skill_scan_test.go",
+      "docs/telemetry.md",
+      "frontend/src/api/schema.ts",
+      "frontend/src/renderer/components/NewChatPage.tsx",
+      "frontend/src/renderer/hooks/useAgentSkillsQuery.test.ts",
+      "frontend/src/renderer/hooks/useAgentSkillsQuery.ts",
+      "frontend/src/renderer/lib/api-client.ts"
+    ],
+    "reviewed": [
+      "backend/internal/httpd/api.go",
+      "backend/internal/httpd/apispec/openapi.yaml",
+      "backend/internal/httpd/apispec/specgen/build.go",
+      "backend/internal/httpd/controllers/agents.go",
+      "backend/internal/httpd/controllers/agents_skills_test.go",
+      "backend/internal/httpd/controllers/dto.go",
+      "backend/internal/service/chat/skill_scan.go",
+      "backend/internal/service/chat/skill_scan_test.go",
+      "frontend/src/api/schema.ts",
+      "frontend/src/renderer/components/NewChatPage.tsx",
+      "frontend/src/renderer/hooks/useAgentSkillsQuery.ts",
+      "frontend/src/renderer/hooks/useAgentSkillsQuery.test.ts",
+      "frontend/src/renderer/lib/api-client.ts",
+      "docs/telemetry.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/lib/api-client.ts",
+      "line": 290,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "A 404 from an older remote host is still sent as an `ao.requests.failed` event",
+      "body": "The comment says a remote host older than this scan answers 404 and that the route is added to `EXPECTED_PROBE_CONFLICTS` so it stays quiet. The set is only consulted for 404 in one place. `expectedProbeConflict` (line 293-295) returns true only for `status === 409`, so line 336 still calls `reportApiError` for a 404. That function sends `captureRendererEvent(\"ao.requests.failed\", …)` at line 311 before the check at line 317. Line 317 only suppresses Sentry. So every new chat page opened against an old remote host sends an analytics event with `operation: \"GET /api/v1/agents/:id/skills\"`, `status: 404`, once per 30s dedupe window. The server never returns 409 for the new route, so the set entry does nothing on the path it was added for.\n\nFix: let `expectedProbeConflict` also drop a 404 for this one operation, for example a separate set of expected-404 operations. Then the comment and `docs/telemetry.md` match the code. The header above the set (\"Conversation probes that 409\") is also stale now that it holds a 404 case.",
+      "anchor": "diff"
+    },
+    {
+      "path": "docs/telemetry.md",
+      "line": 1354,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "high",
+      "title": "Telemetry doc says an old host \"stays quiet\", but the analytics event is still sent",
+      "body": "The new text lists `GET /api/v1/agents/:id/skills` under \"HTTP 409 responses are dropped only for…\" and says an old remote host stays quiet. The route never returns 409. Its 404 is dropped from Sentry only (`api-client.ts:317`). The `ao.requests.failed` analytics event still goes out (`api-client.ts:311`, `336`). Either fix the code as in the api-client finding or reword this sentence to say only Sentry is skipped.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/service/chat/skill_scan.go",
+      "line": 51,
+      "severity": "consider",
+      "topic": "rules",
+      "confidence": "medium",
+      "title": "ScanSkills does filesystem I/O with no context and no time bound",
+      "body": "AGENTS.md says functions that do I/O take `context.Context` first. `ScanSkills` does about two `ReadDir`s per root, a `Stat` per entry, and up to 64 KiB read per skill file. It also reads three settings files and the plugin manifests. All of that runs inline in the HTTP handler with no deadline. The sibling `Service.Skills` bounds its provider read with `skillsListTimeout` (`skills.go:24`). Here the only limit is the number of entries. A large plugin cache, or a home directory on a slow or stalled network mount, holds the request for as long as the filesystem blocks. When the client aborts (the query passes `signal`), the handler keeps scanning. The new chat page then shows the previously reported list (or none) with no indication. Pass `r.Context()` through and check it between roots.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "New GET /api/v1/agents/{agent}/skills handler that scans skill folders on disk without a session",
+      "location": "backend/internal/httpd/controllers/agents.go:55",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/httpd/controllers/agents.go:55-71",
+        "backend/internal/httpd/controllers/conversations_skills.go:22-62",
+        "backend/internal/service/chat/skills.go:24-53",
+        "backend/internal/service/chat/skill_scan.go:51-64",
+        "backend/internal/service/chat/skill_metadata.go:32-86"
+      ],
+      "equivalent_path": "ConversationsController.skills (backend/internal/httpd/controllers/conversations_skills.go:22) asks the live session's agent via Service.Skills with an 8s timeout, then applies withSkillMetadata with the session workspace and home.",
+      "before_after": "The existing path resolves workspace from the session record and filters through withSkillMetadata. The new path resolves workspace from Projects.Get (skipped when FolderMissing or unresolved), reads the home dir, and calls ScanSkills. ScanSkills also applies withSkillMetadata with the same skillRoots, then conversationSkillsResponse fills a blank DisplayName, as the old path does. It has no timeout.",
+      "visible_effect": "The new chat page's \"/\" menu lists project and user skills (Claude and Codex only) before any session exists. Other agents get an empty list, and the client keeps its last reported list.",
+      "failure_mode": "Unreadable roots and malformed JSON or YAML are skipped silently. An unknown project falls back to user-only skills, and the response is always 200. The scan has no deadline and ignores request cancellation, so a stalled filesystem would hang the request (see the finding on skill_scan.go).",
+      "evidence_checked": true
+    },
+    {
+      "action": "NewChatPage merges the scanned list with the last session-reported list",
+      "location": "frontend/src/renderer/components/NewChatPage.tsx:174",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/NewChatPage.tsx:172-178",
+        "frontend/src/renderer/hooks/useAgentSkillsQuery.ts:14-44",
+        "frontend/src/renderer/lib/api-client.ts:293-295",
+        "frontend/src/renderer/lib/api-client.ts:311-319",
+        "frontend/src/renderer/lib/api-client.ts:336"
+      ],
+      "equivalent_path": "Previous code: readChatSkills(agent, hostId, projectId), a one-time read of the list a live session last reported.",
+      "before_after": "Before, only the reported list was used. Now mergeChatSkills keeps the reported list first and appends scanned skills not already in it. The query is keyed by host, agent and project, cached 30s, with no retry. Cloud projects are disabled and get [].",
+      "visible_effect": "A first chat with an agent now shows its skills in the \"/\" menu. After a session reports, the order is unchanged, and new disk skills are appended.",
+      "failure_mode": "A query error leaves query.data undefined, so NO_SKILLS and the page falls back to the reported list, silently. A remount reuses the cache, and after 30s it refetches. An old remote host answers 404, which still sends an analytics event (see the api-client finding).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is mostly sound: the route, OpenAPI, generated schema, controller and scanner agree, and the tests assert what their names say. I found one real defect. The 404 from an older remote host is meant to stay quiet, but `expectedProbeConflict` only drops 409, so an `ao.requests.failed` analytics event still goes out. Only Sentry is skipped. `docs/telemetry.md` then claims the opposite of what the code does. `ScanSkills` also does unbounded filesystem I/O without a context, unlike its sibling `Skills`.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 14,
+      "lines": 747,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.4817291
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "b9f1ca73999d1192bad5f190dab8560af33fc89f"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4817291,
+    "usage": {
+      "input": 18,
+      "output": 14995,
+      "cacheRead": 463391,
+      "cacheWrite": 71351
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 114085,
+    "stop": "complete",
+    "notices": []
+  }
+}

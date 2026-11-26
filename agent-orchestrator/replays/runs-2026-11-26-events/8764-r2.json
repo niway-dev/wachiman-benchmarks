@@ -1,0 +1,169 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8764-r2` of ao-replay-8764-r2 against 6faac3c37b020d21738c6af6ae018724866d3a8d (merge-base 6faac3c)",
+    "repository": {
+      "name": "ao-replay-8764-r2"
+    },
+    "base": {
+      "sha": "6faac3c37b020d21738c6af6ae018724866d3a8d",
+      "ref": "6faac3c37b020d21738c6af6ae018724866d3a8d"
+    },
+    "head": {
+      "sha": "3b6f51b691fe5fd964b4c4357e34beafa9ad4215",
+      "ref": "ao-replay/8764-r2"
+    },
+    "title": "ao-replay/8764-r2",
+    "description": "fix(mobile): never restore a page over one the user moved to\nfix(mobile): hold the update screen during onboarding and pairing\nfix(mobile): keep root-level sheets out of the page restored after an update\nfix(mobile): compare whole routes when restoring; hide the update screen's hidden half from VoiceOver",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "packages/mobile/lib/UpdateScreen.a11y.source.test.ts",
+      "packages/mobile/lib/UpdateScreen.tsx",
+      "packages/mobile/lib/UpdatesManager.tsx",
+      "packages/mobile/lib/updateResume.test.ts",
+      "packages/mobile/lib/updateResume.ts",
+      "packages/mobile/lib/updates.test.ts",
+      "packages/mobile/lib/updates.ts"
+    ],
+    "reviewed": [
+      "packages/mobile/lib/updateResume.ts",
+      "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "packages/mobile/lib/updates.ts",
+      "packages/mobile/lib/UpdateScreen.tsx",
+      "packages/mobile/lib/UpdatesManager.tsx",
+      "packages/mobile/lib/updateResume.test.ts",
+      "packages/mobile/lib/updates.test.ts",
+      "packages/mobile/lib/UpdateScreen.a11y.source.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/mobile/lib/updates.ts",
+      "line": 90,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "isSetupRoute leaves out /connect, which updateResume treats as a setup screen",
+      "body": "The PR defers the update screen \"during onboarding or pairing\". `isSetupRoute` matches only `/onboarding` and `/pair`. The root layout describes pairing as the scanner and then the manual form pushed over it (`packages/mobile/app/_layout.tsx:267-270`), and `TRANSIENT` in `updateResume.ts:40` lists `/connect` beside `/onboarding` and `/pair` as a setup screen. A download that finishes while the user is typing a manual connection will still raise the full-screen update prompt over the form. The update screen and the resume rules disagree about which routes are setup. Either add `connect` to `isSetupRoute` or say in the comment why manual connect is excluded. If `/connect` is reachable from places other than pairing, keep it out, and then the \"setup screens\" wording in `updateResume.ts:30-32` is the thing to fix.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "line": 44,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "Landing capture and drop behavior is only covered through the pure helper",
+      "body": "The core of this change is the effect that records `landing` on the first nav-ready render and then calls `restoreAction`. That is a hook with refs and async storage, and no test exercises it. The tests cover `restoreAction(current, landing, saved)` only with hand-fed arguments. Two cases are untested: storage resolving after the user has already navigated (should drop), and `navState.key` becoming ready before expo-router has applied a reopened deep link (landing would be \"/\" and the stale-deep-link replace would be dropped). A hook-level test with mocked expo-router, the pattern `root-stack.test.tsx` uses for mocking these modules, would pin the behavior.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/lib/UpdateScreen.a11y.source.test.ts",
+      "line": 11,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Source-regex test is tied to prop order and exact expressions",
+      "body": "The assertions match the literal text `accessibilityElementsHidden=...` immediately followed by `importantForAccessibility=...` with exact ternaries. Reordering props or rewriting the expressions fails the test while the behavior is unchanged, and a mistake elsewhere would not be caught. This follows the repo's `*.source.test.ts` convention, so it is acceptable, but a render test that checks the props on the two views would be sturdier.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Restore the saved page as soon as navigation is ready, without waiting for the store config, and drop the restore if the user has left the landing route",
+      "location": "packages/mobile/lib/UpdateRouteKeeper.tsx:40",
+      "status": "open",
+      "evidence": [
+        "packages/mobile/lib/UpdateRouteKeeper.tsx:31-51",
+        "packages/mobile/lib/updateResume.ts:96-100"
+      ],
+      "equivalent_path": "The previous effect waited for `config !== null` from useApp and compared only path (query stripped) before replace/push. A cold-start notification tap opens pages directly while the machine is still loading.",
+      "before_after": "Before: waited for config, then `restoreAction(pathname, saved)` replaced or pushed whatever the user had since opened. After: `landing` is captured on the first nav-ready render, and `restoreAction(current, landing, saved)` returns \"drop\" if the route changed. Full hrefs are compared, so the same session on a different `hostId` is replaced.",
+      "visible_effect": "The user returns to the page they were on after the OTA restart. If they navigate first, nothing is restored. It no longer waits minutes for the machine.",
+      "failure_mode": "If `takeResumeRoute()` rejects, `saved` stays undefined and the restore is silently skipped. This is no worse than before. If expo-router applies a reopened deep link after `navState.key` is set, landing is \"/\" and the later route counts as moved away, so the restore is dropped rather than replaced. This is safe but it loses the restore, and I did not confirm the ordering.",
+      "open_question": "Does expo-router/React Navigation expose the reopened deep link in the same render where `useRootNavigationState().key` first becomes defined?",
+      "candidates": [
+        "packages/mobile/lib/updateResumeStore.ts",
+        "packages/mobile/app/_layout.tsx"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Defer raising the update screen while on /onboarding or /pair, and offer it when the pathname changes",
+      "location": "packages/mobile/lib/UpdatesManager.tsx:27",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/UpdatesManager.tsx:21-32",
+        "packages/mobile/lib/UpdatesManager.tsx:45-47",
+        "packages/mobile/lib/updates.ts:90-108"
+      ],
+      "equivalent_path": "Previously the effect depended only on `isUpdatePending` and `updateId`. The foreground prompt path called showUpdateReady unconditionally.",
+      "before_after": "Before: the offer fired the moment an update was pending. After: the effect also depends on `pathname` and checks `isSetupRoute`. The foreground \"prompt\" path checks `pathnameRef.current` too. `lastOffered` is set only when actually offered, so leaving the setup route triggers the offer.",
+      "visible_effect": "Update screen does not interrupt onboarding or pairing, and appears right after the user leaves. /connect is not covered.",
+      "failure_mode": "No failure. A user who stays on a setup route never sees the offer, and the update applies on next launch. The foreground check path that ends in a download is covered by the effect.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Hide the invisible half of the update screen from VoiceOver with accessibilityElementsHidden",
+      "location": "packages/mobile/lib/UpdateScreen.tsx:78",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/UpdateScreen.tsx:78-96"
+      ],
+      "equivalent_path": "The same views already set `importantForAccessibility`, which is Android only.",
+      "before_after": "Before: iOS VoiceOver still read the opacity-0 half. After: `accessibilityElementsHidden` mirrors the restarting flag on both halves.",
+      "visible_effect": "VoiceOver users no longer hear or activate the hidden buttons or the status text.",
+      "failure_mode": "None found.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change holds up. I found nothing that blocks the merge and nothing I'd call a defect. I raised three \"consider\" items. `isSetupRoute` leaves out `/connect`, though `updateResume.ts` treats it as a setup screen, so the update prompt can still appear over the manual connect form. The new landing/drop logic in `UpdateRouteKeeper` has no hook-level test. The a11y test depends on exact source text. One thing I could not confirm: whether expo-router applies a reopened deep link before `useRootNavigationState().key` is set. If it doesn't, the restore is dropped rather than replaced, which is safe but loses the restore. I only read the code, as instructed.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 195,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.2545442
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "6faac3c37b020d21738c6af6ae018724866d3a8d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2545442,
+    "usage": {
+      "input": 10,
+      "output": 6385,
+      "cacheRead": 147742,
+      "cacheWrite": 43975
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 55271,
+    "stop": "complete",
+    "notices": []
+  }
+}

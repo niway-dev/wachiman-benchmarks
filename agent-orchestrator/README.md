@@ -8,7 +8,61 @@ local Wachiman state the defects CodeRabbit raised and the PR's author then fixe
 
 Wachiman is fed by open-source projects on purpose: this folder is public evidence of what it misses.
 
-## One-minute block (first batch, 2026-11-26)
+## Equal conditions: every CodeRabbit review event, both sides judged blind (2026-11-26)
+
+The [first batch](#recall-of-owner-accepted-findings-first-batch-2026-11-26) below is one-directional.
+Its answer key is CodeRabbit's fixed findings, so it cannot say what Wachiman found that CodeRabbit did not.
+Its "8 of 34" also set one Wachiman run per PR against comments CodeRabbit posted across several commits.
+This section replaces that comparison with one where each side gets the same input and the same judge.
+
+**The rule.** A pair is one CodeRabbit review event: the commit it reviewed and the exact range its review
+body names ("between X and Y"). Wachiman runs on that same range. When a later push triggers another
+CodeRabbit review, that event is replayed as well. Both tools' findings then go into one shuffled list per
+event, with the tool's name, its severity labels and every "Addressed" marker removed. A judge reads the code
+at the event's head and rules on each item.
+
+- **24 events on 10 PRs** ([`replays/events.tsv`](replays/events.tsv)). CodeRabbit posted 62 comments (60
+  inline, 2 "outside diff range", no nitpicks). Wachiman made 64 findings
+  ([`replays/runs-2026-11-26-events/`](replays/runs-2026-11-26-events/)), for $8.78 API-price estimate.
+- **Judge:** Sonnet 5.5 high, one blind pass, four workers. Each item gets a verdict: `real` (the defect
+  exists at head and causes wrong behavior), `style` (true, but no wrong behavior: docs, naming, a missing
+  test), `false` or `unsure`. A real item also gets a severity and the later commit that fixed it. Items in
+  one event that describe the same defect are merged into one defect. Packages, key and verdicts are in
+  [`replays/judging-2026-11-26/`](replays/judging-2026-11-26/); `python3 -I scripts/score-events.py
+  replays/judging-2026-11-26` prints the tables.
+
+| Tool | Items | Real | Style | False | Unsure | Real, fixed later in the PR |
+| --- | --- | --- | --- | --- | --- | --- |
+| CodeRabbit | 62 | **55** | 2 | 3 | 2 | 47 |
+| Wachiman | 64 | **26** | 38 | 0 | 0 | 14 |
+
+| Distinct real defects | Low | Medium | High | Total |
+| --- | --- | --- | --- | --- |
+| Found by both | 3 | 4 | 1 | 8 |
+| Only CodeRabbit | 40 | 7 | 0 | 47 |
+| Only Wachiman | 17 | 1 | 0 | 18 |
+
+What this says:
+
+- **CodeRabbit found about twice as many real defects** at the same commits: 55 against 26. Of the 55,
+  47 were found only by CodeRabbit, 7 of them medium.
+- **Wachiman found 18 real defects CodeRabbit did not raise**, all but one low. Few were fixed later:
+  the authors never saw them.
+- **The one high-severity defect was found by both:** the New task page re-renders forever in #9148.
+- **Most of Wachiman's findings were not defects.** 38 of 64 are `style`, mostly "add a test for this
+  path" and doc wording, posted as `consider`. CodeRabbit posted almost none of those. Wachiman's 12
+  `fix` and `blocker` findings were real in 9 cases.
+- **Neither tool was often wrong.** CodeRabbit had 3 false and 2 unsure, Wachiman none.
+
+Limits of this comparison: one judge, one pass, one model. The judge never saw the tool names, but the two
+tools write differently (CodeRabbit leads with a bold title), so the blinding is imperfect. "Fixed later"
+favors CodeRabbit by construction: its comments were posted on the PR and the authors answered them.
+Wachiman ran weeks later (basis `rerun`) on v1.17.0, one run per event.
+
+## Recall of owner-accepted findings (first batch, 2026-11-26)
+
+> One-directional, kept for the gap analysis below. For the comparison between the tools, read
+> [Equal conditions](#equal-conditions-every-coderabbit-review-event-both-sides-judged-blind-2026-11-26).
 
 - **10 merged PRs** (3 Go, 3 mixed, 4 TypeScript), **34 valid cases**: each is a CodeRabbit finding that was
   fixed later in the same PR and whose line is in the reviewed diff. One more row is `valid=no`.
@@ -36,9 +90,8 @@ first reviewed. A case is scored by reading, as in t3code: `caught`, `partial`, 
 
 It does not measure:
 
-- **Precision.** Wachiman made 32 findings; the 8 that match a case are scored. The others are not judged,
-  and some look like real defects CodeRabbit did not raise (for example #9095, `api-client.ts:290`: a 404
-  from an older host still sends an `ao.requests.failed` event). They are unverified.
+- **Precision.** Wachiman made 32 findings; the 8 that match a case are scored. The others are judged only
+  in [Equal conditions](#equal-conditions-every-coderabbit-review-event-both-sides-judged-blind-2026-11-26).
 - **What CodeRabbit misses.** The cases are CodeRabbit's best findings by construction.
 - **A live comparison.** These are not pairs in the sense of `scripts/pair.ts`, which reads posted reviews.
   The pairing is by construction: the same base and head, recorded in [`replays/manifest.tsv`](replays/manifest.tsv).
