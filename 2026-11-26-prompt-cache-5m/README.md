@@ -7,18 +7,19 @@
 - **Change under test:** Wachiman v1.21.0 plus one key in the adapter's settings file,
   `"promptCacheTtl": "5m"` ([niway-dev/wachiman#324](https://github.com/niway-dev/wachiman/pull/324)),
   pinned by SHA `8a9a6d7` in [`replay/wachi-workflow-cache-5m.yml`](../replay/wachi-workflow-cache-5m.yml).
-- **Runs:** W31–W33, kaipu-record #465 and #467, three runs each, in
+- **Runs:** W34–W36, kaipu-record #465 and #467, three runs each, in
   [kaipu-bench-wachi-v3](https://github.com/niway-dev/kaipu-bench-wachi-v3) (bench #86–#91),
   `CLAUDE_CODE_OAUTH_TOKEN` only (no API key passed), Claude Opus 5.5, effort `high`,
   `budget_usd: 10`, verify off, the same inputs as W13–W15. Raw reviews in [`raw/`](raw/), labels in
-  [`prs/`](prs/).
+  [`prs/`](prs/). The set was first published as W31–W33 and renamed W34–W36 because the
+  [Sonnet baseline](../2026-11-26-v1.21.0-sonnet-baseline/README.md) uses those labels.
 
 ## Result
 
 **The 5-minute cache took effect on every call and raised the turns per batch call by 2 to 3, to
 between the old token runs and the key. The known bugs found did not rise.**
 
-| #465 and #467, 3 runs each | v1.21.0, token, 1-hour cache (W13–W15) | v1.15.0, token, 1-hour cache (W25–W27) | **v1.21.0 + 5m, token (W31–W33)** | v1.15.0, key (W28–W30) |
+| #465 and #467, 3 runs each | v1.21.0, token, 1-hour cache (W13–W15) | v1.15.0, token, 1-hour cache (W25–W27) | **v1.21.0 + 5m, token (W34–W36)** | v1.15.0, key (W28–W30) |
 | --- | --- | --- | --- | --- |
 | Cache write price per MTok (lifetime) | $8 (1 hour) | $8 (1 hour) | **$5 (5 minutes)** | $5 (5 minutes) |
 | Batches at once | 4 | 1 | 4 | 1 |
@@ -36,8 +37,8 @@ between the old token runs and the key. The known bugs found did not rise.**
   `usage.cache_creation`. The probe's 12 `result` records, which do hold `ephemeral_5m` and
   `ephemeral_1h`, fit Claude Code's cost exactly (largest error 0.002%) at $20 per MTok output,
   $0.20 cache read, **$5 per 5-minute write and $8 per 1-hour write**. Solving each batch call's
-  cost for its write price gives $5.00 on all 24 calls of W31–W33, $8.00 on all 48 of W13–W15 and
-  W25–W27, and $5.00 on all 24 of W28–W30. Every W31–W33 line says `auth: "oauth-token"`.
+  cost for its write price gives $5.00 on all 24 calls of W34–W36, $8.00 on all 48 of W13–W15 and
+  W25–W27, and $5.00 on all 24 of W28–W30. Every W34–W36 line says `auth: "oauth-token"`.
 - **Turns rose but stayed below the key.** #465 went from 8.5 (same release, 1-hour) to 11.5, #467
   from 10.3 to 12.9; the key made 14.3 and 15.2 on v1.15.0. The probe saw the same shape on a plain
   call (10–12, then 13–14, against 15–17).
@@ -63,8 +64,8 @@ between the old token runs and the key. The known bugs found did not rise.**
 - **Two pull requests, three runs each.** Enough to see turns move by 2 to 3 per call with little
   overlap, not to rank sets by known bugs.
 - **Different engines across columns.** W25–W30 are v1.15.0 with one batch at a time; W13–W15 and
-  W31–W33 are v1.21.0 with four at once. W13–W15 is the like-for-like baseline.
+  W34–W36 are v1.21.0 with four at once. W13–W15 is the like-for-like baseline.
 - **One labeller, one pass, not blind.** Claude Sonnet 5.5 (effort high) applied the
   [release bisect](../2026-11-26-release-bisect/prs/)'s rows and rules; its judgement calls are in
-  each doc. E10 on W33 (partial) would make #467 9 plus 3 and 4 distinct if counted as found.
+  each doc. E10 on W36 (partial) would make #467 9 plus 3 and 4 distinct if counted as found.
 - **Not in `dataset/` yet.** These runs are not added to `runs.csv` or `labelled-runs.csv`.

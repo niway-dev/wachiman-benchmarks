@@ -1,8 +1,11 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { benchLabel, FIELD_ROUNDS } from "./runs.ts";
+import { benchLabel, buildRuns, FIELD_ROUNDS, RUN_COLUMNS } from "./runs.ts";
 import { decide, idfOf, locsOf, mdTables, parseFieldDoc, parseReplayDoc, tokensOf, type Finding } from "./labels.ts";
+import { extractRunLog } from "./parse.ts";
 import { originalPrOf, roundOf, runOfReview, toolOfComment } from "./normalize.ts";
 
 describe("normalize helpers", () => {
@@ -54,7 +57,18 @@ describe("run map", () => {
     expect(benchLabel("kaipu-bench-wachi-v3", 79, "467", "r3", "[replay r3] x").label).toBe("W27");
     expect(benchLabel("kaipu-bench-wachi-v3", 80, "465", "r1", "[replay] x")).toMatchObject({ label: "W28", version: "v1.15.0" });
     expect(benchLabel("kaipu-bench-wachi-v3", 85, "467", "r3", "[replay r3] x").label).toBe("W30");
-    expect(benchLabel("kaipu-bench-wachi-v3", 86, "465", "r1", "[replay] x")).toMatchObject({ label: "W-v3-unassigned", confidence: "guessed" });
+    // #86-#91: the 5-minute prompt-cache fix, pinned by SHA; #92-#106: the Sonnet baseline.
+    expect(benchLabel("kaipu-bench-wachi-v3", 86, "465", "r1", "[replay] x")).toMatchObject({ label: "W34", version: "v1.21.0+cache-5m", model: "claude-opus-5-5", confidence: "derived" });
+    expect(benchLabel("kaipu-bench-wachi-v3", 87, "467", "r1", "[replay] x").label).toBe("W34");
+    expect(benchLabel("kaipu-bench-wachi-v3", 88, "465", "r2", "[replay r2] x").label).toBe("W35");
+    expect(benchLabel("kaipu-bench-wachi-v3", 89, "467", "r2", "[replay r2] x").label).toBe("W35");
+    expect(benchLabel("kaipu-bench-wachi-v3", 90, "465", "r3", "[replay r3] x").label).toBe("W36");
+    expect(benchLabel("kaipu-bench-wachi-v3", 91, "467", "r3", "[replay r3] x").label).toBe("W36");
+    expect(benchLabel("kaipu-bench-wachi-v3", 92, "463", "r1", "[replay] x")).toMatchObject({ label: "W31", version: "v1.21.0", model: "claude-sonnet-5-5" });
+    expect(benchLabel("kaipu-bench-wachi-v3", 96, "467", "r1", "[replay] x").label).toBe("W31");
+    expect(benchLabel("kaipu-bench-wachi-v3", 97, "463", "r2", "[replay r2] x").label).toBe("W32");
+    expect(benchLabel("kaipu-bench-wachi-v3", 106, "467", "r3", "[replay r3] x").label).toBe("W33");
+    expect(benchLabel("kaipu-bench-wachi-v3", 107, "465", "r1", "[replay] x")).toMatchObject({ label: "W-v3-unassigned", confidence: "guessed" });
     expect(benchLabel("kaipu-bench-coderabbit-v2", 4, "465", "r1", "[replay] x").label).toBe("CR-v2");
     expect(benchLabel("kaipu-bench-wachi-v3", 4, "465", "r1", "[replay] x")).toMatchObject({ label: "W7", version: "v1.20.1" });
     expect(benchLabel("kaipu-bench-wachi-v3", 17, "463", "r1", "[replay] x")).toMatchObject({ label: "W10", version: "v1.21.0" });
@@ -177,5 +191,37 @@ describe("built dataset", () => {
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
     expect([...seen].filter(([, n]) => n > 1)).toEqual([]);
+  });
+});
+
+describe("credential", () => {
+  const P = "review / Wachiman on demand\tUNKNOWN STEP\t";
+  const costLine = (auth: string) =>
+    `${P}2026-11-26T17:02:34.0118605Z wachiman-cost {"operation":"review","label":"batch 1/2","model":"claude-opus-5-5","turns":12,"costKnown":true,"cost_usd":0.48${auth ? `,"auth":"${auth}"` : ""},"terminal_reason":"success"}`;
+
+  function rawWith(auth: string): string {
+    const raw = mkdtempSync(join(tmpdir(), "runs-credential-"));
+    const repoDir = join(raw, "kaipu-bench-wachi-v3");
+    const prDir = join(repoDir, "pr-86");
+    mkdirSync(join(prDir, "logs"), { recursive: true });
+    writeFileSync(join(repoDir, "_index.json"), "[]");
+    writeFileSync(join(prDir, "pr.json"), JSON.stringify({ number: 86, title: "[replay] x", body: "> **Replay of [niway-dev/kaipu-record#465](https://github.com/niway-dev/kaipu-record/pull/465)**", created_at: "2026-11-26T17:00:00Z", head: { ref: "replay-ttl5m/pr-465/head", sha: "a".repeat(40) }, base: { ref: "main", sha: "b".repeat(40) } }));
+    writeFileSync(join(prDir, "reviews.json"), JSON.stringify([{ id: 1, user: { login: "github-actions[bot]" }, commit_id: "c".repeat(40), submitted_at: "2026-11-26T17:02:50Z", body: "\u{1F46E} **Wachiman** review" }]));
+    writeFileSync(join(prDir, "runs.json"), JSON.stringify([{ databaseId: 7, createdAt: "2026-11-26T17:01:00Z", updatedAt: "2026-11-26T17:03:00Z", workflowName: "Wachi bench review", event: "issue_comment", conclusion: "success", headBranch: "main", url: "u" }]));
+    writeFileSync(join(prDir, "logs", "run-7.log.gz"), gzipSync([`${P}2026-11-26T17:01:18.0Z Uses: niway-dev/wachiman/.github/workflows/review.yml@8a9a6d782aa1f6c9ef88f1430e8f5cd789f2c8ce`, costLine(auth)].join("\n")));
+    return raw;
+  }
+
+  test("the log's wachiman-cost auth field is read, an absent one is unknown", () => {
+    expect(extractRunLog(costLine("oauth-token")).credential).toBe("oauth-token");
+    expect(extractRunLog(costLine("api-key")).credential).toBe("api-key");
+    expect(extractRunLog(costLine("")).credential).toBe("");
+  });
+
+  test("runs.csv carries the credential of the run that posted the review", () => {
+    expect(RUN_COLUMNS).toContain("credential");
+    expect(buildRuns(rawWith("oauth-token"))[0]).toMatchObject({ run_label: "W34", version: "v1.21.0+cache-5m", credential: "oauth-token" });
+    expect(buildRuns(rawWith("api-key"))[0]).toMatchObject({ credential: "api-key" });
+    expect(buildRuns(rawWith(""))[0]).toMatchObject({ credential: "" });
   });
 });

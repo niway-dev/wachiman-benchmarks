@@ -17,7 +17,7 @@ import { loadRuns, originalPrOf, roundOf, runOfReview, toolOfComment } from "./n
 import { parseWachimanReview, toCsv } from "./parse.ts";
 
 export const RUN_COLUMNS = [
-  "tool", "source_repo", "bench_pr", "original_pr", "commit", "round_tag", "run_label", "model", "version", "date",
+  "tool", "source_repo", "bench_pr", "original_pr", "commit", "round_tag", "run_label", "model", "version", "credential", "date",
   "review_ids", "run_ids", "doc_set", "confidence", "basis", "notes",
 ] as const;
 
@@ -38,6 +38,8 @@ const D1125 = "2026-11-25-v1.20.1-replay/README.md (W7 = #2–#6, W8 = #7–#11,
 const D1125F = "2026-11-25-v1.21.0-focus-replay/README.md (W10 = #17–#21, W11 = #22–#26, W12 = #27–#31)";
 const D1125B = "2026-11-25-v1.21.0-budget-replay/README.md (W13 = #32–#36, W14 = #37–#41, W15 = #42–#46)";
 const D1125V = "2026-11-25-v1.4.0-rerun/README.md (W16 = #47–#51, W17 = #52–#56, W18 = #57–#61)";
+const D1126N = "2026-11-26-v1.21.0-sonnet-baseline/README.md (W31 = #92–#96, W32 = #97–#101, W33 = #102–#106; kaipu-record #463–#467)";
+const D1126C = "2026-11-26-prompt-cache-5m/README.md (W34 = #86/#87, W35 = #88/#89, W36 = #90/#91; kaipu-record #465 and #467)";
 const D1126S = "2026-11-26-release-bisect/README.md (W19-W21 = #62-#67 on v1.5.0, W22-W24 = #68-#73 on v1.9.0, W25-W27 = #74-#79 on v1.15.0 with the subscription token, W28-W30 = #80-#85 on v1.15.0 with the API key; kaipu-record #465 and #467)";
 
 /** `r<n>` of a kaipu-bench-wachi replay → the label the docs use. */
@@ -71,7 +73,11 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
     const n = Number(round.slice(1));
     // Each set below is matched by a lower bound only, so a PR past the last known set would take
     // the newest rule's label. It stays unlabelled until a rule names it.
-    if (pr >= 86) return { label: "W-v3-unassigned", confidence: "guessed", basis: "no analysis doc names this run yet", notes: "kaipu-bench-wachi-v3 PR past the last labelled set (#85)" };
+    if (pr >= 107) return { label: "W-v3-unassigned", confidence: "guessed", basis: "no analysis doc names this run yet", notes: "kaipu-bench-wachi-v3 PR past the last labelled set (#106)" };
+    // #92-#106: the replay-sonnet/ branches, v1.21.0 on Sonnet 5.5 on all five PRs (release baseline, BENCH_FOCUS=rename).
+    if (pr >= 92 && n >= 1 && n <= 3) return { label: `W${n + 30}`, confidence: "derived", basis: D1126N, model: "claude-sonnet-5-5", version: "v1.21.0", notes: "Release baseline: Sonnet 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
+    // #86-#91: the replay-ttl5m/ branches, v1.21.0 plus the 5-minute prompt-cache fix (SHA 8a9a6d7) on #465 and #467 only.
+    if (pr >= 86 && n >= 1 && n <= 3) return { label: `W${n + 33}`, confidence: "derived", basis: D1126C, model: "claude-opus-5-5", version: "v1.21.0+cache-5m", notes: "Prompt-cache check: v1.21.0 plus the fix that forces a 5-minute prompt cache, pinned by SHA 8a9a6d782aa1f6c9ef88f1430e8f5cd789f2c8ce (not a release; not plain v1.21.0), Opus 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
     // #80-#85: the replay-v1150k/ branches, v1.15.0 again on the API key only (release bisect, BENCH_FOCUS=rename).
     if (pr >= 80 && pr <= 85 && n >= 1 && n <= 3) return { label: `W${n + 27}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.15.0", notes: "Release bisect: v1.15.0 as W25-W27 (Opus 5.5, effort high, budget_usd 10, verify false, focus file at .github/wachiman.md), API key only: billed cost" };
     // #74-#79: the replay-v1150/ branches, v1.15.0 on #465 and #467 only (release bisect, BENCH_FOCUS=rename).
@@ -186,6 +192,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
         const mine = bots.filter((b) => b.tool === tool);
         let model = "";
         let version = "";
+        let credential = "";
         const runIds: number[] = [];
         for (const b of mine) {
           const run = runOfReview(b.rv.submitted_at, runs, logs);
@@ -193,6 +200,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
           if (run) runIds.push(run.databaseId);
           if (log?.model) model = log.model;
           if (log?.version) version = log.version;
+          if (log?.credential) credential = log.credential;
           if (!model && tool === "wachiman") {
             const lbl = parseWachimanReview(b.rv.body)?.model_label;
             if (lbl) model = lbl.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -205,7 +213,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
         if (mine.length === 0 && !/\[setup\]/.test(pr.title)) notes.push("no review posted by this tool");
         out.push({
           tool, source_repo: repo, bench_pr: pr.number, original_pr: original, commit: (mine[0]?.rv.commit_id ?? pr.head.sha).slice(0, 7),
-          round_tag: round, run_label: l.label, model: model || l.model || "", version: version || l.version || "",
+          round_tag: round, run_label: l.label, model: model || l.model || "", version: version || l.version || "", credential,
           date: (mine[0]?.rv.submitted_at ?? pr.created_at).slice(0, 10), review_ids: mine.map((b) => b.rv.id).join(" "), run_ids: runIds.join(" "),
           doc_set: l.label ? (/^\d{4}-\d{2}-\d{2}[^\s,()\/]*\/README\.md/.exec(l.basis)?.[0] ?? "") : "", confidence: l.confidence === "derived" && (fromLog || tool !== "wachiman") ? "derived" : l.confidence,
           basis: l.basis, notes: notes.filter(Boolean).join("; "),
@@ -252,7 +260,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
         out.push({
           tool: b.tool, source_repo: repo, bench_pr: pr.number, original_pr: String(pr.number), commit, round_tag: "", run_label: label,
           model: log?.model || (b.tool === "wachiman" ? (parseWachimanReview(b.rv.body)?.model_label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-") : ""),
-          version, date: b.rv.submitted_at.slice(0, 10), review_ids: String(b.rv.id), run_ids: run ? String(run.databaseId) : "",
+          version, credential: log?.credential ?? "", date: b.rv.submitted_at.slice(0, 10), review_ids: String(b.rv.id), run_ids: run ? String(run.databaseId) : "",
           doc_set: field ? "2026-11-02-field" : "", confidence, basis,
           notes: [
             log?.version && field && log.version !== field.version ? `doc says ${field.version}, log says ${log.version}` : "",

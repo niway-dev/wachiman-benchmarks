@@ -307,6 +307,11 @@ describe("run logs", () => {
     expect(r.calls).toHaveLength(2);
   });
 
+  test("the 5-minute prompt-cache SHA is v1.21.0 plus a suffix, not plain v1.21.0", () => {
+    const log = LOG_V120.replace("793a64df5775b606ea5b2253569f4e6cd216c3ef", "8a9a6d782aa1f6c9ef88f1430e8f5cd789f2c8ce");
+    expect(extractRunLog(log).version).toBe("v1.21.0+cache-5m");
+  });
+
   test("an unknown SHA pin gives no version", () => {
     expect(extractRunLog(LOG_V120.replace("793a64df5775b606ea5b2253569f4e6cd216c3ef", "a".repeat(40))).version).toBe("");
   });

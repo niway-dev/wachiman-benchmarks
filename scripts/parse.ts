@@ -480,6 +480,8 @@ export interface RunLog {
   effort: string;
   provider: string;
   claude_code_version: string;
+  /** `auth` of the first `wachiman-cost` line: "api-key" or "oauth-token"; "" when the log has none (older engines). */
+  credential: string;
   started_at: string;
   ended_at: string;
   calls: BatchCall[];
@@ -510,6 +512,8 @@ export const PINNED_SHAS: Record<string, string> = {
   "31f422b5cb041dc9c03f9570c2f9444d8c6bfb89": "v1.5.0",
   "b3f60be4c939d1779bab86ed92d12f538c14295a": "v1.9.0",
   "6b99963512ba29187353d68b21765c4daa032099": "v1.15.0",
+  // v1.21.0 plus the 5-minute prompt-cache fix (replay/wachi-workflow-cache-5m.yml). Not plain v1.21.0: the "+" marks a build that is not a release.
+  "8a9a6d782aa1f6c9ef88f1430e8f5cd789f2c8ce": "v1.21.0+cache-5m",
 };
 
 /**
@@ -521,7 +525,7 @@ export const PINNED_SHAS: Record<string, string> = {
 export function extractRunLog(log: string): RunLog {
   const rows = log.split("\n").filter((l) => l.length > 0).map(splitLogLine);
   const out: RunLog = {
-    workflow_ref: "", version: "", model: "", effort: "", provider: "", claude_code_version: "",
+    workflow_ref: "", version: "", model: "", effort: "", provider: "", claude_code_version: "", credential: "",
     started_at: rows[0]?.ts ?? "", ended_at: rows.at(-1)?.ts ?? "", calls: [], cost_usd: null, duration_ms: null,
     confidence_rule: [], engine_lines: [],
   };
@@ -542,6 +546,7 @@ export function extractRunLog(log: string): RunLog {
       if (env[1] === "EFFORT" && !out.effort) out.effort = env[2] as string;
       if (env[1] === "PROVIDER" && !out.provider) out.provider = env[2] as string;
     }
+    if (!out.credential && /^wachiman-cost \{/.test(text)) out.credential = /"auth":"([^"]*)"/.exec(text)?.[1] ?? "";
     const cc = /^\s*CLAUDE_CODE_VERSION:\s*(\S+)/.exec(text);
     if (cc && !out.claude_code_version) out.claude_code_version = cc[1] as string;
     if (sawEnv && /^##\[endgroup\]/.test(text) && !inEngine && !done) {
