@@ -7,8 +7,8 @@
   [kaipu-bench-wachi-v3](https://github.com/niway-dev/kaipu-bench-wachi-v3), on 2026-11-26. R1–R3
   are labels for this set only; they are not W-numbers.
 - **Compared with:** the v1.21.0 Sonnet baseline (W31–W33, #92–#106), same inputs except the engine pin.
-- **Answer:** v1.22.0 costs less and finds as many known bugs. It catches 13, 14 and 12 of the 27
-  known bugs per run (baseline: 16, 14 and 12), at $4.30 to $4.80 a run
+- **Answer:** v1.22.0 costs less, with no detectable change in known bugs found. It catches 13,
+  14 and 12 of the 27 known bugs per run (baseline: 16, 14 and 12), at $4.30 to $4.80 a run
   (baseline: $5.69 to $5.88). Under the release rule below, cost changed and known bugs did not.
 
 ## Setup
@@ -81,7 +81,11 @@ partial (the right place, not the right mechanism) is not counted.
 | [#467](prs/pr-467.md) (10) | 3 | 4 | 3 |
 | **Total (27)** | **13** | **14** | **12** |
 
-Invalid findings: 0, 1 and 2 (one on #466 in R2, two on #467 in R3).
+Caught in part (not counted): 2, 2 and 1 (baseline: 2, 2 and 1). Invalid findings: 0, 1 and 2
+(one on #466 in R2, two on #467 in R3; baseline: 1 across its three runs).
+
+The 27 include #464's E4, which is not present at that pull request's head, so no run can find it.
+The baseline counts it the same way, so the comparison is fair, but 26 is the real ceiling.
 
 ## Verdict under the release rule
 
@@ -89,13 +93,17 @@ The baseline's rule: a measure changed only if all three runs fall outside the b
 
 - **Cost: changed.** All three runs ($4.30, $4.60, $4.80) are below the baseline's cheapest
   ($5.69). Cost per review falls from $1.15 to $0.91, about 21%.
-- **Known bugs: no change.** All three runs (13, 14, 12) are inside 12 to 16.
+- **Known bugs: no detectable change.** All three runs (13, 14, 12) are inside 12 to 16. The mean
+  is one lower (13.0 against 14.0), which is inside the baseline's own spread.
 - **Turns per batch call: no change.** Mean 19.9 against 19.3, same spread.
 
 What lowered the cost is not isolated here. v1.22.0 changes the prompt cache to a 5-minute
 lifetime and adds a start floor for new batches. With a $10 budget, no batch ran short of money,
-so the start floor most likely did not act and the 5-minute cache is the likely cause. That is
-a hypothesis; a run at the default $3 budget would exercise the start floor.
+so the start floor most likely did not act, and the 5-minute cache is the likely cause. The
+[5-minute cache experiment](../2026-11-26-prompt-cache-5m/README.md) isolated that change on Opus
+5.5 (v1.21.0 plus `promptCacheTtl: 5m`) and also cut the cost of #467, but there turns per batch
+rose by 2 to 3; here they stay flat (19.9 against 19.3). So the cause stays a hypothesis. A run at
+the default $3 budget would exercise the start floor.
 
 ## Limits
 
