@@ -71,6 +71,7 @@ interface RawRun {
   createdAt: string;
   updatedAt: string;
   headSha: string;
+  headBranch: string;
   url: string;
   log: string;
 }
@@ -163,9 +164,16 @@ export function normalizeRepo(repo: string, repoDir: string, runMap: Map<string,
       round: roundOf(pr.title),
     };
 
+    // A comment-triggered run is matched to pull requests by title, and replays of one original
+    // share it, so such a run is listed only under the pull request whose review it produced.
+    const reviewRuns = new Set(
+      reviews.filter((rv) => parseWachimanReview(rv.body ?? "")).map((rv) => runOfReview(rv.submitted_at, runs, logs)?.databaseId),
+    );
     for (const r of runs) {
       const log = logs.get(r.databaseId);
       if (!log) continue;
+      const byComment = r.event === "issue_comment" || r.event === "pull_request_review_comment";
+      if (byComment && r.headBranch !== pr.head.ref && !reviewRuns.has(r.databaseId)) continue;
       into.runLogs.push({
         source_repo: repo, bench_pr: pr.number, run_id: r.databaseId, workflow: r.workflowName, event: r.event,
         conclusion: r.conclusion, created_at: r.createdAt, version: log.version, workflow_ref: log.workflow_ref,
