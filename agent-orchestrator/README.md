@@ -54,7 +54,7 @@ What this says:
   `fix` and `blocker` findings were real in 9 cases.
 - **Neither tool was often wrong.** CodeRabbit had 3 false and 2 unsure, Wachiman none.
 
-Why CodeRabbit found the 47: [`coderabbit-only-why.tsv`](replays/judging-2026-11-26/coderabbit-only-why.tsv)
+Why CodeRabbit found the 47, with the memory and Go questions: [`why-coderabbit-found-more.md`](why-coderabbit-found-more.md). Per row: [`coderabbit-only-why.tsv`](replays/judging-2026-11-26/coderabbit-only-why.tsv)
 classifies each one by where the decisive fact sits and what a reviewer must know to see it (Sonnet 5.5
 high, reading the code at the event head; every `why_missed` is a hypothesis). In 20 of 47 the decisive
 fact is outside the changed hunks (10 in an unchanged file). 16 need reasoning about two async steps
