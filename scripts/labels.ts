@@ -375,6 +375,8 @@ const REPLAY_DOCS = [
   { dir: "2026-11-02-e1-sonnet/prs", name: "2026-11-02-e1-sonnet" },
   { dir: "2026-11-25-v1.20.1-replay/prs", name: "2026-11-25-v1.20.1-replay" },
   { dir: "2026-11-25-v1.21.0-focus-replay/prs", name: "2026-11-25-v1.21.0-focus-replay" },
+  { dir: "2026-11-25-v1.21.0-budget-replay/prs", name: "2026-11-25-v1.21.0-budget-replay" },
+  { dir: "2026-11-25-v1.4.0-rerun/prs", name: "2026-11-25-v1.4.0-rerun" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
 const REPLAY_PRS = ["463", "464", "465", "466", "467"];
@@ -386,6 +388,8 @@ export const PRIMARY_DOC: Record<string, string> = {
   W4: "2026-11-02", W5: "2026-11-02", W6: "2026-11-02", S7: "2026-11-02-e1-sonnet", S8: "2026-11-02-e1-sonnet", S9: "2026-11-02-e1-sonnet",
   W7: "2026-11-25-v1.20.1-replay", W8: "2026-11-25-v1.20.1-replay", W9: "2026-11-25-v1.20.1-replay",
   W10: "2026-11-25-v1.21.0-focus-replay", W11: "2026-11-25-v1.21.0-focus-replay", W12: "2026-11-25-v1.21.0-focus-replay",
+  W13: "2026-11-25-v1.21.0-budget-replay", W14: "2026-11-25-v1.21.0-budget-replay", W15: "2026-11-25-v1.21.0-budget-replay",
+  W16: "2026-11-25-v1.4.0-rerun", W17: "2026-11-25-v1.4.0-rerun", W18: "2026-11-25-v1.4.0-rerun",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {

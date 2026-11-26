@@ -91,6 +91,10 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
 - `wachi-workflow.yml`: the on-demand Wachi workflow. A `pull_request` event would use the
   workflow at the replayed commit, not this one, hence `/wachi review`. The pin in it names the
   engine version under test.
+- `wachi-workflow-budget-10.yml` and `wachi-workflow-v1.4.0.yml`: the variants that ran W13–W15
+  (`budget_usd: 10`) and W16–W18 (v1.4.0, API key only). `bench.sh` never installs them: they were
+  put on the repository's `main` through the contents API for those runs, then `main` went back to
+  `wachi-workflow.yml`.
 
 ## Details worth knowing
 

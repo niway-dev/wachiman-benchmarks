@@ -1,0 +1,71 @@
+[
+ {
+  "id": 4702303046,
+  "user": {
+   "login": "github-actions[bot]",
+   "type": "Bot"
+  },
+  "path": "apps/kaipu-record/src/renderer/src/features/recording/recorder-engine.ts",
+  "line": 803,
+  "original_line": 803,
+  "start_line": null,
+  "side": "RIGHT",
+  "position": 184,
+  "original_position": 184,
+  "commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "original_commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "in_reply_to_id": null,
+  "pull_request_review_id": 6066674519,
+  "subject_type": "line",
+  "created_at": "2026-11-25T23:56:59Z",
+  "updated_at": "2026-11-25T23:56:59Z",
+  "html_url": "https://github.com/niway-dev/kaipu-bench-wachi-v3/pull/42#discussion_r4702303046",
+  "body": "| 👮 **Wachiman** | Re-opening the camera can wait twice WEBCAM_OPEN_TIMEOUT_MS, and it holds up the shared toggle queue |\n|:--|:--|\n| **Priority** | **Should** · a change is expected; answer if you disagree |\n| **Severity** | 🟡 Consider |\n| **Area** | ⚡ perf |\n| **Confidence** | 🟥🟥🟥 High |\n| **Track record** | no record yet · seed |\n\n`turnWebcamOn` first awaits `openWebcamWithin(..., WEBCAM_OPEN_TIMEOUT_MS)` (784-787), then races `webcamRelay.feed(camera)` against a second, separate `WEBCAM_OPEN_TIMEOUT_MS` timer (802-808). Nothing bounds the call as a whole, so a camera that opens slowly and then sends no frame takes up to 2× the timeout before the file ends. The PR's test step 7 says \"within about 3 s\".\n\nThe store also runs this call on the forwarder's single `queue` (recorder-store.ts:939). Mic on/off, mic level, noise-suppression, volume and ducking changes go through that same queue (recorder-store.ts:864-884, 902), so they wait behind it. Suggested fix: use one deadline that covers both the open and the first frame, measured from the start of `turnWebcamOn`.\n\n<!-- wachi:finding -->"
+ },
+ {
+  "id": 4702303058,
+  "user": {
+   "login": "github-actions[bot]",
+   "type": "Bot"
+  },
+  "path": "apps/kaipu-record/src/renderer/src/features/recording/recorder-store.ts",
+  "line": 943,
+  "original_line": 943,
+  "start_line": null,
+  "side": "RIGHT",
+  "position": 110,
+  "original_position": 110,
+  "commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "original_commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "in_reply_to_id": null,
+  "pull_request_review_id": 6066674519,
+  "subject_type": "line",
+  "created_at": "2026-11-25T23:56:59Z",
+  "updated_at": "2026-11-25T23:56:59Z",
+  "html_url": "https://github.com/niway-dev/kaipu-bench-wachi-v3/pull/42#discussion_r4702303058",
+  "body": "| 👮 **Wachiman** | A superseded re-open closes the gap before the newer camera has sent a frame |\n|:--|:--|\n| **Priority** | **Could** · worth a look; change on the merits |\n| **Severity** | 🟡 Consider |\n| **Area** | 🐛 bug |\n| **Confidence** | 🟥🟥⬜ Medium |\n| **Track record** | no record yet · seed |\n\nTake this sequence: on (request 1, opening), off (request 2), on again (queued behind request 1). Request 1 sees `request !== cameraRequest` and returns \"ok\" (recorder-engine.ts:790-792). By then `webcamOn` is already true again because of the second on (line 936), so line 943 closes the gap right away. The newer camera is still opening at that point.\n\nThe editor would then show the held frame during the warm-up. The PR says this is exactly what closing the gap on the first new frame is meant to prevent. A fix is to close the gap only when the result belongs to the latest on, for example with a request counter kept in the forwarder.\n\n<!-- wachi:finding -->"
+ },
+ {
+  "id": 4702303065,
+  "user": {
+   "login": "github-actions[bot]",
+   "type": "Bot"
+  },
+  "path": "apps/kaipu-record/src/renderer/src/features/recording/recorder-store.test.ts",
+  "line": 1646,
+  "original_line": 1646,
+  "start_line": null,
+  "side": "RIGHT",
+  "position": 102,
+  "original_position": 102,
+  "commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "original_commit_id": "3ec7a138c3a878b38284fd13c801ab7226a34abb",
+  "in_reply_to_id": null,
+  "pull_request_review_id": 6066674519,
+  "subject_type": "line",
+  "created_at": "2026-11-25T23:56:59Z",
+  "updated_at": "2026-11-25T23:56:59Z",
+  "html_url": "https://github.com/niway-dev/kaipu-bench-wachi-v3/pull/42#discussion_r4702303065",
+  "body": "| 👮 **Wachiman** | No test for off → on → off → on while the first reopen is still pending |\n|:--|:--|\n| **Priority** | **Could** · worth a look; change on the merits |\n| **Severity** | 🟡 Consider |\n| **Area** | 🧪 tests |\n| **Confidence** | 🟥🟥⬜ Medium |\n| **Track record** | no record yet · seed |\n\nThis test covers off → on → off while the reopen is pending. It does not cover the case where the camera goes back on before that first `turnWebcamOn` resolves. In that case `webcamOn` is already `true` again (set synchronously at recorder-store.ts:936). The first call then resolves \"ok\" because the camera was turned off meanwhile (recorder-engine.ts:162-164), and `gaps.close(takeTimeMs())` at recorder-store.ts:943 closes the gap before the second camera's first frame reaches the file. If the second reopen then returns \"unavailable\", the `gaps.close` at line 948 does nothing, because no gap is open any more. Either way the editor shows the held frame for part of a period the camera was off. A test for this sequence would show whether the gap stays open until the second camera's frames arrive.\n\n<!-- wachi:finding -->"
+ }
+]
