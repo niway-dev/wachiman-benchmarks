@@ -393,6 +393,7 @@ export const PRIMARY_DOC: Record<string, string> = {
   W16: "2026-11-25-v1.4.0-rerun", W17: "2026-11-25-v1.4.0-rerun", W18: "2026-11-25-v1.4.0-rerun",
   W19: "2026-11-26-release-bisect", W20: "2026-11-26-release-bisect", W21: "2026-11-26-release-bisect",
   W22: "2026-11-26-release-bisect", W23: "2026-11-26-release-bisect", W24: "2026-11-26-release-bisect",
+  W25: "2026-11-26-release-bisect", W26: "2026-11-26-release-bisect", W27: "2026-11-26-release-bisect",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {

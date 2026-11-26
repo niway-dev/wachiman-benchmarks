@@ -509,6 +509,7 @@ export const PINNED_SHAS: Record<string, string> = {
   "e09fc2d6039d7617f727508754c0274cd042c959": "v1.4.0",
   "31f422b5cb041dc9c03f9570c2f9444d8c6bfb89": "v1.5.0",
   "b3f60be4c939d1779bab86ed92d12f538c14295a": "v1.9.0",
+  "6b99963512ba29187353d68b21765c4daa032099": "v1.15.0",
 };
 
 /**

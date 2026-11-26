@@ -111,9 +111,11 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   links it; `wachi-workflow.yml` now has the same inputs. `bench.sh` never installs them: they were
   put on the repository's `main` through the contents API for those runs, then `main` went back to
   `wachi-workflow.yml`.
-- `wachi-workflow-v1.5.0.yml`, `wachi-workflow-v1.9.0.yml` and `manifest-2026-11-26-bisect.tsv`:
-  the release bisect (W19–W24): each release pinned by SHA with W4–W6's inputs plus
-  `budget_usd: 10`, on kaipu-record #465 and #467 only. Put on `main` the same way.
+- `wachi-workflow-v1.5.0.yml`, `wachi-workflow-v1.9.0.yml`, `wachi-workflow-v1.15.0.yml` and
+  `manifest-2026-11-26-bisect.tsv`: the release bisect (W19–W27): each release pinned by SHA with
+  W4–W6's inputs plus `budget_usd: 10` (and `verify: false` for v1.15.0), on kaipu-record #465 and
+  #467 only. v1.5.0 and v1.9.0 pass only `ANTHROPIC_API_KEY`, v1.15.0 only
+  `CLAUDE_CODE_OAUTH_TOKEN`. Put on `main` the same way.
 
 ## Details worth knowing
 

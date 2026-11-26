@@ -38,7 +38,7 @@ const D1125 = "2026-11-25-v1.20.1-replay/README.md (W7 = #2–#6, W8 = #7–#11,
 const D1125F = "2026-11-25-v1.21.0-focus-replay/README.md (W10 = #17–#21, W11 = #22–#26, W12 = #27–#31)";
 const D1125B = "2026-11-25-v1.21.0-budget-replay/README.md (W13 = #32–#36, W14 = #37–#41, W15 = #42–#46)";
 const D1125V = "2026-11-25-v1.4.0-rerun/README.md (W16 = #47–#51, W17 = #52–#56, W18 = #57–#61)";
-const D1126S = "2026-11-26-release-bisect/README.md (W19-W21 = #62-#67 on v1.5.0, W22-W24 = #68-#73 on v1.9.0; kaipu-record #465 and #467)";
+const D1126S = "2026-11-26-release-bisect/README.md (W19-W21 = #62-#67 on v1.5.0, W22-W24 = #68-#73 on v1.9.0, W25-W27 = #74-#79 on v1.15.0; kaipu-record #465 and #467)";
 
 /** `r<n>` of a kaipu-bench-wachi replay → the label the docs use. */
 function wachiLabel(round: string): Label | null {
@@ -70,6 +70,7 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
   if (repo === "kaipu-bench-wachi-v3" && SET1.has(original)) {
     const n = Number(round.slice(1));
     // #68-#73: the replay-v190/ branches, v1.9.0 on #465 and #467 only (release bisect, BENCH_FOCUS=as-is).
+    if (pr >= 74 && pr <= 79 && n >= 1 && n <= 3) return { label: `W${n + 24}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.15.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, verify false, focus file at .github/wachiman.md (BENCH_FOCUS=rename), subscription token: estimated cost" };
     if (pr >= 68 && pr <= 73 && n >= 1 && n <= 3) return { label: `W${n + 21}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.9.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, focus file at .github/agent-review.md (read with a notice), API key: billed cost" };
     // #62-#67: the replay-v150/ branches, v1.5.0 on #465 and #467 only (release bisect, BENCH_FOCUS=as-is).
     if (pr >= 62 && pr <= 67 && n >= 1 && n <= 3) return { label: `W${n + 18}`, confidence: "derived", basis: D1126S, model: "claude-opus-5-5", version: "v1.5.0", notes: "Release bisect: Opus 5.5, effort high, budget_usd 10, focus file at .github/agent-review.md, API key: billed cost" };
