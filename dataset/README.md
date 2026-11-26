@@ -30,6 +30,7 @@ markdown. Everything comes from the GitHub API through `gh`. No model ran to bui
 | [`labels.csv`](labels.csv) | finding that matched a verdict | The owner's verdict ID from the analysis docs (E/A/N/X/SN/NS for the replays, F for the field run), the verdict text, the match score and why. |
 | [`labelled-runs.csv`](labelled-runs.csv) | run × replayed PR that an analysis doc labelled | The run's column in the doc's Expected issues table: how many known bugs (E) the doc lists, how many the run caught or caught in part, and their IDs. See [Labelled, caught none](#labelled-caught-none). |
 | [`known-bugs.csv`](known-bugs.csv) | known bug (E row) per replayed PR | `original_pr,id,severity,title,doc`. The Expected issues rows (E1…En) of the primary per-PR doc for that PR: the newest doc whose Expected table has a Severity column. `severity` is High, Medium, Low or Info. `doc` is that doc's directory. The ids are the ones `labelled-runs.csv` lists in `expected_caught_ids` (except S7–S9 on #464, whose doc counts its A rows in the table). Written by `scripts/known-bugs.ts`; a severity that differs between docs is printed as a warning and the primary doc wins. |
+| [`martian-runs.csv`](martian-runs.csv) | Wachiman run on Martian's 50-PR benchmark | `run,date,version,model,effort,repeat,verifier,full_run,prs,...`: one row per `martian/runs/<run>/metrics.json`, flattened. Quality is the judge's score over all golden comments (`precision`, `recall`, `f1`, and `hc_found` of `hc_total` high-confidence ones); cost is what Wachiman spent (`cost_usd`, `cost_per_pr_median_usd`), not the judge (`judge_cost_usd`). `version`, `model`, `effort` and `repeat` come from the directory name; a directory of another shape (a partial re-run) has them empty and `full_run = false`. Written by `scripts/martian-runs.ts`. |
 | [`annotations.csv`](annotations.csv) | note, hand-written | `target_kind,target,text,link`. A short explanation a reader needs next to a number. `target_kind` is `version`, `variant`, `view`, `pr` or `bug`; `target` is the value it explains (for example `v1.3.0`, a variant such as `v1.21.0+cache-5m`, a PR number, or a bug as `<pr>:<id>`); `text` is the note; `link` is a path in this repository, with an optional `#anchor`. RFC 4180 quoting. Not generated: edit it by hand. |
 | [`ambiguous.md`](ambiguous.md) | — | Findings in an analysed set that could not be matched with enough evidence, with their best candidates. |
 | [`raw/`](raw) | pull request | The API snapshots: `pr.json`, `review-comments.json`, `reviews.json`, `issue-comments.json`, `runs.json`, `meta.json` and `logs/run-<id>.log.gz`. Per repository, `_index.json` and `_runs.json`. |
@@ -74,6 +75,7 @@ bun scripts/runs.ts      --raw dataset/raw --out dataset/runs.csv
 bun scripts/normalize.ts --raw dataset/raw --out dataset
 bun scripts/labels.ts    --dataset dataset
 bun scripts/known-bugs.ts --dataset dataset   # reads the per-PR docs; writes known-bugs.csv
+bun scripts/martian-runs.ts                   # reads martian/runs/*/metrics.json; writes martian-runs.csv
 
 bun test scripts
 ```
