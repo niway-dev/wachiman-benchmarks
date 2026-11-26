@@ -28,8 +28,8 @@ Reports: [v1.20.1](2026-11-25-v1.20.1-replay/README.md),
 **Short version: with the budget to read every file, v1.21.0 caught 32 of 81 against v1.4.0's
 34 the same day (35 on Nov 2). Three runs per set cannot tell a gap that small from the 9-to-14
 spread between runs of one version, so no loss is shown. With the $3
-default it leaves 11 to 19 of #467's 47 files unread in every run and catches 27.** The $10 run
-shows the budget is what cut those reviews short. The mechanism, read from the engine code, is the
+default it leaves 11 to 19 of #467's 47 files unread in every run and catches 27.** The cut batches
+ended on `budget`, and with $10 no review was partial. The mechanism, read from the engine code, is the
 parallel batches: each running
 batch reserves its $0.75 cap, so the ones that start last on a large PR find too little left.
 
@@ -73,7 +73,7 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
 - **What would prevent it:** an estimate before the review starts, and a stop that asks for more
   budget when the estimate is above it, instead of a review that runs out halfway. That is the
   [budget gate design](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-11-21-budget-gate-design.md)
-  in the engine repository, built in two open pull requests: the
+  in the engine repository, being built, as of 2026-11-25, in two open pull requests: the
   [skip and approve](https://github.com/niway-dev/wachiman/pull/295) step and the
   [room for one turn](https://github.com/niway-dev/wachiman/pull/298) fix. Until they ship, a
   caller that reviews large PRs should raise `budget_usd`.
