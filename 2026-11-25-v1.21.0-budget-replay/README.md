@@ -16,7 +16,8 @@
 **Yes, mostly. With $10, every review read every file, and v1.21.0 caught 32 of 81 known-bug
 chances, against 27 at $3. v1.4.0, re-run the same day, caught 34.** The budget was the main
 cause of the gap: on #467 the catches went from 4 to 10 of 30 (v1.4.0: 12). On the four smaller
-pull requests nothing changed (22 or 23 of 51 in every set), because their batches never ran out.
+pull requests the budget changed nothing (22 to 24 of 51 in every set), because their batches never
+ran out.
 
 | Per review (15 reviews each) | v1.4.0 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0, $3 (W10–W12) | **v1.21.0, $10 (W13–W15)** | v1.4.0 again (W16–W18) |
 | --- | --- | --- | --- | --- | --- |
@@ -33,7 +34,7 @@ pull requests nothing changed (22 or 23 of 51 in every set), because their batch
 | Total, 15 reviews | $20.87 | $21.45 | $22.04 | $22.25 | $21.47 |
 | #467 cost per review | $2.82–$2.98 | $2.75–$3.15 | $2.89–$3.15 | $2.94–$3.03 | $2.81–$2.91 |
 | Cost per known bug caught | $0.60 | $0.71 | $0.82 | $0.70 | $0.63 |
-| Findings posted | 80 | 61 | 65 | 71 | 78 |
+| Findings posted (inline and in the review body; `findings.csv`) | 80 | 61 | 65 | 71 | 78 |
 | Turns per batch call | 13.7 | 8.2 | 8.5 | 10.1 | 14.1 |
 | Median model time (sum of batch calls) | 158 s | 138 s | 119 s | 121 s | 158 s |
 | Median wall time of the Actions run | not measured | 97 s | 86 s | 87 s | 180 s |
@@ -93,5 +94,9 @@ except for one input:
 - **Three runs per set.** 32 against 34 is not a difference these runs can resolve.
 - **The known-bug list was built from earlier versions' runs.** A bug only a newer version sees
   counts as new, not known.
-- **One more variable than the budget.** W13–W15 ran after W10–W12 on the same day; nothing else
-  in the setup changed.
+- **Two differences besides the budget, neither expected to matter.** W13–W15 ran about an hour
+  after W10–W12. And `ANTHROPIC_API_KEY` was in the repository from round 2 on: the workflow passes
+  both secrets, v1.21.0 prefers the token, and all 15 review footers say "Claude subscription".
+- **The per-PR docs map more comments than the 71 findings.** They also map the open questions in
+  the review bodies (87 in all), which `findings.csv` does not count as findings. The known-bug
+  counts come from the docs.
