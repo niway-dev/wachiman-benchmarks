@@ -95,7 +95,7 @@ reads them from a git ref instead.
 **933 findings** in total. Also: **859 contract entries**, **266 Wachiman reviews**,
 **283 run logs** with parsed cost/model/version, **372 rows in `runs.csv`**.
 
-Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 30
+Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 60
 kaipu-bench-wachi-v3 reviews are v1.20.1 (15, bench #2–#16), v1.21.0 (30: #17–#31 at the default budget, #32–#46
 with `budget_usd: 10`) and v1.4.0 (15, bench #47–#61).
 kaipu-record has 16 reviews on v1.4.0, 21 on v1.3.0, 70 on v1.2.x, 23 on the floating `v1` tag and 16 whose
