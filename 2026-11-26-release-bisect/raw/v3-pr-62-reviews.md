@@ -1,0 +1,56 @@
+# kaipu-bench-wachi-v3#62 [replay] feat(desktop): recording detail — title on top, destinations strip, copies from this original - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T01:32:25Z · commit dac8318
+
+👮 **Wachiman** · review of the whole pull request, at `dac8318`: all 14 files reviewed.
+
+4 finding(s): 4 to consider; 4 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+**Batch 1 of 2.** Part 1 replaces the "Where is this going?" strip on the recording page with two panels: DestinationsPanel, which shows before the first copy, and a reworked "Copies from this original" panel with dimensions, a progress bar, a Drag handle and Open in Export. It also reorders the page: title row first, then the metadata, the saved notice and buttons-only actions. The wiring holds up: the conditions for showing the panels, the notice and the heavy banner match the PR's description, and the drag goes through the existing validated IPC. I found three things, all at "consider" severity: the new Drag handle doesn't call `markCopySeen` (the ready card's Drag does), so a dragged copy still counts in the Library badge; the cards show "…" forever when the file read fails; and one test name promises a check it doesn't make. A side note on the PR body: it says there are seven destination cards with Email separate, but `DESTINATION_IDS` has six (Email is inside the chat card).
+
+**Batch 2 of 2.** I reviewed every file in part 2: the detail page test, the stylesheets, the backlog docs and the en/es messages. I checked each against the page, DestinationsPanel and MasterCopiesPanel code.
+
+- **Tests:** they match the new layout and behavior: the title row, the six destination cards and their `?to=` values, Not now, the saved notice, the copies grid and the heavy-master panel.
+- **Stylesheets:** every CSS custom property they use is defined in `packages/tokens/css/tokens.css` or `base.css`.
+- **Messages:** the removed `library.*` keys have no remaining callers. `sendTo` is still used by `video-card.tsx` and `video-row.tsx`, so keeping it is correct.
+
+**Finding:** one documentation fix. The QA step at `prepare-screen.md:184` says to drag the copy's row. Only the Drag button starts the native file drag; dragging the row drags a link instead.
+
+**Note on the PR description:** it says the panel has "Seven destinations, as in the design… Email is its own card". The code has six (`DESTINATION_IDS` in `destinations.ts:36-43`), and so do the tests. The backlog doc correctly says six, so the description is what's wrong.
+
+<details><summary>What the change connects to (7 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- The Drag handle on a ready copy starts a native file drag (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:171`) — Does the main-process startFileDrag handler validate the id and report failures? Files that would answer it: `apps/kaipu-record/src/preload/index.ts`, `apps/kaipu-record/src/main`.
+
+**Closed, with the lines they rest on**
+- Drag handle on a ready copy row starts a native file drag via startFileDrag(copy.id, copy.title) (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:171`) — Main resolves the id inside the vault and starts a native drag of a hard-linked file named after the title. The Library badge still counts the copy as unseen. If it fails: This is a fire-and-forget ipcMain.on: main validates the id (no slashes or '..') and returns silently when the check fails. The renderer never learns whether the drag failed. The button only renders… Evidence: `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:231-235`, `apps/kaipu-record/src/main/library/index.ts:155-167`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:54-58`, `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:92-98`, `apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:164-175`.
+- Probe the file for every local recording (previously only when heavy or when the card showed) (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`) — Shows the resolution in the metadata line, the per-destination estimates in DestinationsPanel and the dimensions of each copy row. While probe is null these show '…' or only the file size. If it fails: When the probe is unusable, the destination cards show '…' indefinitely and the dimensions meta is hidden. No error appears. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:41-56`.
+- Destination card click opens Prepare on that destination; Not now hides the panel (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:489-505`) — Navigates to Prepare. After Not now, the Export a copy button appears in the actions and the heavy banner shows if the file is heavy. If it fails: No async work. On router Back the component remounts, so destinationsDismissedFor and noticeDismissedFor reset: the panel and the 'Saved' notice (same location.key, fromRecording state) reappear. Thi… Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:134-151`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:189-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436-441`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:517-523`.
+- Copy row shows picture size computed from the master's probe and the copy's preset (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:104-114`) — Shows a line such as '2560 × 1440 · 22 MB', or only the size when there is no probe or preset. If it fails: If there is no probe, the row falls back to the file size only. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:189-193`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:179-187`.
+- Clicking a destination card in "Where is it going?" opens Prepare on that destination (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:493`) — The router goes to /prepare/:assetId?to=<id>. The test checks all six search strings. If it fails: This is synchronous navigation with no async work. Without a probe, the card's size shows "…" (estimate returns null), and clicking still works. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:149-151`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:73-93`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:36-43`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.test.tsx:253-266`.
+- "Not now" hides the destinations panel and shows "Export a copy" (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:494`) — showDestinations turns false. That removes the panel and renders the Export a copy button (gated on !showDestinations). If it fails: A remount, such as router Back or leaving and returning, resets the state, so the panel shows again, as the doc says ("for that visit"). Moving between recordings inside the same route instance keeps… Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:138-139`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:190-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436-441`.
+- The "Saved to your Library" notice on a fresh recording, dismissed with ✕ (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:394`) — A role=status banner appears above the player. ✕ hides it, and the masterNote appears. If it fails: No async work is involved. On Back to the same history entry, location.key matches but the state resets on remount, so the notice shows again for that entry. This matches the card's behavior. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:101`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:134-137`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:341-346`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.test.tsx:868-881`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 5 | 852 | 4 | reviewed | 12 | $0.61 |
+| Batch 2 of 2 | 9 | 763 | 2 | reviewed | 12 | $0.49 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · 2 batches · $1.10</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=dac8318b631e64780f65ce94b4aaa57261d7d63d -->
+
+<!-- wachi:attempt id=d9400d83-d387-410e-8c41-579a5904576a -->

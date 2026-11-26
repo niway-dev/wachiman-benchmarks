@@ -1,0 +1,97 @@
+# kaipu-bench-wachi-v3#71 [replay r2] feat(desktop): Export screen with its own rail entry (replaces Prepare) - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T01:48:07Z · commit b12d760
+
+👮 **Wachiman** · review of the whole pull request, at `b12d760`: all 47 files reviewed.
+
+9 finding(s): 4 to fix, 5 to consider; 9 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+**Batch 1 of 6.** Part 1 has one finding (severity fix, medium confidence): any library re-list unmounts the Export screen and resets what the user picked.
+
+`useLocalLibrary` sets `isLoading` again on every refresh, and `export-page.tsx:117` then swaps the whole page for "Loading…". For a signed-in user a refresh runs shortly after opening the page, when the cloud catalog refresh succeeds. Account changes and tag edits trigger one too. `ExportScreen` then remounts, and the destination picked, the YouTube 1440p/4K choice and the Fill/Fit framings go back to their defaults or to the URL's `?to=`. The page's `chosen` ref is not reset, so it still holds the old pick. A later Enter can therefore export a destination the user did not choose.
+
+I could not read the deleted Prepare page, so I don't know whether it had the same loading gate. Either way, this screen now holds much more state that the remount throws away.
+
+The rest of this part checks out:
+- **Routes:** the `/prepare` redirects keep the query and use replace.
+- **Email destination:** it is consistent across the logo, copy, groups and presets.
+- **`destination` passthrough in `usePrepareCopy`:** existing callers are unaffected.
+- **Enter/arrow handling:** it skips fields, buttons, links, other radio groups and the picker dialog.
+
+No new code adds a wait of its own. The one wait the page relies on, the source probe, is reused unchanged and has no timeout: a read that never settles leaves "Reading…" on screen. That predates this change.
+
+**Batch 2 of 6.** I reviewed the five files in part 2. One regression: the Library no longer mounts `useFileDrop`, and nothing else stops the default file drop. The main process has no `will-navigate` guard, so a video dropped on the Library makes Electron navigate the window to that file, contrary to the PR's claim that the drop "does nothing". I also suggest (as "consider") that the new 1440p/4K and Fill/Fit radio controls ignore the arrow keys, although `destinationStep`'s comment says those groups handle their own arrows. The export stage, recent exports and video picker otherwise match the code they reuse.
+
+**Batch 3 of 6.** Part 3 has one "consider" finding. The new Export badge clears on every /export route, including /export/:assetId, a screen that doesn't show the finished copies. The deleted Prepare files leave no imports pointing at them. The moved useFileDrop tests still check the same behaviour, and the destinations test correctly allows Email to share chat's Balanced preset. One question is open, about a file in another part: with Library's window drop handler gone, could a file dropped there make Electron navigate the window to it, contrary to the PR's \"does nothing\"?
+
+**Batch 4 of 6.** I found one problem in part 4, rated fix (medium confidence): dropping a file on the Library can now navigate the app window away. This PR removes the Library's drop zone, and with it the only `preventDefault` on file drags outside Export. The hook's own comment says an unhandled file drop makes Electron navigate the window to the file, and main has no `will-navigate` guard. The new Library test checks only that nothing is imported, not that the default was prevented, so it passes while the window navigates away. The new Export page tests and the route updates in the library-detail tests match the code they cover.
+
+**Batch 5 of 6.** I reviewed part 5 and found no defects, only two optional suggestions about the sidebar tests.
+
+- **Stylesheets:** every class the Export page components use is defined, and every CSS variable they use exists in `tokens.css` or `base.css`.
+- **Deleted files:** nothing still imports the removed drop-zone files.
+- **Deleted Prepare tests:** their coverage now lives in `export-page.test.tsx`.
+- **Sidebar badge:** the move from Library to Export matches the new `useExportBadge`.
+
+Suggestions:
+- **Bare `/export` never checked:** the test named "is active on Export with and without a video" only renders `/export/asset-1`.
+- **Running export untested:** no test checks that a running export adds to the Export badge count.
+
+**Batch 6 of 6.** I reviewed every file in part 6: routes, the window-size test, the Export stylesheets, the deleted Prepare stylesheet, the backlog doc and index, and the en/es messages. Every class and `data-tone` value the Export components use exists in their CSS. All new `export` i18n keys are used, the en and es files match key for key, and no remaining code reads the removed `library`/`prepare` keys. The doc's claims about the rail badge and about Recent exports showing three rows match the code.
+
+One real problem: the Library no longer handles files dropped on the window, and the main process has no `will-navigate` guard. A video dropped on the Library therefore makes Electron load the file in place of the app UI, with no message. There is also a leftover comment for the removed drop strip in `library-page.module.css`.
+
+<details><summary>What the change connects to (21 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- Library no longer mounts useFileDrop (ImportDropZone and its test removed); window-wide drop handling now exists only while Export is mounted (`apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.test.tsx:1`) — Does Electron navigate the window when a file is dropped on the Library now that it has no drop handler, or does something else stop that default? Files that would answer it: `apps/kaipu-record/src/main/index.ts`, `apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx`, `apps/kaipu-record/src/renderer/src/shell/app-shell.tsx`.
+
+**Closed, with the lines they rest on**
+- Global keydown listener: Enter runs the primary action, ←/→ move the destination selection (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:277`) — Enter with no destination picked does nothing (primary returns when plan is null). Otherwise it opens the existing copy or starts an export. A second export while one runs shows the busy toast (use-prepare-copy.ts:99-101). If it fails: The listener is removed on unmount, so nothing leaks after leaving the page. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:262-301`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:356-386`, `apps/kaipu-record/src/renderer/src/pages/export/video-picker.tsx:69-75`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:99-101`.
+- ExportPage gates the screen on useLocalLibrary().isLoading (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:117`) — The stage flashes "Loading…" and the selection goes back to the URL's ?to= (or to nothing). If it fails: A signed-in user loses the selection shortly after opening the page, and a later Enter can export the wrong destination. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-local-library.ts:41-42`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-local-library.ts:124-134`, `apps/kaipu-record/src/main/library/index.ts:73-77`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:212-221`.
+- Source probe wait before the screen renders ("Reading…") (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:92`) — A failed read shows the shareReadError toast and the drop zone. If it fails: Nothing bounds the whole wait: probeSource has no timeout, so a read that never settles leaves "Reading…" on screen until the user leaves. This behaviour predates this change. Evidence: `apps/kaipu-record/src/renderer/src/features/video-editor/export/probe-source.ts:28-47`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:95-99`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:144-146`.
+- copy.start with an explicit destination (Email shares chat's preset) (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:254`) — The progress and ready cards name the destination (Email falls back to "your export", as the PR describes). If it fails: When an export is already running, start returns false and shows the busy toast. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:97-128`.
+- Window-wide file drop and Browse files via usePrepareImport on Export (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:85`) — The drop zone shows dragging and importing; the imported video then opens on Export. If it fails: If relist() rejects, the navigation never runs and the user stays on the drop zone; refresh reports its own error toast. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:32-57`, `apps/kaipu-record/src/renderer/src/features/prepare/prepare-path.ts:12-15`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-local-library.ts:41-66`.
+- Legacy /prepare URLs redirect to /export, keeping the query (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:168`) — /prepare/:id?to=x lands on /export/:id?to=x. Evidence: `apps/kaipu-record/src/renderer/src/app/router.tsx:68-74`, `apps/kaipu-record/src/shared/routes.ts:17-24`.
+- Library no longer mounts the window-wide file drop handler (`apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:53`) — The PR says dropping a file on the Library does nothing. The platform default applies instead, which per the hook's own comment navigates the window to the file. If it fails: The window navigates to file://<video>. The app UI and renderer-held state (an export in progress) are lost until the app reloads. Main has no will-navigate guard. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:9-11`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:29-33`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:55`, `apps/kaipu-record/src/main/index.ts:400-403`.
+- VideoPicker opens a list and closes on an outside mousedown or on Escape (`apps/kaipu-record/src/renderer/src/pages/export/video-picker.tsx:45-59`) — The pick navigates to exportPath(assetId, current destination), so Export reopens on the picked video. If it fails: Nothing async. Enter on a picker item is excluded from the screen's export shortcut (button:not([role=radio])), and arrows inside role=dialog are excluded too. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/video-picker.tsx:86-89`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:86-88`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:364`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:384`.
+- RecentExports reads the export runner for the copy in progress (`apps/kaipu-record/src/renderer/src/pages/export/recent-exports.tsx:34-36`) — The progress percentage updates through the runner store. When the export finishes, the row is replaced by a finished row once the Library refreshes. If it fails: If the export fails, the runner status leaves 'exporting' and the row disappears. The failure itself is reported by the runner's status cards, not by this strip. Evidence: `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:59`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:71`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:418`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:102-107`.
+- SizeBarCard tone and tag for light destinations (`apps/kaipu-record/src/renderer/src/pages/export/export-stage.tsx:295-307`) — The CSS styles the tones lighter, fits, not-lighter and over. 'unknown' gets no tone styling. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-stage.module.css:262-268`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:219-228`.
+- Export rail badge: the running export (status "exporting") plus finished copies not yet announced; announced on any /export* or /library route (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`) — The badge and its aria label (export.railBadge, "# copies in progress or ready") are on the Export rail item. The Library item no longer has a badge. If it fails: The store is in memory, so a relaunch clears it. /export/:assetId announces copies without showing them, because RecentExports renders only on /export with no video (reported as a finding). An export… Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:114-122`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:55-75`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:462-463`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:101-113`, `apps/kaipu-record/src/renderer/src/pages/export/recent-exports.tsx:12-36`, `packages/i18n/messages/en.json:946`.
+- Prepare page, its destination list and drop zone deleted; Export replaces them (`apps/kaipu-record/src/renderer/src/pages/prepare/prepare-page.tsx:1`) — /prepare URLs redirect to /export, per the routes table. If it fails: An unreadable probe shows a toast and redirects to /export with the destination kept. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:85-99`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:375`, `apps/kaipu-record/src/shared/routes.ts:17-24`.
+- A file is dropped on the Library page, which no longer mounts a drop handler (`apps/kaipu-record/src/renderer/src/pages/library/library-page.test.tsx:80`) — The test checks only that importVideoFiles is not called. In the app, the browser default for an unhandled file drop applies. If it fails: Electron navigates the window to the dropped file (the hook's own comment says so) and the app UI is replaced. No will-navigate guard exists in main. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:8-11`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:40-47`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:55`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:85`, `apps/kaipu-record/src/main/index.ts:400`.
+- Old /prepare URLs redirect to /export, keeping the query (`apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:374`) — The test checks the pathname and search for both the with-video and no-video URLs. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:168-173`.
+- A probe error on an open recording shows a toast and navigates to /export (`apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:329`) — The test asserts the toast and the /export pathname. If it fails: The failure is visible to the user: a toast plus the screen with no video. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:95-99`.
+- Export rail item shows a badge: the running export plus finished copies not yet announced. Opening Export or the Library clears the finished copies. (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111`) — Count and badgeLabel on the Export rail item (sidebar.tsx:79-81). The Library item no longer has a badge (sidebar.test.tsx:51). Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`, `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:72-82`, `apps/kaipu-record/src/renderer/src/shell/sidebar.test.tsx:44-79`.
+- Prepare page tests deleted; their coverage moved to the Export page tests (`apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:132`) — Export tests cover: busy export, unreadable file, screenshots, existing copy Ready, unexported edits, the Enter/keyboard rules, dropped imports, non-video drops, several videos, and old Prepare URLs redirecting. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:285-382`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:419-511`.
+- New stylesheets for the Export screen: page column layout, header, destination row, drop zone (`apps/kaipu-record/src/renderer/src/pages/export/export-page.module.css:9`) — Layout at the main window minimum of 900×670 fits the empty state (header + drop zone + recent exports) without clipping. Evidence: `packages/tokens/css/tokens.css:8-42`, `apps/kaipu-record/src/renderer/src/assets/base.css:72-80`, `apps/kaipu-record/src/shared/window-size.ts:50`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:101-115`.
+- Legacy /prepare and /prepare/:assetId kept as routes that redirect to /export keeping the query (`apps/kaipu-record/src/shared/routes.ts:21-24`) — Old links land on Export; the window keeps the default preset. Evidence: `apps/kaipu-record/src/shared/routes.ts:17-24`, `apps/kaipu-record/src/shared/window-size.test.ts:18-25`, `apps/documentation/src/content/docs/backlog/export-screen.md:29-31`.
+- Library stops handling files dropped on the window (`apps/documentation/src/content/docs/backlog/export-screen.md:50-51`) — A drop on the Library falls through to Chromium's default and the window navigates to the file. If it fails: Silent: the app UI is replaced and nothing guards navigation in main. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:8-11`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:48-51`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:55`, `apps/kaipu-record/src/main/index.ts:400-403`.
+- Export rail badge (moved from Library) clears finished copies on opening Export or Library (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`) — Badge on EXPORT with label export.railBadge. Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:79-81`, `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:114-122`, `packages/i18n/messages/en.json:946`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 6 | 13 | 777 | 4 | reviewed | 16 | $0.63 |
+| Batch 2 of 6 | 5 | 987 | 4 | reviewed | 15 | $0.48 |
+| Batch 3 of 6 | 7 | 789 | 4 | reviewed | 22 | $0.58 |
+| Batch 4 of 6 | 3 | 603 | 2 | reviewed | 8 | $0.34 |
+| Batch 5 of 6 | 8 | 854 | 2 | reviewed | 15 | $0.41 |
+| Batch 6 of 6 | 11 | 843 | 4 | reviewed | 17 | $0.62 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 6 batches · 114 in / 44k out / 2.6M cache read / 332k cache write · $3.07</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=b12d760bd90b1e9619bab115f500f9c1a30cccf3 -->
+
+<!-- wachi:attempt id=a1690968-d13a-428d-9430-a8e33b19a578 -->

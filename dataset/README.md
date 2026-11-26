@@ -84,34 +84,35 @@ reads them from a git ref instead.
 | --- | --- | --- | --- | --- |
 | kaipu-bench-wachi | 60 | 282 (258 inline, 24 body) | — | — |
 | kaipu-bench-wachi-v2 | 5 | 0 (see below) | — | — |
-| kaipu-bench-wachi-v3 | 61 | 275 (263 inline, 12 body) | — | — |
+| kaipu-bench-wachi-v3 | 73 | 367 (351 inline, 16 body) | — | — |
 | kaipu-bench-pullfrog | 5 | — | 7 | — |
 | kaipu-bench-pullfrog-v2 | 6 | — | 9 | — |
 | kaipu-bench-coderabbit | 10 | — | — | 15 |
 | kaipu-bench-coderabbit-v2 | 6 | — | — | 6 |
 | kaipu-record | 112 of 467 | 278 (266 inline, 12 body) | 34 | 27 (20 inline, 7 body) |
-| **Total** | 265 | **835** | **50** | **48** |
+| **Total** | 277 | **927** | **50** | **48** |
 
-**933 findings** in total. Also: **859 contract entries**, **266 Wachiman reviews**,
-**283 run logs** with parsed cost/model/version, **372 rows in `runs.csv`**.
+**1025 findings** in total. Also: **1031 contract entries**, **278 Wachiman reviews**,
+**295 run logs** with parsed cost/model/version, **384 rows in `runs.csv`**.
 
-Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 60
+Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 72
 kaipu-bench-wachi-v3 reviews are v1.20.1 (15, bench #2–#16), v1.21.0 (30: #17–#31 at the default budget, #32–#46
-with `budget_usd: 10`) and v1.4.0 (15, bench #47–#61).
+with `budget_usd: 10`), v1.4.0 (15, bench #47–#61), v1.5.0 (6, #62–#67) and v1.9.0 (6, #68–#73; both on #465 and
+#467 only).
 kaipu-record has 16 reviews on v1.4.0, 21 on v1.3.0, 70 on v1.2.x, 23 on the floating `v1` tag and 16 whose
 version is unknown (no log).
 
 ### Verdict join
 
-`labels.csv` has **521** rows. Of the 933 findings, 314 are outside the analysed sets (see
-[What is missing](#what-is-missing)), and 619 are in them: **521 matched, 98 are in
+`labels.csv` has **598** rows. Of the 1025 findings, 314 are outside the analysed sets (see
+[What is missing](#what-is-missing)), and 711 are in them: **598 matched, 113 are in
 [`ambiguous.md`](ambiguous.md)**.
 
 | `label_kind` | Rows |
 | --- | --- |
-| `expected` (E) | 240 |
-| `additional` (A) | 104 |
-| `new` (N, X, SN, NS, NF) | 85 |
+| `expected` (E) | 282 |
+| `additional` (A) | 127 |
+| `new` (N, X, SN, NS, NF) | 97 |
 | `field` (F) | 91 |
 | `false-positive` | 1 (#466 N5 in the v1.21.0 analysis, marked invalid) |
 
@@ -159,9 +160,10 @@ column for it in the Expected issues table, even when every cell says `no`.
 - `findings_labelled` counts that run's `labels.csv` rows on that PR (E, A and N), so 0 with a row
   means the run posted nothing an analyst matched.
 
-125 rows: W-R1…R3, PF-v1/v2 and CR-v1/v2 (2026-11-01), W4–W6 (2026-11-02), S7–S9 (2026-11-02-e1-sonnet),
+137 rows: W-R1…R3, PF-v1/v2 and CR-v1/v2 (2026-11-01), W4–W6 (2026-11-02), S7–S9 (2026-11-02-e1-sonnet),
 W7–W9 (2026-11-25-v1.20.1-replay), W10–W12 (2026-11-25-v1.21.0-focus-replay), W13–W15
-(2026-11-25-v1.21.0-budget-replay) and W16–W18 (2026-11-25-v1.4.0-rerun), each on #463–#467. A later doc that copies an earlier run's
+(2026-11-25-v1.21.0-budget-replay) and W16–W18 (2026-11-25-v1.4.0-rerun), each on #463–#467, and W19–W24
+(2026-11-26-release-bisect) on #465 and #467. A later doc that copies an earlier run's
 column for comparison does not label it again.
 
 ### Wachiman v1.20.1 formats
@@ -195,7 +197,7 @@ is 0 everywhere). v1.3.0 and earlier reviews have no contracts.
 `runs.csv` is derived, and the owner should check it. `confidence` says how:
 
 - `derived`: tool, model, version and date come from the snapshots and the run logs; the label comes from a doc that
-  names it (`basis` gives the doc). 309 rows.
+  names it (`basis` gives the doc). 321 rows.
 - `guessed`: 63 rows. Labels that no doc gives (`W-set2-R1…R3` and `CR-set2` for the five bug-catalogue PRs #402
   #255 #276 #269 #184, replayed in bench PRs #46–#60 and coderabbit #6–#10; `W-v2` for the failed wachi-v2 repo),
   Pullfrog and CodeRabbit round numbers on kaipu-record (`PF-1`, `CR-2`: the field docs name rounds by commit, I
