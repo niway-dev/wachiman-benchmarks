@@ -51,11 +51,13 @@ calls, against $30.42 to $31.37 for the v1.9.0 runs. From `data/judge-calls/`:
 | Uncached input | 1.58 M | 0.01 M |
 
 Each Opus judge call now carries about 69,000 prompt tokens, mostly read from the cache, against
-about 1,500 in v1.9.0 r3. The
-cause, found after the run: the profile the judge runs in has claude.ai connectors (MCP servers),
+about 1,500 in v1.9.0 r3. The cause, found after the run: the profile the judge runs in has claude.ai connectors (MCP servers),
 and the Claude Code CLI loaded their tool definitions into every call even with `--tools ""`. One
-test call measured 65,389 cached prompt tokens and $0.063 as the shim ran; with
-`--strict-mcp-config` and an empty MCP config, 714 tokens and $0.005. `scripts/judge_shim.py`
+test call (a one-line prompt, not a real judge prompt) measured 65,389 cached prompt tokens and
+$0.063 as the shim ran; with `--strict-mcp-config` and an empty MCP config, 714 tokens and $0.005.
+A real judge call adds its own prompt on top, which the v1.9.0 r3 figure of about 1,500 includes.
+The connectors were added to the judge's profile after v1.9.0 r3 was judged; the fix returns the
+calls to that condition. `scripts/judge_shim.py`
 now passes both. Wachiman's own reviews already pass `--strict-mcp-config`
 ([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215/src/providers/claude-code.ts#L225)), so its product cost
 is not affected. The judge model is the same, so the scores stay comparable, though that the
