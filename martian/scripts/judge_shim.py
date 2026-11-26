@@ -6,7 +6,7 @@ unmodified pipeline reach the same Anthropic model through the Claude Code CLI o
 point MARTIAN_BASE_URL at it and set MARTIAN_MODEL=anthropic/<model-id>.
 
 What is forwarded: the system message (as --system-prompt) and the user message (on stdin), with
-no tools, no settings, no session persistence. What is lost: `temperature` (the CLI has no such
+no tools, no settings, no MCP servers, no session persistence. What is lost: `temperature` (the CLI has no such
 option) and `response_format` (unused by the default pipeline). Every call is appended to a JSONL
 log with its duration, model usage and reported cost, so the run can be audited.
 
@@ -33,6 +33,9 @@ def run_claude(model: str, system: str, user: str, timeout: int) -> dict:
         "--system-prompt", system,
         "--tools", "",
         "--setting-sources", "",
+        # No MCP servers: the profile's claude.ai connectors otherwise add about 65,000 tokens of
+        # tool definitions to every call (measured 2026-11-26: $0.063 a call with them, $0.005 without)
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--no-session-persistence",
         "--output-format", "json",
     ]
