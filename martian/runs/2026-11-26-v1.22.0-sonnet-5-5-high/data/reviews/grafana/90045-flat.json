@@ -1,0 +1,182 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90045-flat` of grafana-90045-flat against 66c4dff17e9147b11fb9b14c6ed63089a599da65 (merge-base 66c4dff)",
+    "repository": {
+      "name": "grafana-90045-flat"
+    },
+    "base": {
+      "sha": "66c4dff17e9147b11fb9b14c6ed63089a599da65",
+      "ref": "66c4dff17e9147b11fb9b14c6ed63089a599da65"
+    },
+    "head": {
+      "sha": "d8bdb59a12b36564bc4d72888cacc9c8193c3f47",
+      "ref": "pr-90045-flat"
+    },
+    "title": "pr-90045-flat",
+    "description": "Dual Storage Architecture",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.work.sum",
+      "pkg/apiserver/rest/dualwriter_mode1_test.go",
+      "pkg/apiserver/rest/dualwriter_mode3.go",
+      "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "pkg/tests/apis/playlist/playlist_test.go"
+    ],
+    "reviewed": [
+      "go.work.sum",
+      "pkg/apiserver/rest/dualwriter_mode1_test.go",
+      "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "pkg/apiserver/rest/dualwriter_mode3.go",
+      "pkg/tests/apis/playlist/playlist_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 50,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Async legacy writes inherit the request context and swallow their errors",
+      "body": "The legacy write in Create (50-57), Delete (108-114), Update (134-141) and DeleteCollection (161-167) runs in a goroutine. Its context is derived from the request `ctx` through `context.WithTimeoutCause(ctx, ...)`. The handler returns right after launching the goroutine. In the k8s apiserver the request context is cancelled when the handler returns, so the legacy write can be cancelled before it runs or while it is running. The legacy store can then silently miss writes. The new 10s timeout does not help, because the parent's cancellation wins. Use a context detached from the request's cancellation, for example `context.WithoutCancel(ctx)` wrapped in the timeout, so the logger and values are kept. The goroutines also never log a legacy error. They only record a metric, so a failed legacy write leaves no log line. The old code logged `unable to create object in legacy storage`. Add `log.Error` in each goroutine. I did not read the apiserver handler code that cancels the request context, so confidence is medium.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 45,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Duration metrics are recorded under the wrong store, and Delete uses the wrong kind label",
+      "body": "The metrics are exposed as `dual_writer_legacy_duration_seconds` and `dual_writer_storage_duration_seconds`, so the wrong call mislabels the data:\n- Line 45 (Create) and line 129 (Update) time a failing Storage call but call `recordLegacyDuration`.\n- Line 166 (DeleteCollection) times the Legacy call but calls `recordStorageDuration`.\n- Line 106 (Delete) passes `name` as the `kind` label. Every other call passes `options.Kind`. This creates one label series per object name, which is unbounded cardinality on a histogram.\n\nFix the four calls.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 97,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Delete stores the base logger in ctx instead of the enriched one",
+      "body": "`ctx = klog.NewContext(ctx, d.Log)` drops the `name`, `kind` and `method` values. Every other method passes `log`. The goroutine's legacy Delete therefore logs without that context. Use `log`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+      "line": 139,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Update no longer hands the legacy store the object that was written to storage",
+      "body": "The old code read the object from Storage and wrapped the result in `updateWrapper`, so Legacy received exactly the object written to Storage. Mode 2 still does this (`pkg/apiserver/rest/dualwriter_mode2.go:298`, 313-317). Now the same `objInfo` is passed to both stores. Legacy computes its own result against its own copy of the object. If the object is missing in legacy, or its resourceVersion or UID differs from unified storage, the legacy write can conflict or diverge. Is this intended? If so, a test or comment should say how the stores are expected to stay in sync.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/apiserver/rest/dualwriter_mode3_test.go",
+      "line": 63,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Legacy writes are never asserted, and several test names and setups are misleading",
+      "body": "Create, Delete, Update and DeleteCollection call Legacy in a goroutine. The tests share one `mock.Mock` between the legacy and storage mocks and never wait for or assert the legacy call (`AssertCalled` or a sync point). The legacy half of Mode 3 is untested. Any legacy call is satisfied by the shared storage expectation, and an unmatched call would panic in a goroutine after the test has finished. Specific cases:\n- Line 40: the legacy setup func registers the failing Storage call, because both mocks use the same `m`.\n- Line 145: \"…is not implemented\" is stale, since List is now implemented.\n- Several assertions only check `NotEqual` against another object, which proves little.\n\nAdd a test that asserts Legacy is invoked after a successful Storage write, and that it is not invoked after a failed one.",
+      "anchor": "diff"
+    },
+    {
+      "path": "go.work.sum",
+      "line": 408,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Unrelated go.work.sum churn, including a duplicated line",
+      "body": "Line 408 duplicates line 404 exactly (`grafana/pkg/apimachinery ...go.mod`). The new azure-sdk, otel and genproto lines are unrelated to a dual-writer change and are out of sorted order. Drop them, or regenerate with `go work sync`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Mode 3 write path: Storage write synchronously, then Legacy write in a background goroutine (Create/Update/Delete/DeleteCollection)",
+      "location": "pkg/apiserver/rest/dualwriter_mode3.go:50",
+      "status": "open",
+      "evidence": [
+        "pkg/apiserver/rest/dualwriter_mode3.go:50-57",
+        "pkg/apiserver/rest/dualwriter_mode3.go:108-114",
+        "pkg/apiserver/rest/dualwriter_mode3.go:134-141",
+        "pkg/apiserver/rest/dualwriter_mode3.go:161-167"
+      ],
+      "equivalent_path": "Previous Mode3 code (same file at base) wrote Legacy synchronously and logged its errors; Mode2 (pkg/apiserver/rest/dualwriter_mode2.go:44-51) writes Legacy synchronously and returns on error.",
+      "before_after": "Before: legacy write completed before the response and failures were logged. After: the response returns once Storage succeeds. The Legacy write runs detached, with a ctx derived from the request ctx.",
+      "visible_effect": "Client sees success from Storage only. Legacy API readers may briefly or permanently see stale data.",
+      "failure_mode": "If the request ctx is cancelled on handler return, legacy writes can be cancelled. Errors are only recorded as a metric, not logged. A legacy failure is invisible to the user and to the logs.",
+      "open_question": "Is the request context cancelled when the k8s apiserver handler returns, before the goroutine's Legacy call finishes?",
+      "candidates": [
+        "vendor or go mod cache: k8s.io/apiserver/pkg/endpoints/handlers/create.go"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Bound on the async legacy write",
+      "location": "pkg/apiserver/rest/dualwriter_mode3.go:51",
+      "status": "closed",
+      "evidence": [
+        "pkg/apiserver/rest/dualwriter_mode3.go:51-52",
+        "pkg/apiserver/rest/dualwriter_mode3.go:110-111",
+        "pkg/apiserver/rest/dualwriter_mode3.go:135",
+        "pkg/apiserver/rest/dualwriter_mode3.go:163-164"
+      ],
+      "equivalent_path": "Mode 1 and 2 legacy calls run synchronously under the request ctx",
+      "before_after": "Each goroutine is capped at 10s by WithTimeoutCause. Nothing limits how many goroutines run concurrently.",
+      "visible_effect": "No direct user wait. A slow legacy store accumulates goroutines, each living up to 10s.",
+      "failure_mode": "The 10s cap covers the whole Legacy call, because there is one call per goroutine. Cancellation of the parent request ctx can end it earlier.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Mode 3 now writes Storage first and Legacy in a background goroutine, and List is implemented. The main problems are that the legacy goroutines use the request context, so their writes may be cancelled when the handler returns, and that their errors are never logged. Four duration-metric calls use the wrong store or label (the Delete one puts the object name in the kind label). The unit tests never assert that Legacy is called. go.work.sum has unrelated churn, including a duplicated line.\",\"risk_facts\":[{\"kind\":\"concurrency\",\"path\":\"pkg/apiserver/rest/dualwriter_mode3.go\",\"line\":50,\"why\":\"Legacy writes move to detached goroutines that run after the response and can fail or be cancelled without any log.\"},{\"kind\":\"public-contract\",\"path\":\"pkg/apiserver/rest/dualwriter_mode3.go\",\"line\":134,\"why\":\"Update now passes the same objInfo to both stores instead of the object written to Storage, which can change what the legacy store ends up holding.\"},{\"kind\":\"dependency\",\"path\":\"go.work.sum\",\"line\":405,\"why\":\"Unrelated checksum entries are added, including a duplicated line.\"}]",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 655,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 9,
+      "costUsd": 0.1911523
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "66c4dff17e9147b11fb9b14c6ed63089a599da65"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1911523,
+    "usage": {
+      "input": 8,
+      "output": 6618,
+      "cacheRead": 126688,
+      "cacheWrite": 44915
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 9,
+    "durationMs": 53659,
+    "stop": "complete",
+    "notices": []
+  }
+}

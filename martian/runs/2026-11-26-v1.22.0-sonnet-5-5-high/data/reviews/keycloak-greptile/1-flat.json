@@ -1,0 +1,193 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-1-flat` of keycloak-greptile-1-flat against 30f804af450dec523909a52f2a4b97302d27f5cc (merge-base 30f804a)",
+    "repository": {
+      "name": "keycloak-greptile-1-flat"
+    },
+    "base": {
+      "sha": "30f804af450dec523909a52f2a4b97302d27f5cc",
+      "ref": "30f804af450dec523909a52f2a4b97302d27f5cc"
+    },
+    "head": {
+      "sha": "cdf194c55c8532404c4e8f9c31f8cd29a7eb9f8c",
+      "ref": "pr-1-flat"
+    },
+    "title": "pr-1-flat",
+    "description": "Fixing Re-authentication with passkeys",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/AbstractUsernameFormAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/util/AuthenticatorUtils.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysOrganizationAuthenticationTest.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernameFormTest.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java"
+    ],
+    "reviewed": [
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/AbstractUsernameFormAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java",
+      "services/src/main/java/org/keycloak/authentication/authenticators/util/AuthenticatorUtils.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysOrganizationAuthenticationTest.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernameFormTest.java",
+      "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java",
+      "line": 47,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Call to isConditionalPasskeysEnabled() with no arguments does not compile",
+      "body": "The only definition of `isConditionalPasskeysEnabled` in the repository is `UsernamePasswordForm.isConditionalPasskeysEnabled(UserModel user)` (UsernamePasswordForm.java:160). A grep over all *.java files finds no no-arg overload. `UsernameForm.authenticate` calls `isConditionalPasskeysEnabled()`, so the `services` module fails to compile and nothing in this PR can build or run. Pass the user instead: `if (context.getUser() != null && !isConditionalPasskeysEnabled(context.getUser()))`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java",
+      "line": 161,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "`user != null` condition disables passkeys on the initial (unidentified) login",
+      "body": "Before this change, the passkey setup in `authenticate` ran only when the user was NOT yet identified, and `challenge(...)` on error ran only when `context.getUser() == null`. The new helper returns `webauthnAuth != null && isPasskeysEnabled() && user != null`, so `fillContextForm` is now called only when a user is already set. In a normal first login `context.getUser()` is null: `authenticate` takes the `else` branch (line 103) and `isConditionalPasskeysEnabled(null)` at line 115 is false. The login page is then rendered without the conditional-UI attributes (challenge, rpId, `ENABLE_WEBAUTHN_CONDITIONAL_UI`). The same applies to the error path at line 137, because `getUser` clears the user before a failed username/password check. This breaks the main passkeys feature. The existing tests assert it, for example `PasskeysUsernamePasswordFormTest.webauthnLoginWithDiscoverableKey` (auto-login) and `passwordLoginWithNonDiscoverableKey` (`//form[@id='webauth']` present and autocomplete `username webauthn` on the first page). It also looks inverted against the intended behaviour: the Organization test expects the webauthn form with the user already selected. The condition should allow `user == null`. For a set user it should probably check that the user has a passwordless credential (`user.credentialManager().isConfiguredFor(webauthnAuth.getCredentialType())`). That would also make the `reauthenticationOfUserWithoutPasskey` comment true.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java",
+      "line": 277,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "reauthenticationOfUserWithoutPasskey does not cover a user without passkey",
+      "body": "The comment says passkeys should not be shown during re-authentication because \"this user does not have passkey\". The test actually disables passkeys at realm level (`setWebAuthnPolicyPasskeysEnabled(FALSE)`), so it only checks the realm switch. The case of a realm with passkeys enabled and a re-authenticating user who has no passkey is untested. The current helper (`user != null`) would show the passkey form to such a user. Add a test with passkeys enabled and a password-only user, or fix the comment. Separately, `catch (Exception nsee)` around `findElement`/`fail` is a weak pattern. `Assert.assertThrows(NoSuchElementException.class, ...)`, as used in the Organization test, is clearer.",
+      "anchor": "diff"
+    },
+    {
+      "path": "testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java",
+      "line": 213,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "webauthnLoginWithExternalKey_reauthentication largely duplicates other tests",
+      "body": "The first half is a verbatim copy of `passwordLoginWithExternalKey` (lines 172-210), and the re-authentication half is covered again by `webauthnLoginWithExternalKey_reauthenticationWithPasswordOrPasskey`. The shared setup could be pulled into a helper like `setPasswordlessPolicyForExternalKey`. The duplicated test also lengthens the already-slow browser suite.",
+      "anchor": "diff"
+    },
+    {
+      "path": "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java",
+      "line": 65,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Missing @Override on overriding method",
+      "body": "`shouldShowWebAuthnAuthenticators` overrides the protected method added in `WebAuthnAuthenticator`, but has no `@Override`. Add it so a later signature change in the parent is caught at compile time.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Conditional-UI passkey form setup in UsernamePasswordForm.authenticate and challenge(error), gated by the new isConditionalPasskeysEnabled(user)",
+      "location": "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java:115",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java:103-117",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java:137-140",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java:160-162",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/AbstractUsernameFormAuthenticator.java:138-148"
+      ],
+      "equivalent_path": "Previous code: fillContextForm when user == null (authenticate, else-branch) and in challenge(error) only when context.getUser() == null",
+      "before_after": "Before: passkeys were set up only for an unidentified user. After: the call is moved out of the else branch, but the helper requires user != null, so it now fires only for an identified user and never for the initial login.",
+      "visible_effect": "The first login page loses the conditional-UI passkey form and auto-login; the re-authentication page gains it.",
+      "failure_mode": "Existing passkey login tests would fail. The user cannot use passkeys on the normal login page.",
+      "evidence_checked": true
+    },
+    {
+      "action": "AuthenticatorUtils.setupReauthenticationInUsernamePasswordFormError is called from badPasswordHandler and from the passkey error response",
+      "location": "services/src/main/java/org/keycloak/authentication/authenticators/util/AuthenticatorUtils.java:125",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/authentication/authenticators/util/AuthenticatorUtils.java:124-133",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/AbstractUsernameFormAuthenticator.java:222",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/AbstractUsernameFormAuthenticator.java:257-260",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java:48-57",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernamePasswordForm.java:99-104"
+      ],
+      "equivalent_path": "Old inline block in badPasswordHandler, which called isUserAlreadySetBeforeUsernamePasswordAuth(context)",
+      "before_after": "The helper reads the same auth note (USER_SET_BEFORE_USERNAME_PASSWORD_AUTH) with the same Boolean.parseBoolean and sets the same two attributes (USERNAME_HIDDEN, REGISTRATION_DISABLED). The behaviour is equivalent, and it now also runs on passkey errors (WebAuthnConditionalUIAuthenticator.createErrorResponse), so the re-authentication form keeps the username hidden after a failed passkey.",
+      "visible_effect": "After a failed passkey during re-authentication, the form still hides the username and registration link.",
+      "failure_mode": "None found. The note is removed in the user==null branch of authenticate, so stale state is not carried into a fresh login.",
+      "evidence_checked": true
+    },
+    {
+      "action": "WebAuthnAuthenticator.fillContextForm now asks shouldShowWebAuthnAuthenticators; the conditional-UI authenticator overrides it to false",
+      "location": "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java:101",
+      "status": "closed",
+      "evidence": [
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java:101-115",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java:128-130",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnConditionalUIAuthenticator.java:64-67",
+        "services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnPasswordlessAuthenticator.java:62-65"
+      ],
+      "equivalent_path": "Previous `if (user != null)` in the same method, which is still the default for the 2FA WebAuthnAuthenticator",
+      "before_after": "Before: with a user set, conditional UI would load allowed authenticators and return null (no form) if the user had none. After: conditional UI never does this, so a user without passwordless keys no longer short-circuits to null. SHOULD_DISPLAY_AUTHENTICATORS is already false via WebAuthnPasswordlessAuthenticator.",
+      "visible_effect": "Re-authentication page renders the passkeys form for any user with a set user (for the current helper).",
+      "failure_mode": "Default behaviour unchanged for 2FA callers.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR does not compile and, once fixed, still breaks passkeys on the normal login page. `UsernameForm.java:47` calls `isConditionalPasskeysEnabled()` with no arguments, but the only definition takes a `UserModel`. The new helper in `UsernamePasswordForm.java:161` also requires `user != null`. That turns passkey setup off for the initial unidentified login, which is the main use case and the one existing tests exercise. It enables passkeys only for re-authentication. Other findings are test duplication, a test whose comment doesn't match what it checks, and a missing `@Override`. I did not run or build anything, only read the code.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 9,
+      "lines": 431,
+      "maxRisk": 5,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.2382266
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "30f804af450dec523909a52f2a4b97302d27f5cc"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2382266,
+    "usage": {
+      "input": 10,
+      "output": 8931,
+      "cacheRead": 181641,
+      "cacheWrite": 52293
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 63610,
+    "stop": "complete",
+    "notices": []
+  }
+}

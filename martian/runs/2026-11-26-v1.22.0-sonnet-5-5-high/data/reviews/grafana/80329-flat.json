@@ -1,0 +1,151 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-80329-flat` of grafana-80329-flat against a886bd3c79a417a70b51509384d1f1ec3e87e96b (merge-base a886bd3)",
+    "repository": {
+      "name": "grafana-80329-flat"
+    },
+    "base": {
+      "sha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b",
+      "ref": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+    },
+    "head": {
+      "sha": "a17a7dcf9418c2c415ded93407dc77a43ebad1a3",
+      "ref": "pr-80329-flat"
+    },
+    "title": "pr-80329-flat",
+    "description": "Database Performance Optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "reviewed": [
+      "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "pkg/services/annotations/annotationsimpl/cleanup_test.go",
+      "pkg/services/cleanup/cleanup.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/cleanup/cleanup.go",
+      "line": 77,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Cleanup ticker cut from 10 minutes to 1 minute, unrelated to the PR",
+      "body": "The ticker now fires every minute, so every cleanup job runs 10x as often. These jobs are snapshots, dashboard versions, images, annotations, invites, short URLs and query history. `clean` still has a 9-minute timeout (line 89), and `Run` calls it synchronously. A slow pass therefore delays the next tick, and each pass issues the new ID-fetch queries again. This looks like a leftover from testing, and the PR title and body (\"Database Performance Optimizations\") don't mention it. Revert to `time.Minute * 10`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 534,
+      "severity": "fix",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Debug logging at Error level in the cleanup path",
+      "body": "Each batch writes `r.log.Error(...)` twice, with the full `ids` slice (up to batch-size IDs) and the raw SQL condition. The same pattern is at lines 537, 554, 557, 576 and 579. These are not errors, and they also run when nothing is deleted, so they log at ERROR level on every cleanup cycle. Combined with the 1-minute ticker, this floods logs and error alerting. The logged `err` is always nil at that point. Remove the calls, or use `Debug` without the ID list. Also rename the `x, y` variables to `affected, err`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 608,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Parameter limit is only handled for SQLite",
+      "body": "The placeholder path builds one `?` per ID. The inline-ID fallback only applies to SQLite when the batch size is above 999. Postgres allows at most 65535 bind parameters, so a configured `AnnotationCleanupJobBatchSize` above that would make every batch fail. Older MySQL prepared statements have a similar limit. The SQLite check also compares the configured batch size, not `len(ids)`. Consider chunking `ids` inside `deleteByIDs` for all dialects, or inlining the IDs everywhere (they are int64, so this is safe). The test name at cleanup_test.go:98 also mentions SQLite 3.32.0, but the code assumes the 999 limit for every SQLite version.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/annotations/annotationsimpl/xorm_store.go",
+      "line": 528,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Delete steps rely on a re-selected ID set with no re-check",
+      "body": "IDs are selected and then deleted by ID in separate statements, with no transaction and no re-check of the condition. The comment at line 525 accepts the case where concurrent inserts are missed. Deleting by ID is still safe, since only rows already matched are removed. The age and orphan conditions can't become false for those rows. For the orphan-tag path (line 570), an annotation_tag row picked as an orphan is not re-verified, but its annotation_id can't match a new annotation, so this is acceptable. No change is required; this is recorded as an explicit check.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Batched annotation and annotation_tag cleanup: SELECT ids, then DELETE ... WHERE id IN (...)",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:528",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:528-539",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:597-630",
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:643-661",
+        "pkg/services/cleanup/cleanup.go:123-131"
+      ],
+      "equivalent_path": "The previous single statement `DELETE ... WHERE id IN (SELECT id FROM (SELECT ... LIMIT n) a)` in executeUntilDoneOrCancelled. It looped until 0 rows were affected, with the same ctx cancellation.",
+      "before_after": "Before: one statement per batch. After: a SELECT in one session, then a DELETE in another. Both loop until a batch affects 0 rows, stop on error, and honour ctx. The MaxCount branch now falls through to the return instead of returning early, which is equivalent.",
+      "visible_effect": "Same rows are deleted. Counts are returned to cleanup.go, which logs them at Debug. Error-level log noise is new.",
+      "failure_mode": "If the SELECT or DELETE fails, the loop returns the partial count and the error, and cleanup.go logs it. If the context times out, ctx.Err() is returned and cleanup.go ignores DeadlineExceeded. Nothing is lost beyond retrying on the next tick. A concurrent delete of the same IDs yields 0 affected rows and ends the loop cleanly. A non-empty ID set whose deletion affects 0 rows would end the loop early without error, but the next cycle retries.",
+      "evidence_checked": true
+    },
+    {
+      "action": "DELETE of rows by ID, built with fmt.Sprintf on the table name and, for SQLite with a large batch size, inlined IDs",
+      "location": "pkg/services/annotations/annotationsimpl/xorm_store.go:608",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/annotations/annotationsimpl/xorm_store.go:597-630"
+      ],
+      "equivalent_path": "The previous DELETE built the same way with fmt.Sprintf from annotationType and the dialect Limit string.",
+      "before_after": "Before: the target was chosen inside the statement. After: IDs are chosen by a separate SELECT and then deleted by primary key. Only int64 values and constant table names are interpolated, so there is no injection.",
+      "visible_effect": "Annotations and tags are removed as before.",
+      "failure_mode": "If the SELECT returns no rows, deleteByIDs returns early, so no `IN ()` statement is built. Deleting by ID only touches rows the earlier SELECT matched, so a changed row set cannot cause deletion of unmatched rows. It removes at most batch-size rows per call. The Postgres parameter limit is not handled (see the finding).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The batched ID-select-then-delete approach is sound for the deletes. Two things need fixing. The cleanup ticker was changed from 10 minutes to 1 minute, which looks like a leftover from testing. The new code also logs batch details, including full ID lists, at Error level on every cycle. The Postgres bind-parameter limit is a minor gap. The test rewrite looks fine.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 261,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 5,
+      "costUsd": 0.09253349999999999
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b"
+  },
+  "execution": {
+    "costUsdEstimate": 0.09253349999999999,
+    "usage": {
+      "input": 4,
+      "output": 3916,
+      "cacheRead": 25955,
+      "cacheWrite": 20308
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 5,
+    "durationMs": 33922,
+    "stop": "complete",
+    "notices": []
+  }
+}

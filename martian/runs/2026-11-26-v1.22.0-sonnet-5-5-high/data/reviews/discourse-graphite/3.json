@@ -1,0 +1,180 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3` of discourse-graphite-3 against e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3 (merge-base e25638d)",
+    "repository": {
+      "name": "discourse-graphite-3"
+    },
+    "base": {
+      "sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+      "ref": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+    },
+    "head": {
+      "sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+      "ref": "pr-3"
+    },
+    "title": "pr-3",
+    "description": "Add BlockedEmail, to block signups based on email. Track stats of how many times each email address is blocked, and last time it was blocked. Move email validation out of User model and into EmailValidator. Signup form remembers which email addresses have failed and shows validation error on email field.",
+    "author": "Neil Lalonde"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20130724201552_create_blocked_emails.rb",
+      "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "app/controllers/users_controller.rb",
+      "app/models/blocked_email.rb",
+      "app/models/user.rb",
+      "config/locales/server.en.yml",
+      "lib/validators/email_validator.rb",
+      "spec/components/validators/email_validator_spec.rb",
+      "spec/fabricators/blocked_email_fabricator.rb",
+      "spec/models/blocked_email_spec.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "lib/validators/email_validator.rb",
+      "line": 13,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Validation has a write side effect, so each signup attempt counts twice",
+      "body": "`BlockedEmail.should_block?` increments `match_count` and saves inside the validator. `UsersController#create` validates twice: `user.valid?` at app/controllers/users_controller.rb:168, then `user.save` at :172, which validates again. Every signup attempt with a blocked email therefore adds 2 to `match_count`. The same happens for any `valid?` followed by `save` on a user whose email changed. The stats the PR advertises are silently wrong. Move the counting out of validation. For example, have the validator only query (`blocked?`) and record the match once at the point of rejection, or make the stat update happen only when `save` actually fails.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 12,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Blocklist lookup is case-sensitive, so changing the case of an email bypasses it",
+      "body": "`BlockedEmail.where(email: email)` is an exact string match, and the unique index on `email` is case-sensitive too. `User` does not normalise the email before validation (`User.new_from_params`, app/models/user.rb:84-91). A blocked `bad@spammers.org` can be signed up as `Bad@Spammers.org`, and no error or log shows it. The domain whitelist/blacklist in the same validator is case-insensitive (`Regexp.new(..., true)`), so this is inconsistent. Compare on `lower(email)`, or downcase on write and on lookup. `Email.downcase` is already used at user.rb:127.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/blocked_email.rb",
+      "line": 14,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Non-atomic read-modify-write on match_count",
+      "body": "`record.match_count += 1; record.save` loses updates when two signups for the same email run concurrently. It also runs a full validation (including a uniqueness query) just to bump a counter. `BlockedEmail.where(id: record.id).update_all([\"match_count = match_count + 1, last_match_at = ?\", Time.zone.now])` is atomic and cheaper.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/controllers/create_account_controller.js",
+      "line": 274,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Any email error is cached as \"invalid\" for the session",
+      "body": "The email is pushed into `rejectedEmails` for any `errors.email` entry, not only the blocked/not-allowed ones. For example, \"has already been taken\" also adds it. The field then shows `user.email.invalid` (line 72) rather than the server's reason. The entry is never cleared, so it stays rejected until reload even if the server-side state changes (such as an admin editing the blocklist). Consider showing the server's message from `result.errors.email`, or only caching the blocked/not-allowed cases.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/components/validators/email_validator_spec.rb",
+      "line": 9,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No test covers the User-level wiring or the signup response",
+      "body": "The specs only call `validate_each` with `should_block?` stubbed. Nothing checks that `User` is invalid when a `BlockedEmail` exists. Nothing checks that the whitelist/blacklist error suppresses the block lookup (`errors[attribute].blank?`). Nothing checks that the new `errors`/`values` keys appear in the `users#create` failure JSON. A user_spec or controller spec would also have caught the double-count in the first finding.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "User email validation now calls BlockedEmail.should_block?, which writes stats",
+      "location": "lib/validators/email_validator.rb:13",
+      "status": "closed",
+      "evidence": [
+        "lib/validators/email_validator.rb:13",
+        "app/models/blocked_email.rb:11-19",
+        "app/controllers/users_controller.rb:168",
+        "app/controllers/users_controller.rb:172",
+        "app/models/user.rb:47"
+      ],
+      "equivalent_path": "The previous User#email_validator only read SiteSetting and did no writes. UsersController#create validates via user.valid? and then user.save.",
+      "before_after": "Before: validation was side-effect free. After: each validation of a changed email that matches a BlockedEmail row updates match_count and last_match_at. In users#create that happens twice per request (valid? then save).",
+      "visible_effect": "The user gets the 'is not allowed.' email error in the signup flash and the field error. Admin-visible match_count is inflated 2x.",
+      "failure_mode": "If should_block? raises (DB error), validation raises and the signup returns a 500. A blocked email also fails User.create_for_email's save! with a RecordInvalid exception.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Signup form remembers rejected emails and marks the email field invalid",
+      "location": "app/assets/javascripts/discourse/controllers/create_account_controller.js:274",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:17",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:69-74",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:96",
+        "app/assets/javascripts/discourse/controllers/create_account_controller.js:274-276",
+        "app/controllers/users_controller.rb:195-200"
+      ],
+      "equivalent_path": "The existing flash error on failure, plus the emailValidation computed property that drives submitDisabled.",
+      "before_after": "Before: only a flash message. After: the server returns errors and values, the email is pushed to rejectedEmails, emailValidation recomputes through rejectedEmails.@each, and submit is disabled until the email changes.",
+      "visible_effect": "The email field turns red with the generic 'invalid' text and the submit button is disabled.",
+      "failure_mode": "On a network failure (second callback) nothing is added, which is fine. The cache is never cleared and is shared on the prototype, so it lives for the whole page session and for any non-blocked email error too.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change mostly does what the PR describes, with two real defects. First, blocked-email match counts are written during validation, and `users#create` validates twice (`valid?` then `save`), so `match_count` goes up by 2 per attempt. Second, the blocklist lookup is case-sensitive and `User` doesn't normalise email, so changing an address's case slips past the block. Smaller points: the counter update is not atomic, the front end caches any email error as 'invalid' for the whole session, and nothing tests the `User`/controller wiring.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 10,
+      "lines": 178,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.1321463
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1321463,
+    "usage": {
+      "input": 10,
+      "output": 6462,
+      "cacheRead": 95463,
+      "cacheWrite": 23184
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 50040,
+    "stop": "complete",
+    "notices": []
+  }
+}

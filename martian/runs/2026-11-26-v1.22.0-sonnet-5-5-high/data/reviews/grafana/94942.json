@@ -1,0 +1,163 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-94942` of grafana-94942 against cbe1e7d63f098e306058c0fbcab2f5c30602fa7d (merge-base cbe1e7d)",
+    "repository": {
+      "name": "grafana-94942"
+    },
+    "base": {
+      "sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+      "ref": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+    },
+    "head": {
+      "sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+      "ref": "pr-94942"
+    },
+    "title": "pr-94942",
+    "description": "disable sql expressions\nRun `make update-workspace`",
+    "author": "Sam Jewell"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go",
+      "pkg/expr/sql_command.go"
+    ],
+    "reviewed": [
+      "go.mod",
+      "go.sum",
+      "go.work.sum",
+      "pkg/expr/reader.go",
+      "pkg/expr/sql_command.go",
+      "pkg/expr/sql/db.go",
+      "pkg/expr/sql/parser.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 194,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "enableSqlExpressions always returns false and ignores the feature flag",
+      "body": "`enabled := !IsEnabledGlobally(...)` is inverted, and both branches then `return false`. The helper is a constant `false`, so the `sqlExpressions` toggle has no effect and the flag name misleads. It also reads like a bug, since a true `enabled` returns false. If the aim is to hard-disable SQL expressions until the DuckDB-free implementation exists, drop the helper and return the error directly at `pkg/expr/reader.go:129-132`. If the flag should still gate the feature, return `h.features.IsEnabledGlobally(featuremgmt.FlagSqlExpressions)`. The `db.go` stub already returns errors, so the flag would not enable anything real yet.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/reader.go",
+      "line": 131,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Disabling is applied only in the ExpressionQueryReader path, not the legacy node path",
+      "body": "The check is added only in `ReadQuery`, which `pkg/expr/nodes.go:123-143` uses only when `FlagExpressionParser` is on. With that flag off, `pkg/expr/nodes.go:159-160` still calls `UnmarshalSQLCommand`, then `NewSQLCommand`, then the stub `sql.TablesList`. That fails with a generic 'error reading SQL command' (`pkg/expr/sql_command.go:33-35`), and the real cause ('not implemented') is only logged as a warning. The result is still an error rather than a silent wrong answer. The two paths do give different messages for the same query, though: the reader says 'sqlExpressions is not implemented', the legacy path says 'sql-invalid-sql'. Consider gating once, at the shared entry point, or making the message consistent.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/expr/sql/db.go",
+      "line": 12,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Stub DB with duck-style API keeps dead call sites that always fail",
+      "body": "All three `DB` methods return 'not implemented', but `parser.go:23-26` and `sql_command.go:96-100` still build and run queries through them. `TablesList` therefore always returns an error. `SQLCommand.Execute` always returns `rsp.Error`. The `parser_test.go` and `sql_command_test.go` tests were already skipped at the base commit, so they cannot flag this. This is acceptable as a temporary removal of go-duck. A TODO or comment on `DB` saying it is a deliberate placeholder would stop the dead code and the `duckDB` variable name in `parser.go:23` from being mistaken for a working path.",
+      "anchor": "diff"
+    },
+    {
+      "path": "go.work.sum",
+      "line": 312,
+      "severity": "info",
+      "topic": "cleanup",
+      "confidence": "low",
+      "title": "Dependency removals depend on `make update-workspace` being run",
+      "body": "The PR body says to run `make update-workspace`. The go.work.sum changes show that `JohnCGriffin/overflow`, `apache/thrift`, `klauspost/asmfmt` and `minio/asm2plan9s` and `c2goasm` moved from go.sum to go.work.sum. That is consistent with go-duck being removed from `go.mod`. I did not run the Go tooling, so I cannot confirm that `go mod tidy` and `go work sync` produce exactly this state.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "SQL expression query type is rejected in ExpressionQueryReader.ReadQuery",
+      "location": "pkg/expr/reader.go:129",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/reader.go:128-132",
+        "pkg/expr/reader.go:194-200",
+        "pkg/expr/nodes.go:123-143",
+        "pkg/expr/nodes.go:159-160",
+        "pkg/expr/sql_command.go:30-36",
+        "pkg/expr/sql/db.go:12-14"
+      ],
+      "equivalent_path": "pkg/expr/nodes.go:159-160 (legacy UnmarshalSQLCommand path when FlagExpressionParser is off)",
+      "before_after": "Before: SQL queries were parsed and executed via go-duck. After: the reader path returns 'sqlExpressions is not implemented' unconditionally. The legacy path reaches the stub `sql.TablesList`, which returns an error that `NewSQLCommand` converts to a BadRequest 'error reading SQL command'.",
+      "visible_effect": "The user gets an error for any SQL expression. The message differs between the two paths.",
+      "failure_mode": "The error is returned, not silent. The legacy path hides the real cause from the user and logs it only as a warning.",
+      "evidence_checked": true
+    },
+    {
+      "action": "SQLCommand.Execute calls sql.NewInMemoryDB().QueryFramesInto",
+      "location": "pkg/expr/sql_command.go:96",
+      "status": "closed",
+      "evidence": [
+        "pkg/expr/sql_command.go:94-105",
+        "pkg/expr/sql/db.go:20-22",
+        "pkg/expr/sql/parser.go:22-30"
+      ],
+      "equivalent_path": "duck.NewInMemoryDB().QueryFramesInto (removed)",
+      "before_after": "Before: frames were queried in DuckDB. After: it always returns an error, which is set as rsp.Error with a nil returned error.",
+      "visible_effect": "The query result for the SQL node carries an error; it is not a panic.",
+      "failure_mode": "The error is reported through rsp.Error and logged. Execute is effectively unreachable in practice because construction already fails in `TablesList`.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR removes go-duck and stubs the SQL DB layer, so SQL expressions always fail. `enableSqlExpressions` in `pkg/expr/reader.go` is inverted and unconditionally returns false, so it ignores the `sqlExpressions` toggle and reads like a bug. The check also covers only the `ExpressionQueryReader` path. The legacy `UnmarshalSQLCommand` path fails later through the stub, with a different and vaguer user-facing error. The `parser_test.go` and `sql_command_test.go` tests were already skipped at the base, so none of them exercise the stub. Dependency removals in go.mod, go.sum and go.work.sum look consistent with dropping go-duck, but I could not run the Go tooling to confirm they match what `make update-workspace` would produce.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 81,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.1404466
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1404466,
+    "usage": {
+      "input": 12,
+      "output": 4334,
+      "cacheRead": 166601,
+      "cacheWrite": 32169
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 40520,
+    "stop": "complete",
+    "notices": []
+  }
+}

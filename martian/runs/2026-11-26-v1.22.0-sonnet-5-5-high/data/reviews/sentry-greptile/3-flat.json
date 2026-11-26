@@ -1,0 +1,218 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-3-flat` of sentry-greptile-3-flat against 83f40559985e1365a43f35ba3febb7ea4fabb5d5 (merge-base 83f4055)",
+    "repository": {
+      "name": "sentry-greptile-3-flat"
+    },
+    "base": {
+      "sha": "83f40559985e1365a43f35ba3febb7ea4fabb5d5",
+      "ref": "83f40559985e1365a43f35ba3febb7ea4fabb5d5"
+    },
+    "head": {
+      "sha": "2f1ccf00863c0c0f5df4581368118fefe3889cf1",
+      "ref": "pr-3-flat"
+    },
+    "title": "pr-3-flat",
+    "description": "feat(upsampling) - Support upsampled error count with performance optimizations",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pyproject.toml",
+      "sentry-repo",
+      "src/sentry/api/endpoints/organization_events_stats.py",
+      "src/sentry/api/helpers/error_upsampling.py",
+      "src/sentry/search/events/datasets/discover.py",
+      "src/sentry/testutils/factories.py",
+      "tests/sentry/api/helpers/test_error_upsampling.py",
+      "tests/snuba/api/endpoints/test_organization_events_stats.py"
+    ],
+    "reviewed": [
+      "pyproject.toml",
+      "src/sentry/api/endpoints/organization_events_stats.py",
+      "src/sentry/api/helpers/error_upsampling.py",
+      "src/sentry/search/events/datasets/discover.py",
+      "src/sentry/testutils/factories.py",
+      "tests/sentry/api/helpers/test_error_upsampling.py",
+      "tests/snuba/api/endpoints/test_organization_events_stats.py",
+      "sentry-repo"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "src/sentry/api/helpers/error_upsampling.py",
+      "line": 137,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Substring match on event.type:error also matches negated and mixed queries",
+      "body": "`\"event.type:error\" in query` is true for `!event.type:error`, `NOT event.type:error` and `event.type:error OR event.type:transaction`. For the discover dataset those queries get `count()` rewritten to `sum(sample_weight)`. A query that excludes errors, or includes transactions, is then summed over `sample_weight`. The docstring at line 103 says sample_weight does not exist for transactions. The user gets a wrong or zero count with no error. Parse the query with the existing search-filter parser and require a positive `event.type` filter equal to `error`. Also, this reads the raw `request.GET['query']`, not the `query` that `_get_event_stats` actually runs (see the comment on organization_events_stats.py:220).",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_events_stats.py",
+      "line": 220,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Upsampling decision uses the outer dataset and raw request query, not scoped_dataset and the query being run",
+      "body": "`_get_event_stats` receives `scoped_dataset` and `query`, but `is_errors_query_for_error_upsampled_projects` is passed the closed-over `dataset` and reads `request.GET['query']`. The dashboard-widget split path calls `_get_event_stats(discover, ..., f\"({query}) AND !event.type:transaction\")` while `dataset` is still a metrics-enhanced dataset. That path never upsamples, even though it runs the errors-only query. The same widget therefore returns non-upsampled counts through this path and upsampled counts elsewhere. Decide from `scoped_dataset` and `query`, the values the query actually uses.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_events_stats.py",
+      "line": 275,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "RPC upsampling branch is dead code; function body is repetitive and has trailing whitespace",
+      "body": "The transform only runs when the dataset is `errors`, or `discover` with an error query (`_should_apply_sample_weight_transform`). `use_rpc` is only true for `spans_rpc` or `ourlogs`, so the branches at 232 (RPC top-events) and 276 are unreachable. The transform is also written three times. Compute `final_columns` once before the `top_events` branch. Lines 223, 234 and 278 have trailing whitespace, which the pre-commit hooks will reject. The comments (\"cached result ensures consistent behavior\", \"most current schema assumptions\", \"better query optimization and caching\") describe nothing the code does.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/helpers/error_upsampling.py",
+      "line": 27,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "60s eligibility cache can make stats disagree with ingestion; invalidation is never called",
+      "body": "`event_manager._derive_client_error_sampling_rate` reads the allowlist option fresh on each event. This endpoint caches the result per org and project set for 60s. After an allowlist change, charts keep the old behaviour for up to a minute. `invalidate_upsampling_cache` has no callers anywhere in the repo, even though its docstring says it should be called on allowlist changes. `options.get` is already served from the options store's in-process cache, so the extra cache saves nothing the docstring can justify. The cache key uses `hash(tuple(...))`, which can collide for different project sets and gives a wrong answer silently. The NOTE in `_are_all_projects_error_upsampled` (\"reads the allowlist fresh each time... intentional\") contradicts the caching. Remove the cache. If it stays, key on the sorted ids and wire up invalidation.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/search/events/datasets/discover.py",
+      "line": 1041,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "upsampled_count is a public function usable on any dataset",
+      "body": "Unlike the neighbouring internal helper `column_hash`, this is not `private=True`. Users can call `upsampled_count()` in any Discover query, including against datasets or event types without `sample_weight`, and get a Snuba error or wrong numbers. `sum(sample_weight)` is also 0 for events ingested before the project was allowlisted, because the event manager only sets `sample_rate` for allowlisted projects. Those events silently count as 0 in upsampled charts. Mark the function `private=True`. Consider `sum(coalesce(sample_weight, 1))`, or document the limitation.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/testutils/factories.py",
+      "line": 1049,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Factory sets sample_rate unconditionally, bypassing the allowlist and range validation in event_manager",
+      "body": "`_set_sample_rate_from_error_sampling` copies `client_sample_rate` into `sample_rate` for every `store_event`, whatever the allowlist says. It accepts any truthy value, so 0 is skipped but values above 1, negative values and `True` are all accepted. Production only does this for allowlisted projects and only for 0 < rate <= 1 (`event_manager.py:774-798`). `manager.save` already runs that derivation, so tests that go through the allowlist option would exercise the real path. This helper is global to every test that stores events with this context. The nested try/except-pass blocks are also broader than needed.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/sentry/api/helpers/test_error_upsampling.py",
+      "line": 19,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Main entry point and edge cases are untested; test bypasses factories",
+      "body": "`is_errors_query_for_error_upsampled_projects` has no unit test: no cache hit, no cache miss, and no `invalidate_upsampling_cache` test. There is no case for negated queries (`!event.type:error`), which fail as described on error_upsampling.py:137. Nothing covers `topEvents` or multi-column `yAxis`. Line 21 uses `Organization.objects.create` instead of `self.create_organization`, against the repo's \"use self.create_* helpers\" rule. `self.organization` is already provided by `TestCase`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "tests/snuba/api/endpoints/test_organization_events_stats.py",
+      "line": 3566,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test setup reassigns self.user after login and does not set the allowlist option for ingestion",
+      "body": "`self.user = self.create_user()` runs after `login_as(user=self.user)`, so `self.user` no longer matches the logged-in user. `authed_user` is never used. Events are stored with `sample_rate` through the factory shortcut, not through the allowlist-gated ingestion path. Because of that, the tests do not show that allowlisted ingestion produces `sample_weight`. The allowlisted test only covers a default-dataset request with `event.type:error` and never `dataset=errors`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "sentry-repo",
+      "line": 1,
+      "severity": "fix",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Stray git submodule gitlink committed",
+      "body": "A gitlink `sentry-repo` pointing at commit a5d290951def is added. It is unrelated to error upsampling and has no matching .gitmodules entry in the checkout. This is almost certainly an accidental `git add` of a nested clone. Remove it from the PR.",
+      "anchor": "diff"
+    },
+    {
+      "path": "src/sentry/api/endpoints/organization_events_stats.py",
+      "line": 124,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Unrelated error-message change",
+      "body": "The topEvents error text is changed (\"If topEvents needs...\" to \"topEvents needs...\"). This is unrelated to the feature. A grep of py/ts/tsx files found no consumer or test of the old string, but it changes API response text, so keep it out of this PR or call it out.",
+      "anchor": "diff"
+    },
+    {
+      "path": "sentry-repo",
+      "line": 1,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Stray gitlink `sentry-repo` committed with no `.gitmodules` entry",
+      "body": "This adds a submodule-style gitlink (mode 160000) pointing at a5d290951def84afdcc4c88d2f1f20023fc36e2a. The repository has no `.gitmodules` file, and the checked-out `sentry-repo` directory is empty. The gitlink is almost certainly an accidental commit of a nested clone: `git submodule` commands will fail on it ('no submodule mapping found in .gitmodules'), and a fresh clone gets an empty directory. The PR is about error upsampling, which has nothing to do with a nested sentry checkout. Remove it from the index (`git rm --cached sentry-repo`) and, if needed, add it to `.gitignore`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Rewrite count() to 'upsampled_count() as count' for events-stats when all projects are allowlisted and the query is for errors",
+      "location": "src/sentry/api/endpoints/organization_events_stats.py:220",
+      "status": "closed",
+      "evidence": [
+        "src/sentry/api/helpers/error_upsampling.py:27-40",
+        "src/sentry/api/helpers/error_upsampling.py:137",
+        "src/sentry/event_manager.py:774-798",
+        "src/sentry/api/endpoints/organization_events_stats.py:220-222"
+      ],
+      "equivalent_path": "event_manager._derive_client_error_sampling_rate sets sample_rate at ingestion, gated on the same allowlist option, read uncached and range-validated",
+      "before_after": "Ingestion reads the allowlist fresh per event and validates 0<rate<=1. The new path caches eligibility for 60s, uses the outer dataset and raw request query, and applies a substring check for event.type:error.",
+      "visible_effect": "Chart counts become sum(sample_weight). They can be wrong for negated or mixed queries, within 60s of an allowlist change, and for events ingested before allowlisting.",
+      "failure_mode": "Silent wrong counts, no error. If sample_weight is missing in the queried entity, a Snuba error is returned.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "**Batch 1 of 1.** The change rewrites count() to sum(sample_weight) in events-stats for allowlisted error queries. I found several correctness problems. The `event.type:error` substring check matches negated and mixed queries. The decision uses the outer dataset and the raw request query instead of the scoped dataset and query. A 60s cache sits in front of an already-cached option, and its invalidation helper is never called. The RPC branches are dead code, and `upsampled_count` is exposed publicly. A stray `sentry-repo` submodule gitlink is also committed. Tests miss the main entry point and the negation case, and the factory bypasses the allowlist and range validation that ingestion applies.\n\n**Batch 1 of 1, retry.** The only file in this part is `sentry-repo`, a gitlink to a5d2909 with no `.gitmodules` mapping and an empty checkout. It looks like an accidental commit and should be removed from the PR.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 486,
+      "maxRisk": 4,
+      "status": "reviewed after a retry",
+      "turns": 24,
+      "costUsd": 0.2910817
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "83f40559985e1365a43f35ba3febb7ea4fabb5d5"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2910817,
+    "usage": {
+      "input": 22,
+      "output": 11880,
+      "cacheRead": 308377,
+      "cacheWrite": 56560
+    },
+    "calls": 2,
+    "callsWithOutput": 2,
+    "turns": 24,
+    "durationMs": 101891,
+    "stop": "complete",
+    "notices": []
+  }
+}
