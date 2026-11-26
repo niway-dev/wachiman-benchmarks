@@ -126,7 +126,7 @@ measured $8 against $5 per million written tokens on Opus 5.5, by fitting each c
   prices for reads ($0.10 per million) and output ($10) in both sets, and a cache write of $4.00
   per million in v1.21.0 against $2.50 in v1.22.0. Those are Sonnet 5.5's 1-hour and 5-minute
   write prices, the same 1.6 ratio as Opus's $8 and $5. At the old write price, v1.22.0's tokens
-  would have cost $17.93. Writes saved $4.25, the extra reads and output gave back $0.64, and
+  would have cost $17.93. Writes saved $4.25, the extra reads, writes and output gave back $0.64, and
   the set cost $3.61 less.
 - **Unlike the Opus experiment, turns did not rise** (19.9 against 19.3 per batch call). The
   saving here comes from price alone.
