@@ -97,6 +97,8 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
 
 ## Files
 
+- [`reproduce-the-evidence.md`](reproduce-the-evidence.md): the from-zero guide to rebuild the
+  token, budget and Sonnet evidence, with one table of every measured set.
 - `bench.sh`: the script.
 - `manifest-2026-10-31.tsv`: tab-separated kaipu PR number, base SHA, head SHA, original title.
   Pass another manifest as the last argument of `create` and `open` (or set `BENCH_MANIFEST`,
