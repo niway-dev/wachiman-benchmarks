@@ -4,7 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, why the older versions look better on known bugs: v1.3.0's share comes from Low items; on Medium bugs it catches the fewest.
+- **Last updated:** 2026-11-26, v1.22.0 on Sonnet: the same Medium+ known bugs as v1.21.0, about 21% cheaper per review on the replay, and inside v1.9.0's spread on Martian.
+- **Earlier on 2026-11-26:** why the older versions look better on known bugs: v1.3.0's share comes from Low items; on Medium bugs it catches the fewest.
 - **Earlier on 2026-11-26:** credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
 - **Previous update:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
@@ -14,6 +15,28 @@ no claim the reports do not.
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 - **t3code cases (2026-11-12):** escaped and replayed bugs of pingdotgg/t3code as a second unit next to Martian, one row per run set in [t3code/history.md](t3code/history.md); the key is [t3code/cases.tsv](t3code/cases.tsv).
+
+## v1.22.0 on Sonnet (2026-11-26, kaipu-record five PRs and Martian)
+
+**Short version: v1.22.0 catches the same Medium+ known bugs as v1.21.0 and costs about 21% less
+per review. On Martian it scores inside v1.9.0's spread, slightly cheaper. Neither is a quality gain.**
+
+- **Replay, kaipu-record #463–#467, Sonnet 5.5, subscription token, 3 runs each**
+  ([report](2026-11-26-v1.22.0-sonnet/README.md); dataset runs W31–W33 against W37–W39). Known bugs
+  caught per run, by severity from `dataset/known-bugs.csv`:
+
+  | Version | Medium+ (of 9) | Low (of 18) | Cost per review |
+  | --- | --- | --- | --- |
+  | v1.21.0 (W31–W33) | 5, 5, 3 | 11, 9, 9 | $1.15 mean |
+  | v1.22.0 (W37–W39) | 4, 6, 4 | 9, 8, 8 | $0.91 mean |
+
+  4.7 against 4.3 Medium+ per run is inside the run-to-run spread; the Low count is slightly lower.
+- **Martian, 50 public PRs, Sonnet 5.5 high, one run** (`dataset/martian-runs.csv`): F1 0.494,
+  recall 0.699, 54 of 66 high-confidence comments, $0.239 median per PR. The three v1.9.0 runs on
+  the same setting score F1 0.468–0.503, 52–54 of 66, $0.27–$0.30 median per PR. One judge scores
+  both, so the F1 difference is noise.
+- **How to see it:** the benchmark viewer's by-version questions (cost, known bugs, Martian) show
+  v1.22.0 next to the earlier versions; filter the model to Sonnet to compare like with like.
 
 ## Why the older versions look better on known bugs (2026-11-26, kaipu-record #465 and #467)
 
