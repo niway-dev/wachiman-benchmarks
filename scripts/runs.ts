@@ -39,6 +39,7 @@ const D1125F = "2026-11-25-v1.21.0-focus-replay/README.md (W10 = #17–#21, W11 
 const D1125B = "2026-11-25-v1.21.0-budget-replay/README.md (W13 = #32–#36, W14 = #37–#41, W15 = #42–#46)";
 const D1125V = "2026-11-25-v1.4.0-rerun/README.md (W16 = #47–#51, W17 = #52–#56, W18 = #57–#61)";
 const D1126N = "2026-11-26-v1.21.0-sonnet-baseline/README.md (W31 = #92–#96, W32 = #97–#101, W33 = #102–#106; kaipu-record #463–#467)";
+const D1126V = "2026-11-26-v1.22.0-sonnet/README.md (R1 = #107–#111, R2 = #112–#116, R3 = #117–#121; kaipu-record #463–#467)";
 const D1126C = "2026-11-26-prompt-cache-5m/README.md (W34 = #86/#87, W35 = #88/#89, W36 = #90/#91; kaipu-record #465 and #467)";
 const D1126S = "2026-11-26-release-bisect/README.md (W19-W21 = #62-#67 on v1.5.0, W22-W24 = #68-#73 on v1.9.0, W25-W27 = #74-#79 on v1.15.0 with the subscription token, W28-W30 = #80-#85 on v1.15.0 with the API key; kaipu-record #465 and #467)";
 
@@ -73,9 +74,11 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
     const n = Number(round.slice(1));
     // Each set below is matched by a lower bound only, so a PR past the last known set would take
     // the newest rule's label. It stays unlabelled until a rule names it.
-    if (pr >= 107) return { label: "W-v3-unassigned", confidence: "guessed", basis: "no analysis doc names this run yet", notes: "kaipu-bench-wachi-v3 PR past the last labelled set (#106)" };
+    if (pr >= 122) return { label: "W-v3-unassigned", confidence: "guessed", basis: "no analysis doc names this run yet", notes: "kaipu-bench-wachi-v3 PR past the last labelled set (#121)" };
+    // #107-#121: the replay-v1220s/ branches, v1.22.0 on Sonnet 5.5 on all five PRs (same caller as the baseline except the engine pin; R1-R3 in the doc).
+    if (pr >= 107 && n >= 1 && n <= 3) return { label: `W${n + 36}`, confidence: "derived", basis: D1126V, model: "claude-sonnet-5-5", version: "v1.22.0", notes: "Sonnet 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate. Same inputs as W31-W33; only the engine pin differs" };
     // #92-#106: the replay-sonnet/ branches, v1.21.0 on Sonnet 5.5 on all five PRs (release baseline, BENCH_FOCUS=rename).
-    if (pr >= 92 && n >= 1 && n <= 3) return { label: `W${n + 30}`, confidence: "derived", basis: D1126N, model: "claude-sonnet-5-5", version: "v1.21.0", notes: "Release baseline: Sonnet 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
+    if (pr >= 92 && pr <= 106 && n >= 1 && n <= 3) return { label: `W${n + 30}`, confidence: "derived", basis: D1126N, model: "claude-sonnet-5-5", version: "v1.21.0", notes: "Release baseline: Sonnet 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
     // #86-#91: the replay-ttl5m/ branches, v1.21.0 plus the 5-minute prompt-cache fix (SHA 8a9a6d7) on #465 and #467 only.
     if (pr >= 86 && n >= 1 && n <= 3) return { label: `W${n + 33}`, confidence: "derived", basis: D1126C, model: "claude-opus-5-5", version: "v1.21.0+cache-5m", notes: "Prompt-cache check: v1.21.0 plus the fix that forces a 5-minute prompt cache, pinned by SHA 8a9a6d782aa1f6c9ef88f1430e8f5cd789f2c8ce (not a release; not plain v1.21.0), Opus 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
     // #80-#85: the replay-v1150k/ branches, v1.15.0 again on the API key only (release bisect, BENCH_FOCUS=rename).

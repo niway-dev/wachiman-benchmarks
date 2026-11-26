@@ -312,6 +312,11 @@ describe("run logs", () => {
     expect(extractRunLog(log).version).toBe("v1.21.0+cache-5m");
   });
 
+  test("the v1.22.0 SHA pin is v1.22.0", () => {
+    const log = LOG_V120.replace("793a64df5775b606ea5b2253569f4e6cd216c3ef", "79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215");
+    expect(extractRunLog(log).version).toBe("v1.22.0");
+  });
+
   test("an unknown SHA pin gives no version", () => {
     expect(extractRunLog(LOG_V120.replace("793a64df5775b606ea5b2253569f4e6cd216c3ef", "a".repeat(40))).version).toBe("");
   });

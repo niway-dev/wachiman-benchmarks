@@ -68,7 +68,14 @@ describe("run map", () => {
     expect(benchLabel("kaipu-bench-wachi-v3", 96, "467", "r1", "[replay] x").label).toBe("W31");
     expect(benchLabel("kaipu-bench-wachi-v3", 97, "463", "r2", "[replay r2] x").label).toBe("W32");
     expect(benchLabel("kaipu-bench-wachi-v3", 106, "467", "r3", "[replay r3] x").label).toBe("W33");
-    expect(benchLabel("kaipu-bench-wachi-v3", 107, "465", "r1", "[replay] x")).toMatchObject({ label: "W-v3-unassigned", confidence: "guessed" });
+    // #107-#121: v1.22.0 on Sonnet 5.5, the same five PRs as the baseline.
+    expect(benchLabel("kaipu-bench-wachi-v3", 107, "463", "r1", "[replay] x")).toMatchObject({ label: "W37", version: "v1.22.0", model: "claude-sonnet-5-5", confidence: "derived" });
+    expect(benchLabel("kaipu-bench-wachi-v3", 111, "467", "r1", "[replay] x").label).toBe("W37");
+    expect(benchLabel("kaipu-bench-wachi-v3", 112, "463", "r2", "[replay r2] x").label).toBe("W38");
+    expect(benchLabel("kaipu-bench-wachi-v3", 116, "467", "r2", "[replay r2] x").label).toBe("W38");
+    expect(benchLabel("kaipu-bench-wachi-v3", 117, "463", "r3", "[replay r3] x").label).toBe("W39");
+    expect(benchLabel("kaipu-bench-wachi-v3", 121, "467", "r3", "[replay r3] x").label).toBe("W39");
+    expect(benchLabel("kaipu-bench-wachi-v3", 122, "465", "r1", "[replay] x")).toMatchObject({ label: "W-v3-unassigned", confidence: "guessed" });
     expect(benchLabel("kaipu-bench-coderabbit-v2", 4, "465", "r1", "[replay] x").label).toBe("CR-v2");
     expect(benchLabel("kaipu-bench-wachi-v3", 4, "465", "r1", "[replay] x")).toMatchObject({ label: "W7", version: "v1.20.1" });
     expect(benchLabel("kaipu-bench-wachi-v3", 17, "463", "r1", "[replay] x")).toMatchObject({ label: "W10", version: "v1.21.0" });

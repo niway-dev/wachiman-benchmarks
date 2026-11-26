@@ -11,7 +11,8 @@ markdown. Everything comes from the GitHub API through `gh`. No model ran to bui
   ([report](../2026-11-25-v1.4.0-rerun/README.md)). **Extended again:** 2026-11-26 with the release bisect
   (W19–W30, bench #62–#85), the Sonnet 5.5 baseline of v1.21.0, runs W31–W33, bench #92–#106
   ([report](../2026-11-26-v1.21.0-sonnet-baseline/README.md)), and the 5-minute prompt-cache check, runs W34–W36,
-  bench #86–#91 ([report](../2026-11-26-prompt-cache-5m/README.md)).
+  bench #86–#91 ([report](../2026-11-26-prompt-cache-5m/README.md)), and Wachiman v1.22.0 on Sonnet 5.5, runs W37–W39
+  (the report's R1–R3), bench #107–#121 ([report](../2026-11-26-v1.22.0-sonnet/README.md)).
 - **Scope:** the seven `niway-dev/kaipu-bench-*` repositories (all pull requests, any state) and every
   `niway-dev/kaipu-record` pull request that has a Wachiman review (112 of 467), which includes the
   field-run PRs #439 #449 #478 #479 #482 #483 #484.
@@ -92,36 +93,36 @@ reads them from a git ref instead.
 | --- | --- | --- | --- | --- |
 | kaipu-bench-wachi | 60 | 282 (258 inline, 24 body) | — | — |
 | kaipu-bench-wachi-v2 | 5 | 0 (see below) | — | — |
-| kaipu-bench-wachi-v3 | 106 | 573 (551 inline, 22 body) | — | — |
+| kaipu-bench-wachi-v3 | 121 | 659 (637 inline, 22 body) | — | — |
 | kaipu-bench-pullfrog | 5 | — | 7 | — |
 | kaipu-bench-pullfrog-v2 | 6 | — | 9 | — |
 | kaipu-bench-coderabbit | 10 | — | — | 15 |
 | kaipu-bench-coderabbit-v2 | 6 | — | — | 6 |
 | kaipu-record | 112 of 467 | 278 (266 inline, 12 body) | 34 | 27 (20 inline, 7 body) |
-| **Total** | 310 | **1133** | **50** | **48** |
+| **Total** | 325 | **1219** | **50** | **48** |
 
-**1231 findings** in total. Also: **1357 contract entries**, **311 Wachiman reviews**,
-**328 run logs** with parsed cost/model/version, **417 rows in `runs.csv`**.
+**1317 findings** in total. Also: **1476 contract entries**, **326 Wachiman reviews**,
+**343 run logs** with parsed cost/model/version, **432 rows in `runs.csv`**.
 
-Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 105
+Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 120
 kaipu-bench-wachi-v3 reviews are v1.20.1 (15, bench #2–#16), v1.21.0 (45: #17–#31 at the default budget, #32–#46
 with `budget_usd: 10`, #92–#106 on Sonnet 5.5), v1.4.0 (15, bench #47–#61), v1.5.0 (6, #62–#67), v1.9.0 (6, #68–#73),
 v1.15.0 (12: #74–#79 on a subscription token, #80–#85 on an API key; all on #465 and #467 only) and
-`v1.21.0+cache-5m` (6, #86–#91, on #465 and #467 only; see [Run map](#run-map)).
+`v1.21.0+cache-5m` (6, #86–#91, on #465 and #467 only; see [Run map](#run-map)) and v1.22.0 (15, #107–#121, Sonnet 5.5).
 kaipu-record has 16 reviews on v1.4.0, 21 on v1.3.0, 70 on v1.2.x, 23 on the floating `v1` tag and 16 whose
 version is unknown (no log).
 
 ### Verdict join
 
-`labels.csv` has **769** rows. Of the 1231 findings, 314 are outside the analysed sets (see
-[What is missing](#what-is-missing)), and 917 are in them: **769 matched, 148 are in
+`labels.csv` has **839** rows. Of the 1317 findings, 314 are outside the analysed sets (see
+[What is missing](#what-is-missing)), and 1003 are in them: **839 matched, 164 are in
 [`ambiguous.md`](ambiguous.md)**.
 
 | `label_kind` | Rows |
 | --- | --- |
-| `expected` (E) | 381 |
-| `additional` (A) | 167 |
-| `new` (N, X, SN, NS, NF) | 129 |
+| `expected` (E) | 419 |
+| `additional` (A) | 187 |
+| `new` (N, X, SN, NS, NF) | 141 |
 | `field` (F) | 91 |
 | `false-positive` | 1 (#466 N5 in the v1.21.0 analysis, marked invalid) |
 
@@ -169,11 +170,12 @@ column for it in the Expected issues table, even when every cell says `no`.
 - `findings_labelled` counts that run's `labels.csv` rows on that PR (E, A and N), so 0 with a row
   means the run posted nothing an analyst matched.
 
-170 rows: W-R1…R3, PF-v1/v2 and CR-v1/v2 (2026-11-01), W4–W6 (2026-11-02), S7–S9 (2026-11-02-e1-sonnet),
+185 rows: W-R1…R3, PF-v1/v2 and CR-v1/v2 (2026-11-01), W4–W6 (2026-11-02), S7–S9 (2026-11-02-e1-sonnet),
 W7–W9 (2026-11-25-v1.20.1-replay), W10–W12 (2026-11-25-v1.21.0-focus-replay), W13–W15
 (2026-11-25-v1.21.0-budget-replay) and W16–W18 (2026-11-25-v1.4.0-rerun), each on #463–#467, and W19–W30
 (2026-11-26-release-bisect) on #465 and #467, W31–W33 (2026-11-26-v1.21.0-sonnet-baseline) on #463–#467, and
-W34–W36 (2026-11-26-prompt-cache-5m) on #465 and #467. A later doc that copies an earlier run's
+W34–W36 (2026-11-26-prompt-cache-5m) on #465 and #467, and W37–W39 (2026-11-26-v1.22.0-sonnet, whose
+columns are named R1–R3) on #463–#467. A later doc that copies an earlier run's
 column for comparison does not label it again.
 
 ### Wachiman v1.20.1 formats
@@ -207,7 +209,7 @@ is 0 everywhere). v1.3.0 and earlier reviews have no contracts.
 `runs.csv` is derived, and the owner should check it. `confidence` says how:
 
 - `derived`: tool, model, version and date come from the snapshots and the run logs; the label comes from a doc that
-  names it (`basis` gives the doc). 354 rows.
+  names it (`basis` gives the doc). 369 rows.
 - `guessed`: 63 rows. Labels that no doc gives (`W-set2-R1…R3` and `CR-set2` for the five bug-catalogue PRs #402
   #255 #276 #269 #184, replayed in bench PRs #46–#60 and coderabbit #6–#10; `W-v2` for the failed wachi-v2 repo),
   Pullfrog and CodeRabbit round numbers on kaipu-record (`PF-1`, `CR-2`: the field docs name rounds by commit, I
@@ -222,6 +224,9 @@ is 0 everywhere). v1.3.0 and earlier reviews have no contracts.
   cannot be confused with plain `v1.21.0` when grouping by version. The SHA-to-version table is `PINNED_SHAS` in
   `scripts/parse.ts` (it holds the other pins too, which are all release tags), and the label rules are in
   `benchLabel` in `scripts/runs.ts`.
+- **W37–W39** (bench #107–#121) are v1.22.0, pinned by the SHA `79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215` (a release; `PINNED_SHAS`),
+  on Sonnet 5.5 with the same inputs as W31–W33 except the engine pin. Their report calls the runs R1–R3 and
+  `DOC_RUN_ALIASES` in `scripts/labels.ts` maps those columns to W37–W39.
 - The prompt-cache set was first published as W31–W33 and renamed W34–W36, because the Sonnet baseline uses W31–W33.
 
 ### Credential
@@ -233,11 +238,11 @@ is 0 everywhere). v1.3.0 and earlier reviews have no contracts.
 - **Empty means unknown, not "key".** Logs of the older engines (v1.2.x to v1.9.0, so every row of
   kaipu-bench-wachi, W16–W24 and all of kaipu-record) print no `auth`. The reports of W16–W24 say they ran on an API key, but the
   dataset does not turn that into a value. Pullfrog and CodeRabbit rows are empty too.
-- v1.15.0 shows both: W25–W27 `oauth-token`, W28–W30 `api-key`. W7–W15 and W31–W36 are all `oauth-token`; W16–W24
+- v1.15.0 shows both: W25–W27 `oauth-token`, W28–W30 `api-key`. W7–W15 and W31–W39 are all `oauth-token`; W16–W24
   (v1.4.0, v1.5.0, v1.9.0) are empty. The cost
   of an `oauth-token` run is an API-equivalent estimate, not a bill, so compare cost only inside one credential.
 
-## How the join works (and why 148 are left)
+## How the join works (and why 164 are left)
 
 For a replay finding, the candidates are the verdicts whose run column in the primary doc for that run says the
 run found it. For a field finding they are the verdicts of the same bot on the same PR. A candidate scores a path
