@@ -69,6 +69,21 @@ same value, and the same `BENCH_BRANCH_PREFIX`, to all of them):
 The extra commit does not change what is reviewed: GitHub diffs a pull request from the merge base
 to the head, and the merge base is still the manifest base.
 
+## Review budget
+
+Every Wachi run gets `budget_usd: 10`, set in `wachi-workflow.yml`. The $3 default is not enough
+for kaipu-record #467 (47 files, 6 batches, about $3 to read in full): from v1.20.1 on, batches
+run four at once, each reserves its $0.75 cap, and the last ones end on `budget` with files
+unread. W7–W12 lost 2 and 3 reviews of #467 that way; at $10 (W13–W15) none was partial, at
+the same cost ([budget report](../2026-11-25-v1.21.0-budget-replay/README.md)).
+
+- **Before labelling a set,** check that every review body says the whole pull request was
+  reviewed. A partial review is compared with a full one only if the report says so.
+- **A repository that already exists** keeps the workflow its `main` got when it was created.
+  Put the current `wachi-workflow.yml` on `main` (the contents API is enough) before round 1.
+- **An older engine** keeps the $3 default when the point is to reproduce an earlier set, as
+  W16–W18 did for v1.4.0. Say so in the report.
+
 ## Why `create` registers and disables workflows
 
 The replayed commits carry kaipu-record's workflows. Two of them (`agent-review.yml`, Wachi
@@ -92,7 +107,7 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   workflow at the replayed commit, not this one, hence `/wachi review`. The pin in it names the
   engine version under test.
 - `wachi-workflow-budget-10.yml` and `wachi-workflow-v1.4.0.yml`: the variants that ran W13–W15
-  (`budget_usd: 10`) and W16–W18 (v1.4.0, API key only). `bench.sh` never installs them: they were
+  (`budget_usd: 10`, now also in `wachi-workflow.yml`) and W16–W18 (v1.4.0, API key only). `bench.sh` never installs them: they were
   put on the repository's `main` through the contents API for those runs, then `main` went back to
   `wachi-workflow.yml`.
 

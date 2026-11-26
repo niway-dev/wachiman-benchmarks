@@ -36,6 +36,8 @@ batch reserves its $0.75 cap, so the ones that start last on a large PR find too
 | Per set (15 reviews) | v1.4.0, Nov 2 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0, $3 (W10–W12) | v1.21.0, $10 (W13–W15) | v1.4.0, Nov 25 (W16–W18) |
 | --- | --- | --- | --- | --- | --- |
 | `budget_usd` | 3 | 3 | 3 | 10 | 3 |
+| Model, effort, max turns, batch cap | Opus 5.5, high, 40, $0.75 | same | same | same | same |
+| Batches at once | 1 | 4 | 4 | 4 | 1 |
 | Known bugs caught (of 81) | 35, plus 4 in part | 30, plus 2 | 27, plus 3 | 32, plus 2 | 34, plus 5 |
 | Per run | 12, 11, 12 | 10, 9, 11 | 9, 8, 10 | 12, 11, 9 | 9, 11, 14 |
 | Distinct known bugs (of 27) | 19 | 16 | 13 | 18 | 17 |
@@ -65,6 +67,20 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
 | #466 floating "video is ready" | 28 | +1283 −12 | 2 | $0.82–$1.20 | 5 of 12 | 6 | 7 | 5 | 7 |
 | **#467 Export screen** | **47** | **+2676 −2177** | **6** | **$2.75–$3.15** | **11 of 30** | **7** | **4** | **10** | **12** |
 
+- **Head to head, v1.21.0 at $10 against v1.4.0 on the same day:** v1.4.0 caught more on three
+  PRs (#463 by 1, #466 by 2, #467 by 2), tied on #464, and lost on #465 (by 3). Against the Nov 2
+  v1.4.0 set the split is the same: three, one tie, one. The two v1.4.0 sets, same engine, differ
+  from each other by up to 2 on a PR (#465: 7 and 5; #466: 5 and 7), so each single gap is inside
+  that spread. That v1.21.0 is behind on most PRs, and never clearly ahead, is the pattern to test
+  with more runs, not a measured loss.
+- **What does differ, every time: fewer turns per batch call** (10.1 against 14.1; on #467, 6 to
+  15 against 10 to 18 in one run each) **and fewer findings** (71 against 78). Model, effort, turn
+  limit and batch cap are the same (read from the run logs), and no batch ended on a limit, so the
+  model chose to stop earlier. Candidate causes, none tested yet: the batch prompt and what the
+  engine puts in it changed across many releases (`src/engine.ts` alone changed by about 5,400
+  lines between the two), and batches now run four at once instead of one after another. Running
+  releases between v1.4.0 and v1.21.0 on #465 and #467 would show in which release the turns
+  dropped.
 - **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
   every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
   full, which is the whole default budget. Every partial review in this table is a #467 review.
