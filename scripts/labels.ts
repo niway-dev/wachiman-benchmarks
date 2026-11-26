@@ -100,6 +100,15 @@ const RUN_TOKEN = /\b(W-R\d|W\d+|S\d|PF-v\d|CR-v\d)\b/g;
 const SINGLE_RUN = /^(?:Opus )?(W-R\d|W\d+|S\d|PF-v\d|CR-v\d)$/;
 const MULTI_RUN = /^(?:Opus )?((?:W-R\d|W\d+|S\d|PF-v\d|CR-v\d)(?:\s*\/\s*(?:W-R\d|W\d+|S\d|PF-v\d|CR-v\d))+)$/;
 
+/** The v1.22.0 report names its runs R1-R3 (not W-numbers); the dataset labels them W37-W39. */
+const DOC_RUN_ALIASES: Record<string, Record<string, string>> = {
+  "2026-11-26-v1.22.0-sonnet": { R1: "W37", R2: "W38", R3: "W39" },
+};
+const runColumn = (col: string, doc: string): string | undefined => {
+  const c = col.trim();
+  return DOC_RUN_ALIASES[doc]?.[c] ?? SINGLE_RUN.exec(c)?.[1];
+};
+
 const foundCell = (v: string) => /^(yes|partial|✓|~)/i.test(v.trim());
 
 export function normaliseId(raw: string): string | null {
@@ -128,8 +137,9 @@ export function parseReplayDoc(md: string, doc: string, originalPr: string): Ver
         const cell = row[i] ?? "";
         const c = col.trim();
         const multi = MULTI_RUN.exec(c);
-        if (SINGLE_RUN.test(c)) {
-          if (foundCell(cell)) runs.add((SINGLE_RUN.exec(c) as RegExpExecArray)[1] as string);
+        const single = runColumn(c, doc);
+        if (single) {
+          if (foundCell(cell)) runs.add(single);
         } else if (multi) {
           const labels = (multi[1] as string).split("/").map((x) => x.trim());
           const vals = cell.split("/").map((x) => x.trim());
@@ -166,7 +176,7 @@ export function labelledRuns(md: string, doc: string, originalPr: string): Label
   if (!t) return [];
   const out: LabelledRun[] = [];
   t.header.forEach((col, i) => {
-    const run = SINGLE_RUN.exec(col.trim())?.[1];
+    const run = runColumn(col, doc);
     if (!run) return;
     const r: LabelledRun = { run_label: run, original_pr: originalPr, doc, expected_total: 0, expected_caught: [], expected_partial: [] };
     for (const row of t.rows) {
@@ -380,6 +390,7 @@ export const REPLAY_DOCS = [
   { dir: "2026-11-26-release-bisect/prs", name: "2026-11-26-release-bisect" },
   { dir: "2026-11-26-v1.21.0-sonnet-baseline/prs", name: "2026-11-26-v1.21.0-sonnet-baseline" },
   { dir: "2026-11-26-prompt-cache-5m/prs", name: "2026-11-26-prompt-cache-5m" },
+  { dir: "2026-11-26-v1.22.0-sonnet/prs", name: "2026-11-26-v1.22.0-sonnet" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
 export const REPLAY_PRS = ["463", "464", "465", "466", "467"];
@@ -399,6 +410,7 @@ export const PRIMARY_DOC: Record<string, string> = {
   W28: "2026-11-26-release-bisect", W29: "2026-11-26-release-bisect", W30: "2026-11-26-release-bisect",
   W31: "2026-11-26-v1.21.0-sonnet-baseline", W32: "2026-11-26-v1.21.0-sonnet-baseline", W33: "2026-11-26-v1.21.0-sonnet-baseline",
   W34: "2026-11-26-prompt-cache-5m", W35: "2026-11-26-prompt-cache-5m", W36: "2026-11-26-prompt-cache-5m",
+  W37: "2026-11-26-v1.22.0-sonnet", W38: "2026-11-26-v1.22.0-sonnet", W39: "2026-11-26-v1.22.0-sonnet",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {
