@@ -34,6 +34,10 @@ interface Label {
 const D0201 = "2026-11-01/README.md, table \"The runs\"";
 const D0202 = "2026-11-02/README.md (W4 = #16–#20, W5 = #21–#25, W6 = #26–#30)";
 const DE1 = "2026-11-02-e1-sonnet/README.md (S7 = #31–#35, S8 = #36–#40, S9 = #41–#45)";
+const D1125 = "2026-11-25-v1.20.1-replay/README.md (W7 = #2–#6, W8 = #7–#11, W9 = #12–#16)";
+const D1125F = "2026-11-25-v1.21.0-focus-replay/README.md (W10 = #17–#21, W11 = #22–#26, W12 = #27–#31)";
+const D1125B = "2026-11-25-v1.21.0-budget-replay/README.md (W13 = #32–#36, W14 = #37–#41, W15 = #42–#46)";
+const D1125V = "2026-11-25-v1.4.0-rerun/README.md (W16 = #47–#51, W17 = #52–#56, W18 = #57–#61)";
 
 /** `r<n>` of a kaipu-bench-wachi replay → the label the docs use. */
 function wachiLabel(round: string): Label | null {
@@ -61,6 +65,16 @@ export function benchLabel(repo: string, pr: number, original: string, round: st
         notes: "Replay of the bug-catalogue PRs on 2026-11-02; version and model come from the run log",
       };
     }
+  }
+  if (repo === "kaipu-bench-wachi-v3" && SET1.has(original)) {
+    const n = Number(round.slice(1));
+    // #47 on: the replay-v140/ branches, v1.4.0 again on its original caller (bench.sh BENCH_FOCUS=as-is).
+    if (pr >= 47 && n >= 1 && n <= 3) return { label: `W${n + 15}`, confidence: "derived", basis: D1125V, model: "claude-opus-5-5", version: "v1.4.0", notes: "Re-run of W4-W6: Opus 5.5, effort high, focus file at .github/agent-review.md, API key: billed cost" };
+    // #32 on: the replay-budget/ branches, v1.21.0 with budget_usd 10 and the focus file (BENCH_FOCUS=rename).
+    if (pr >= 32 && n >= 1 && n <= 3) return { label: `W${n + 12}`, confidence: "derived", basis: D1125B, model: "claude-opus-5-5", version: "v1.21.0", notes: "Opus 5.5, effort high, verify off, budget_usd 10, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
+    // #17 on: the replay-focus/ branches, whose base adds .github/wachiman.md (bench.sh BENCH_FOCUS=rename).
+    if (pr >= 17 && n >= 1 && n <= 3) return { label: `W${n + 9}`, confidence: "derived", basis: D1125F, model: "claude-opus-5-5", version: "v1.21.0", notes: "Opus 5.5, effort high, verify off, focus file at .github/wachiman.md, Claude subscription token: cost is an API-equivalent estimate" };
+    if (n >= 1 && n <= 3) return { label: `W${n + 6}`, confidence: "derived", basis: D1125, model: "claude-opus-5-5", version: "v1.20.1", notes: "Opus 5.5, effort high, verify off, Claude subscription token: cost is an API-equivalent estimate" };
   }
   if (repo === "kaipu-bench-wachi-v2") {
     return { label: "W-v2", confidence: "guessed", basis: "no analysis doc names this repo's runs", notes: "agent-review.yml failed on all five PRs; no review was posted" };
@@ -181,7 +195,7 @@ export function buildRuns(rawRoot: string): Record<string, unknown>[] {
           tool, source_repo: repo, bench_pr: pr.number, original_pr: original, commit: (mine[0]?.rv.commit_id ?? pr.head.sha).slice(0, 7),
           round_tag: round, run_label: l.label, model: model || l.model || "", version: version || l.version || "",
           date: (mine[0]?.rv.submitted_at ?? pr.created_at).slice(0, 10), review_ids: mine.map((b) => b.rv.id).join(" "), run_ids: runIds.join(" "),
-          doc_set: l.label ? (/docs\/[^\s,()]+/.exec(l.basis)?.[0] ?? "") : "", confidence: l.confidence === "derived" && (fromLog || tool !== "wachiman") ? "derived" : l.confidence,
+          doc_set: l.label ? (/^\d{4}-\d{2}-\d{2}[^\s,()\/]*\/README\.md/.exec(l.basis)?.[0] ?? "") : "", confidence: l.confidence === "derived" && (fromLog || tool !== "wachiman") ? "derived" : l.confidence,
           basis: l.basis, notes: notes.filter(Boolean).join("; "),
         });
         continue;

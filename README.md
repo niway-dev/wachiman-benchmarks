@@ -29,6 +29,10 @@ This repository holds data and reports only. The reviewer's code, specs and deci
 | [`2026-11-02/`](2026-11-02/README.md) | Wachiman v1.4.0 on Opus, three runs, checked against the code. |
 | [`2026-11-02-e1-sonnet/`](2026-11-02-e1-sonnet/README.md) | Wachiman v1.4.0 on Sonnet (experiment E1). |
 | [`2026-11-02-field/`](2026-11-02-field/README.md) | Field run on the real kaipu-record workspaces PRs. |
+| [`2026-11-25-v1.20.1-replay/`](2026-11-25-v1.20.1-replay/README.md) | Wachiman v1.20.1 on the v1.4.0 replay, three runs; reviewed without kaipu-record's review focus file. |
+| [`2026-11-25-v1.21.0-focus-replay/`](2026-11-25-v1.21.0-focus-replay/README.md) | Wachiman v1.21.0 on the same replay with the focus file restored: why the newer engine finds fewer known bugs. |
+| [`2026-11-25-v1.21.0-budget-replay/`](2026-11-25-v1.21.0-budget-replay/README.md) | v1.21.0 with a $10 budget per review: every file read, and most of the gap to v1.4.0 closed. |
+| [`2026-11-25-v1.4.0-rerun/`](2026-11-25-v1.4.0-rerun/README.md) | v1.4.0 re-run three weeks later: it still catches what it caught, so the gap comes from the engine. |
 | [`replay/`](replay/README.md) | How a pull request is replayed into the `kaipu-bench-*` repositories. |
 | [`t3code/`](t3code/README.md) | A measurement unit next to `martian/`: 7 escaped bugs (5 valid) and 5 replayed PRs of pingdotgg/t3code with a machine-readable answer key (`cases.tsv`), one row per measured run set (`history.md`) and a runner (`scripts/run-set.sh`). Also the bug-history mining it comes from (791 merged PRs, CodeRabbit and Macroscope threads, a 183-row catalogue). |
 | [`mining/`](mining) | Throwaway scripts that produced the bug catalogue (kept for provenance). |

@@ -1,0 +1,100 @@
+# kaipu-bench-wachi-v3#25 [replay r2] feat(desktop): float "Your video is ready" outside the app window - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-25T22:59:23Z · commit b2705a9
+
+👮 **Wachiman** · 🟠 **1 to fix in this PR** · 1 question for you · 3 to consider · whole PR at `b2705a9`
+
+| At a glance | |
+| --- | --- |
+| **Findings** | 🔴 0 blockers · 🟠 1 to fix · 🟡 3 to consider · ⚪ 0 for your information (4) · 2 Should · 2 Could |
+| **Risk** | High: top fact `public-contract` at `library-detail-page.tsx:141`, see Risk facts |
+| **Needs a person** | 1 direction, in `library-detail-page.tsx:141` |
+| **Coverage** | 28 of 28 files reviewed, whole pull request |
+| **Read first** | `library-detail-page.tsx`, `index.ts`, `recording-ready.ts`, `electron-api.ts`, `ipc.ts` |
+
+### To fix (1)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟠 Fix · Should · 🐛 bug | [`recording-ready-window.ts:146`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/kaipu-record/src/main/recording/recording-ready-window.ts#L146) | \`show\` answers true before the card can paint, so a failed load or a crashed card renderer loses the card silently |
+
+### To consider (3)
+
+| | Where | Finding |
+| --- | --- | --- |
+| 🟡 Consider · Should · 📝 docs | [`post-recording-card.tsx:48`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/kaipu-record/src/renderer/src/features/status-cards/post-recording-card.tsx#L48) | Docstring still says the card goes away when the user leaves the page |
+| 🟡 Consider · Could · 🐛 bug | [`library-detail-page.tsx:141`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx#L141) | Remounting under the same history entry asks for the floating card again |
+| 🟡 Consider · Could · 📝 docs | [`floating-ready-window.md:51`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/documentation/src/content/docs/backlog/floating-ready-window.md#L51) | "The card never shows twice" holds only while the page stays mounted |
+
+### Questions for you (1)
+
+- [`library-detail-page.tsx:141`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx#L141) · direction — The floating window opens even when the main window is focused and already on the recording's page, where the in-app card used to be enough. Someone needs to decide whether floating should depend on the main window's visibility or focus.
+
+### Risk facts
+
+- `public-contract` · [`library-detail-page.tsx:141`](https://github.com/niway-dev/kaipu-bench-wachi-v3/blob/b2705a9ce2593b29ae50235312a4226955bbbb36/apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx#L141) — The recording page now sends a RecordingReadyPayload over the new `recording-ready:show` IPC, and main parses and validates it.
+- `index.ts` — a process boundary
+- `electron-api.ts` — a contract more than one side imports
+- `ipc.ts` — a contract more than one side imports
+- `recording-ready.ts` — a contract more than one side imports
+
+<details><summary>What the change connects to (6 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+
+- Main window invokes `recording-ready:show` to float the card (`apps/kaipu-record/src/main/recording/recording-ready-window.ts:104`) — A frameless always-on-top panel shown with showInactive at the top-right of the recorded display's work area. If it fails: If the window constructor throws, the call returns false and the page shows its in-app card. If the load fails or the renderer crashes, it still returns true and nothing is shown (finding). Evidence: `apps/kaipu-record/src/main/recording/recording-ready-window.ts:134-147`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:218-226`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:258-269`, `apps/kaipu-record/src/renderer/src/features/recording-ready/use-floating-ready-card.ts:21-29`.
+- An action on the floating card hands off to the main window (`apps/kaipu-record/src/main/index.ts:899`) — The main window comes forward and navigates to Prepare, the editor or the detail page through pathForHandOff. If it fails: The sender is checked against the card's own webContents and the action is validated. A press after close is ignored because payload is null. Evidence: `apps/kaipu-record/src/main/index.ts:145-150`, `apps/kaipu-record/src/main/index.ts:449-457`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:122-126`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:166-172`, `apps/kaipu-record/src/renderer/src/features/recording-ready/use-recording-ready-hand-offs.ts:13-34`.
+- Hub remembers the display of the latest take (`apps/kaipu-record/src/main/recording/recording-hub.ts:666`) — The floating card opens on that display. When the display is unknown it opens on the display under the cursor. If it fails: If the take stops before the lookup resolves, the region value (or null) is kept and the card falls back to the cursor display. Evidence: `apps/kaipu-record/src/main/recording/recording-hub.ts:646`, `apps/kaipu-record/src/main/recording/recording-hub.ts:707-714`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:237-244`.
+- Recording page asks main to float "Your video is ready" once the probe settles (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:141`) — Floating window on the desktop. Otherwise the in-app status-stack card through showInAppCard. If it fails: If the IPC rejects or main returns false (window creation failed), fallBack sets fallbackFor and the in-app card shows. If the window is created but its renderer never loads, nothing shows and there… Evidence: `apps/kaipu-record/src/renderer/src/features/recording-ready/use-floating-ready-card.ts:16-31`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:130-155`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:104-147`.
+- Floating card hand-off navigates the main window (`apps/kaipu-record/src/renderer/src/shell/app-root.tsx:31`) — The main window comes forward on Prepare, the editor, or /library/:id. A push without fromRecording state, so no card shows again there. If it fails: If the main renderer is not mounted, the sent hand-off is dropped silently. Evidence: `apps/kaipu-record/src/main/index.ts:897-903`, `apps/kaipu-record/src/renderer/src/features/recording-ready/use-recording-ready-hand-offs.test.ts:4-18`.
+- Card window root subscribes, signals ready, and reports actions and height (`apps/kaipu-record/src/renderer/src/features/recording-ready/recording-ready-card.tsx:24-53`) — PostRecordingCard inside a transparent, padded body (main.css data-window rule). If it fails: Main ignores ready, resize and action from any sender other than its own webContents. A payload that never arrives leaves the window empty. Evidence: `apps/kaipu-record/src/main/recording/recording-ready-window.ts:108-125`, `apps/kaipu-record/src/main/recording/recording-ready-window.ts:246-248`, `apps/kaipu-record/src/renderer/src/main.tsx:66-71`.
+
+</details>
+
+<details><summary>What the reviewer checked</summary>
+
+**Batch 1 of 2.** I found one fix-level problem in part 1, the floating "Your video is ready" card, and one comment that needs updating; nothing blocks the merge.
+
+- **The card can disappear with no fallback (fix).** `RecordingReadyWindow.show` tells the main window the card is up as soon as the window object exists, before its page has loaded. If the page fails to load or its renderer crashes, the user sees no floating card and no error. The main window also skips its in-app fallback card, because it was already told the card is showing. The code promises the card is "never lost", and this breaks that promise.
+- **Stale comment (consider).** The comment on `PostRecordingCard` still says the card goes away when the user leaves the page. That is only true of the in-app version; the floating window stays up until an action, ✕ or Escape.
+
+The rest held up:
+
+- **Input checks:** the payload and actions are validated, and every message from the card window is checked against its own window, so other windows cannot drive it.
+- **Hand-off:** when the user picks an action, the message to the main window is queued until that window is ready, so it arrives even if the window had to be recreated.
+- **Shared types:** `src/shared` takes only type imports from workspace packages, as the repo rules require.
+- **Preload:** the bridge grows only by the new recording-ready calls, each tied to a fixed message channel.
+- **Display choice:** the code that remembers which display the take recorded on is consistent with the existing recording bar logic.
+
+**Batch 2 of 2.** I reviewed all 13 files in part 2. Nothing blocks the merge; there are two "consider" findings, both from one cause.
+
+The recording page asks main to float "Your video is ready" only after the file has been read. It shows the in-app card only when main answers false or the IPC call fails. That matches what the main-process handler does.
+
+The problem: the "already asked" guard is a ref inside the component. It does not survive a remount under the same history entry. A real history Back to the page, which still carries `fromRecording`, asks main again, and the card reappears on the desktop. Prepare's own Back buttons push a new entry, so they don't trigger it. The doc's "the card never shows twice" therefore holds only while the page stays mounted.
+
+The tests, styles, i18n strings and backlog entry match the code. I raised one design question for a person to decide: whether the card should float even when the main window is focused and already on the recording's page.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost (estimate) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 15 | 998 | 8 | reviewed | 4 | $0.45 |
+| Batch 2 of 2 | 13 | 297 | 4 | reviewed | 9 | $0.45 |
+
+</details>
+
+<sub>Answer a finding in its thread: `Verdict: correct` or `Verdict: wrong`, and why.</sub>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 2 batches · 16 in / 12k out / 229k cache read / 78k cache write · Claude subscription: API-equivalent estimate, not a bill · $0.90</sub>
+
+<!-- wachi:review -->
+
+<!-- wachiman sha=b2705a9ce2593b29ae50235312a4226955bbbb36 -->
+
+<!-- wachi:state eyJmb3JtYXQiOiJ3YWNoaW1hbi5yZXZpZXctc3RhdGUvMSIsImVuZ2luZSI6IjEuMjEuMCIsImhlYWQiOiJiMjcwNWE5Y2UyNTkzYjI5YWU1MDIzNTMxMmE0MjI2OTU1YmJiYjM2IiwiYXR0ZW1wdCI6IjYyZTI5NjM0LTVkMDctNDRlOS1hOWM5LTYyYjUyOGE5YjljNCIsInN0YXR1cyI6ImNvbXBsZXRlIiwicmVhc29uIjpudWxsLCJmaW5kaW5ncyI6eyJ0b3RhbCI6NCwiYnlfc2V2ZXJpdHkiOnsiYmxvY2tlciI6MCwiZml4IjoxLCJjb25zaWRlciI6MywiaW5mbyI6MH0sImJ5X3BsYWNlbWVudCI6eyJpbmxpbmUiOjQsImJvZHkiOjAsIm91dHNpZGVfZGlmZiI6MH0sInVudGhyZWFkZWRfYmxvY2tpbmciOjB9fQ -->
+
+<!-- wachi:attempt id=62e29634-5d07-44e9-a9c9-62b528a9b9c4 -->

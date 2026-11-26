@@ -4,8 +4,12 @@ One structured copy of the reviews the three tools posted on the benchmark repla
 kaipu-record, so past results can be queried (`duckdb`, `jq`, a spreadsheet) instead of re-read as
 markdown. Everything comes from the GitHub API through `gh`. No model ran to build it.
 
-- **Built:** 2026-11-02.
-- **Scope:** the six `niway-dev/kaipu-bench-*` repositories (all pull requests, any state) and every
+- **Built:** 2026-11-02. **Extended:** 2026-11-25 with `kaipu-bench-wachi-v3`: Wachiman v1.20.1, runs W7–W9
+  ([report](../2026-11-25-v1.20.1-replay/README.md)), Wachiman v1.21.0 with the review focus file, runs W10–W12
+  ([report](../2026-11-25-v1.21.0-focus-replay/README.md)), v1.21.0 with `budget_usd: 10`, runs W13–W15
+  ([report](../2026-11-25-v1.21.0-budget-replay/README.md)), and v1.4.0 again, runs W16–W18
+  ([report](../2026-11-25-v1.4.0-rerun/README.md)).
+- **Scope:** the seven `niway-dev/kaipu-bench-*` repositories (all pull requests, any state) and every
   `niway-dev/kaipu-record` pull request that has a Wachiman review (112 of 467), which includes the
   field-run PRs #439 #449 #478 #479 #482 #483 #484.
 - **Private repositories** that run Wachiman were read too. Their data is **not** in this
@@ -18,9 +22,10 @@ markdown. Everything comes from the GitHub API through `gh`. No model ran to bui
 | [`findings.csv`](findings.csv) / [`findings.jsonl`](findings.jsonl) | posted finding | tool, source repo, bench PR, original kaipu-record PR, round, run label, model, version, run id, review id, comment id, `placement` (`inline` or `body`), path, line, commit, severity, topic, confidence, the tool's own labels, title, replies, date, URL. The JSONL also has the comment `body`. |
 | [`contracts.jsonl`](contracts.jsonl) | contract entry | The "What the change connects to" entries parsed from Wachiman review bodies. |
 | [`reviews.csv`](reviews.csv) | Wachiman review | Model, effort, version, batches, cost from the review footer and from the log, finding and contract counts, the `Confidence rule` line of the log. |
-| [`run-logs.csv`](run-logs.csv) | Actions run with a saved log | Workflow ref, version, model, effort, calls, turns, cost and duration summed from the per-batch result lines. |
+| [`run-logs.csv`](run-logs.csv) | Actions run with a saved log | Workflow ref, version, model, effort, calls, turns, cost and duration summed from the per-batch result lines. A run started by a comment is listed under the PR whose review it produced: replays of one original share a title, and comment runs are matched to PRs by title. |
 | [`runs.csv`](runs.csv) | bench PR (bench repos) or bot review (kaipu-record) | **The run map for the owner to review.** Tool, model, version, round tag, the label the analysis docs use (W-R1, W4, S7, PF-v1, CR-v2…), original PR, date, `confidence`, `basis`. |
 | [`labels.csv`](labels.csv) | finding that matched a verdict | The owner's verdict ID from the analysis docs (E/A/N/X/SN/NS for the replays, F for the field run), the verdict text, the match score and why. |
+| [`labelled-runs.csv`](labelled-runs.csv) | run × replayed PR that an analysis doc labelled | The run's column in the doc's Expected issues table: how many known bugs (E) the doc lists, how many the run caught or caught in part, and their IDs. See [Labelled, caught none](#labelled-caught-none). |
 | [`ambiguous.md`](ambiguous.md) | — | Findings in an analysed set that could not be matched with enough evidence, with their best candidates. |
 | [`raw/`](raw) | pull request | The API snapshots: `pr.json`, `review-comments.json`, `reviews.json`, `issue-comments.json`, `runs.json`, `meta.json` and `logs/run-<id>.log.gz`. Per repository, `_index.json` and `_runs.json`. |
 | `normalize-report.json` | — | Header lines that did not parse (none), counts seen per tool, and per-repository aggregates. |
@@ -54,7 +59,7 @@ gh auth switch --hostname github.com --user csdev19
 
 # 1. Snapshot. Idempotent: a PR whose updated_at did not change is skipped; --refresh forces a re-fetch.
 bun scripts/fetch.ts --out dataset/raw --logs \
-  --repos niway-dev/kaipu-bench-wachi,niway-dev/kaipu-bench-wachi-v2,niway-dev/kaipu-bench-pullfrog,niway-dev/kaipu-bench-pullfrog-v2,niway-dev/kaipu-bench-coderabbit,niway-dev/kaipu-bench-coderabbit-v2
+  --repos niway-dev/kaipu-bench-wachi,niway-dev/kaipu-bench-wachi-v2,niway-dev/kaipu-bench-wachi-v3,niway-dev/kaipu-bench-pullfrog,niway-dev/kaipu-bench-pullfrog-v2,niway-dev/kaipu-bench-coderabbit,niway-dev/kaipu-bench-coderabbit-v2
 bun scripts/fetch.ts --out dataset/raw --logs --only-wachiman \
   --workflows "Agent review,Pullfrog" --repos niway-dev/kaipu-record \
   --keep niway-dev/kaipu-record#439,niway-dev/kaipu-record#449,niway-dev/kaipu-record#478,niway-dev/kaipu-record#479,niway-dev/kaipu-record#482,niway-dev/kaipu-record#483,niway-dev/kaipu-record#484
@@ -79,33 +84,36 @@ reads them from a git ref instead.
 | --- | --- | --- | --- | --- |
 | kaipu-bench-wachi | 60 | 282 (258 inline, 24 body) | — | — |
 | kaipu-bench-wachi-v2 | 5 | 0 (see below) | — | — |
+| kaipu-bench-wachi-v3 | 61 | 275 (263 inline, 12 body) | — | — |
 | kaipu-bench-pullfrog | 5 | — | 7 | — |
 | kaipu-bench-pullfrog-v2 | 6 | — | 9 | — |
 | kaipu-bench-coderabbit | 10 | — | — | 15 |
 | kaipu-bench-coderabbit-v2 | 6 | — | — | 6 |
 | kaipu-record | 112 of 467 | 278 (266 inline, 12 body) | 34 | 27 (20 inline, 7 body) |
-| **Total** | 204 | **560** | **50** | **48** |
+| **Total** | 265 | **835** | **50** | **48** |
 
-**658 findings** in total. Also: **392 contract entries** (59 reviews), **206 Wachiman reviews**,
-**223 run logs** with parsed cost/model/version, **311 rows in `runs.csv`**.
+**933 findings** in total. Also: **859 contract entries**, **266 Wachiman reviews**,
+**283 run logs** with parsed cost/model/version, **372 rows in `runs.csv`**.
 
-Wachiman reviews by version: the 60 bench reviews are v1.3.0 (15) and v1.4.0 (45).
+Wachiman reviews by version: the 60 kaipu-bench-wachi reviews are v1.3.0 (15) and v1.4.0 (45); the 60
+kaipu-bench-wachi-v3 reviews are v1.20.1 (15, bench #2–#16), v1.21.0 (30: #17–#31 at the default budget, #32–#46
+with `budget_usd: 10`) and v1.4.0 (15, bench #47–#61).
 kaipu-record has 16 reviews on v1.4.0, 21 on v1.3.0, 70 on v1.2.x, 23 on the floating `v1` tag and 16 whose
 version is unknown (no log).
 
 ### Verdict join
 
-`labels.csv` has **285** rows. Of the 658 findings, 314 are outside the analysed sets (see
-[What is missing](#what-is-missing)), and 344 are in them: **285 matched, 59 are in
+`labels.csv` has **521** rows. Of the 933 findings, 314 are outside the analysed sets (see
+[What is missing](#what-is-missing)), and 619 are in them: **521 matched, 98 are in
 [`ambiguous.md`](ambiguous.md)**.
 
 | `label_kind` | Rows |
 | --- | --- |
-| `expected` (E) | 106 |
-| `additional` (A) | 48 |
-| `new` (N, X, SN, NS, NF) | 40 |
+| `expected` (E) | 240 |
+| `additional` (A) | 104 |
+| `new` (N, X, SN, NS, NF) | 85 |
 | `field` (F) | 91 |
-| `false-positive` | 0 (no doc marks a finding Invalid) |
+| `false-positive` | 1 (#466 N5 in the v1.21.0 analysis, marked invalid) |
 
 ### Private adoption repositories (counts only)
 
@@ -138,6 +146,38 @@ a private run.
 
 kaipu-record, kaipu-bench-* are public, so their raw snapshots are committed.
 
+### Labelled, caught none
+
+`labels.csv` has a row only for a finding that matched a verdict, so a run that caught no known bug
+looks the same there as a run nobody labelled. `labelled-runs.csv` tells them apart: it has one row per
+run and replayed PR whose own analysis doc (the run label's primary doc in `scripts/labels.ts`) has a
+column for it in the Expected issues table, even when every cell says `no`.
+
+- **Labelled, caught none:** a row with `expected_caught` 0 and `expected_partial` 0 (for example CR-v1
+  on #463).
+- **Not labelled:** no row. That covers every finding outside the analysed sets.
+- `findings_labelled` counts that run's `labels.csv` rows on that PR (E, A and N), so 0 with a row
+  means the run posted nothing an analyst matched.
+
+125 rows: W-R1…R3, PF-v1/v2 and CR-v1/v2 (2026-11-01), W4–W6 (2026-11-02), S7–S9 (2026-11-02-e1-sonnet),
+W7–W9 (2026-11-25-v1.20.1-replay), W10–W12 (2026-11-25-v1.21.0-focus-replay), W13–W15
+(2026-11-25-v1.21.0-budget-replay) and W16–W18 (2026-11-25-v1.4.0-rerun), each on #463–#467. A later doc that copies an earlier run's
+column for comparison does not label it again.
+
+### Wachiman v1.20.1 formats
+
+v1.20 changed what the engine posts, and `scripts/parse.ts` reads both forms:
+
+- An inline comment opens with a table: `| 👮 **Wachiman** | <title> |`, then Severity, Area and
+  Confidence rows. The Priority row (`Should`, `Could`) is not stored.
+- The review body indexes every finding in To fix / To consider tables. Only the rows under
+  `<details><summary>For your information` (and Outside the diff) are body-only findings.
+- Counts and the partial status come from the `<!-- wachi:state … -->` marker; the cost from the last
+  `<sub>` footer. On a Claude subscription token that cost is an API-equivalent estimate, not a bill.
+- The log names the engine by the commit SHA the workflow pins; `PINNED_SHAS` maps it to its tag.
+- `log_duration_ms` sums the batch calls. v1.20.1 runs batches in parallel, so the run's wall time is
+  shorter than that sum; W4–W6 are compared on the same sum.
+
 ## Contracts
 
 Recoverable, with one loss. The block `What the change connects to (N closed, M open)` in a Wachiman review
@@ -155,7 +195,7 @@ is 0 everywhere). v1.3.0 and earlier reviews have no contracts.
 `runs.csv` is derived, and the owner should check it. `confidence` says how:
 
 - `derived`: tool, model, version and date come from the snapshots and the run logs; the label comes from a doc that
-  names it (`basis` gives the doc). 248 rows.
+  names it (`basis` gives the doc). 309 rows.
 - `guessed`: 63 rows. Labels that no doc gives (`W-set2-R1…R3` and `CR-set2` for the five bug-catalogue PRs #402
   #255 #276 #269 #184, replayed in bench PRs #46–#60 and coderabbit #6–#10; `W-v2` for the failed wachi-v2 repo),
   Pullfrog and CodeRabbit round numbers on kaipu-record (`PF-1`, `CR-2`: the field docs name rounds by commit, I
