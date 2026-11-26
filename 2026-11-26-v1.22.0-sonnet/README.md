@@ -45,9 +45,10 @@ Raw reviews and comments: [`raw/`](raw/). Every batch call's `wachiman-cost` lin
 
 Cost per review is the last `<sub>` footer of each posted review; cost per run is the sum of its five
 reviews; cost per review in the table is the run's cost / 5. Findings posted is the number of
-finding rows in the reviews' tables (fix, consider and for-your-information rows; questions for
-the author are not rows). It gives 95 for the baseline; the baseline report's "110" was counted
-another way that this pass could not reproduce.
+every item the reviews posted: inline comments, findings listed with no thread, and questions
+in the body, duplicates included. That is the baseline's method; the per-PR counts are in
+[`prs/`](prs/). Counting only the rows of the reviews' finding tables instead gives 95 for the
+baseline and 92 here.
 
 | Per run (5 reviews each) | v1.21.0 baseline (W31, W32, W33) | v1.22.0 (R1, R2, R3) |
 | --- | --- | --- |
@@ -60,7 +61,8 @@ another way that this pass could not reproduce.
 | Cost per batch call, mean (max) | $0.41 ($0.73) | $0.33 ($0.71) |
 | Terminal reasons of batch calls | `success` 42 | `success` 42 |
 | Reviews left partial | 0, 0, 0 | 0, 0, 0 (every review: whole pull request) |
-| Findings posted | 35, 29, 31 (95) | 29, 33, 30 (92) |
+| Findings posted (every item) | 110 in all | 34, 42, 36 (112) |
+| Findings posted (table rows only) | 35, 29, 31 (95) | 29, 33, 30 (92) |
 | Known bugs caught (of 27) | 16, 14, 12 (mean 14.0) | 13, 14, 12 (mean 13.0) |
 | Cost per known bug caught (mean run / mean bugs) | $0.41 | $0.35 |
 
