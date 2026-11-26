@@ -369,7 +369,7 @@ export function decide(f: Finding, candidates: Verdict[], idf: Map<string, numbe
 // ---------------------------------------------------------------------------------------------
 // Docs
 
-const REPLAY_DOCS = [
+export const REPLAY_DOCS = [
   { dir: "2026-11-01/prs", name: "2026-11-01" },
   { dir: "2026-11-02/prs", name: "2026-11-02" },
   { dir: "2026-11-02-e1-sonnet/prs", name: "2026-11-02-e1-sonnet" },
@@ -382,7 +382,7 @@ const REPLAY_DOCS = [
   { dir: "2026-11-26-prompt-cache-5m/prs", name: "2026-11-26-prompt-cache-5m" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
-const REPLAY_PRS = ["463", "464", "465", "466", "467"];
+export const REPLAY_PRS = ["463", "464", "465", "466", "467"];
 const FIELD_PRS = ["439", "449", "478", "479", "482", "483", "484"];
 
 /** The doc whose run columns are authoritative for a run label. */
