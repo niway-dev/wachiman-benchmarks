@@ -40,6 +40,7 @@ This repository holds data and reports only. The reviewer's code, specs and deci
 | [`2026-11-26-credential-probe/`](2026-11-26-credential-probe/README.md) | One plain Claude Code call per credential on #465, no Wachiman: at the $0.75 batch cap, 15–17 turns on an API key against 10–12 on a subscription token. |
 | [`replay/`](replay/README.md) | How a pull request is replayed into the `kaipu-bench-*` repositories. |
 | [`t3code/`](t3code/README.md) | A measurement unit next to `martian/`: 7 escaped bugs (5 valid) and 5 replayed PRs of pingdotgg/t3code with a machine-readable answer key (`cases.tsv`), one row per measured run set (`history.md`) and a runner (`scripts/run-set.sh`). Also the bug-history mining it comes from (791 merged PRs, CodeRabbit and Macroscope threads, a 183-row catalogue). |
+| [`agent-orchestrator/`](agent-orchestrator/README.md) | A standing source on OrchestratorInc/agent-orchestrator (Go and TypeScript, reviewed by CodeRabbit): owner-accepted CodeRabbit findings replayed on local Wachiman at the same base and head, with an answer key (`cases.tsv`), run history and a runner. First batch: 10 PRs, 8 of 34 cases caught. |
 | [`mining/`](mining) | Throwaway scripts that produced the bug catalogue (kept for provenance). |
 | [`dataset/`](dataset/README.md) | The structured dataset and its raw GitHub API snapshots. |
 | [`scripts/`](scripts) | `fetch`, `normalize`, `runs` and `labels`: rebuild the dataset from GitHub. `pair`: pair Wachiman with another reviewer commit by commit (below). |
