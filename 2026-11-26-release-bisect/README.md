@@ -16,7 +16,7 @@
 
 ## Result
 
-**No release cut the turns. The credential did.** The same v1.15.0, at the same SHA with the same
+**No release up to v1.15.0 cut the turns. The credential did.** The same v1.15.0, at the same SHA with the same
 inputs, makes about 15 turns per batch call on an API key and about 9 on a Claude subscription
 token. Every set at about 15 turns ran on an API key, and every set at about 9 on the token.
 
@@ -35,8 +35,9 @@ token. Every set at about 15 turns ran on an API key, and every set at about 9 o
 | Reviews left partial | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | #467 cost per review | $2.82–$2.98 | $2.81–$2.91 | $2.82–$3.10 | $2.78–$3.07 | $2.81–$3.20 | $2.86–$2.91 | $2.75–$3.15 | $2.94–$3.03 |
 
-- **The engine is cleared from v1.9.0 to v1.15.0.** On the key, v1.15.0's turns, review time and
-  known bugs sit inside the range of v1.4.0, v1.5.0 and v1.9.0. Parallel batches (v1.16.0) were
+- **The engine is cleared from v1.9.0 to v1.15.0.** On the key, v1.15.0's turns and known bugs
+  sit inside the range of v1.4.0, v1.5.0 and v1.9.0, and its review time is close to it (349–437 s
+  on #467, against 353–423 s). Parallel batches (v1.16.0) were
   already cleared: v1.15.0 on the token is low while reviewing one batch at a time.
 - **On the token, a call stops earlier; each turn is the same.** From the v1.15.0 run logs
   (`wachiman-cost` lines, 2 and 6 batch calls per review):
@@ -47,7 +48,7 @@ token. Every set at about 15 turns ran on an API key, and every set at about 9 o
   | Subscription token, #465 / #467 | 9.3 / 9.7 | 5,432 / 4,686 | 582 / 482 | 5.8 / 4.9 |
 
   The model does about as much per turn and ends the call about 5 turns sooner, so it reads less
-  and writes about 40% less per batch.
+  and writes less per batch: 41% less output on #465, 33% less on #467.
 - **Where the difference comes from is not measured here.** The engine passes the token to Claude
   Code in place of the key and changes nothing else in a batch (`buildChildEnv` and
   `resolveClaudeAuth` in `src/providers/claude-code.ts`); it only changes the footer, which calls
@@ -70,8 +71,8 @@ token. Every set at about 15 turns ran on an API key, and every set at about 9 o
 ## What this changes
 
 - **The v1.21.0 against v1.4.0 comparison mixed credentials.** v1.4.0 ran on the key and v1.21.0
-  on the token, so its turns gap and part of its gap in findings measure the credential, not the
-  release ([results](../results.md#replay-of-v1201-and-v1210-against-v140-2026-11-25-kaipu-record-five-prs)).
+  on the token, so its turns gap and part of its gap in findings most likely measure the
+  credential, not the release (v1.21.0 was not run on the key) ([results](../results.md#replay-of-v1201-and-v1210-against-v140-2026-11-25-kaipu-record-five-prs)).
 - **A benchmark compares releases on one credential.** The report names it.
 - **The next question is about Claude Code, not Wachiman's engine:** why a batch call on a
   subscription token ends after about 9 turns where the same call on a key takes about 15.

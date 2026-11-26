@@ -4,7 +4,7 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token), not the release.
+- **Last updated:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
 - **Previous update:** 2026-11-12, Martian model arms and false-positive audit added.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
@@ -77,15 +77,12 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
 - **What does differ, every time: fewer turns per batch call** (10.1 against 14.1; on #467, 6 to
   15 against 10 to 18 in one run each) **and fewer findings** (71 against 78). Model, effort, turn
   limit and batch cap are the same (every review records them; one run log of each set was read), and no batch ended on a limit, so the
-  model chose to stop earlier. Candidate causes, none tested yet: the batch prompt and what the
-  engine puts in it changed across many releases (`src/engine.ts` alone changed by about 5,400
-  lines between the two), and batches now run four at once instead of one after another. Running
-  releases between v1.4.0 and v1.21.0 on #465 and #467 would show in which release the turns
-  dropped. **Answer (2026-11-26): the credential, not the release.** The same v1.15.0 makes
-  about 15 turns per call on an API key and about 9 on a Claude subscription token, and v1.5.0
-  and v1.9.0 on the key make about 15 ([release bisect](2026-11-26-release-bisect/README.md)).
-  v1.4.0 ran on the key and v1.21.0 on the token, so this comparison mixes credentials: its gap in
-  turns, and part of its gap in findings, measure the credential.
+  model chose to stop earlier. **The [release bisect](2026-11-26-release-bisect/README.md)
+  (2026-11-26) points to the credential.** v1.4.0 ran on an API key and v1.21.0 on a Claude
+  subscription token. The same v1.15.0 makes about 15 turns per call on the key and about 9 on
+  the token, and v1.5.0 and v1.9.0 on the key make about 15, so no release up to v1.15.0 cut the
+  turns, and parallel batches (v1.16.0) are cleared. v1.20.1 and v1.21.0 were not run on the key:
+  that the whole gap here is the credential is likely, not measured.
 - **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
   every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
   full, which is the whole default budget. Every partial review in this table is a #467 review.
