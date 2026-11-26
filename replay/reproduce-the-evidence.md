@@ -207,8 +207,10 @@ Claude Code 2.1.304, `claude-opus-5-5`, effort `high`, 40 turns, read-only tools
    [`reviews/`](../2026-11-26-credential-probe/reviews/); the labelling is
    [`labels.md`](../2026-11-26-credential-probe/labels.md).
 
-The report has no folder of its own for the "5-minute cache fix": it is the probe's second round
-(`cache_ttl: 5m`, cap `$0.75`: 13 to 14 turns, against 10 to 12 on the automatic 1-hour cache).
+The probe's second round (`cache_ttl: 5m`, cap `$0.75`) gave 13 to 14 turns, against 10 to 12 on
+the automatic 1-hour cache. The same fix inside Wachiman is measured in the
+[prompt-cache report](../2026-11-26-prompt-cache-5m/README.md). Its run labels W31–W33 are not the
+Sonnet baseline's W31–W33: the two reports numbered their runs separately, so cite them by report.
 
 ## What is not proven
 
