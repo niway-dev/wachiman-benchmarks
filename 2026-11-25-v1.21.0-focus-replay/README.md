@@ -22,7 +22,8 @@ did.
 The focus file was a real difference between the runs, and it is now fixed in kaipu-record
 ([kaipu-record#728](https://github.com/niway-dev/kaipu-record/pull/728)), but it is not what made
 the newer engine find less: restoring it did not bring the catches back. On #467 it may even have
-cost some, by leaving less budget for the last batches (see below).
+cost some, by leaving less budget for the last batches (see below). A [follow-up run with a $10 budget](../2026-11-25-v1.21.0-budget-replay/README.md)
+confirmed the budget as the main cause: every file read, 32 known bugs caught.
 
 | Per review (15 reviews each) | v1.4.0 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0 + focus file (W10–W12) |
 | --- | --- | --- | --- |

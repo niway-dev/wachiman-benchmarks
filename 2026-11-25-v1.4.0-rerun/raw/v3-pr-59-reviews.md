@@ -1,0 +1,50 @@
+# kaipu-bench-wachi-v3#59 [replay r3] feat(desktop): recording detail — title on top, destinations strip, copies from this original - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T00:08:37Z · commit dac8318
+
+👮 **Wachiman** · review of the whole pull request, at `dac8318`: all 14 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+**Batch 1 of 2.** I found two minor test problems in part 1 and no defects in the product code. First, the Drag test replaces the shared electronAPI stub and never puts it back. Second, the test named "Open in Export shows only where there is an export screen" never checks the case where there isn't one. The things I traced work as intended: Drag uses the same native file drag as the existing GIF viewer and export cards, and the destination cards and Export a copy go to Prepare the same way the post-recording card does. "Not now" and the "Saved" notice remember being closed only while the page stays open, which is what the PR describes. One point for the PR description: it says there are seven destinations with Email as its own card, but DESTINATION_IDS in destinations.ts lists six, and Email is part of the Slack · Discord · Email card.
+
+**Batch 2 of 2.** I found nothing to flag in part 2: the tests, three stylesheets, two docs and the en/es messages. I didn't build, test or run anything, only read the code.
+
+- **Tests:** the updated tests match `library-detail-page.tsx`. That covers the title row, destination cards for all six `DESTINATION_IDS`, "Not now" bringing back "Export a copy", the copies list with the Drag handle, and the saved notice.
+- **Stylesheets:** every class the components use exists in the stylesheets, and every new CSS variable is defined in `base.css` or `packages/tokens`.
+- **Messages:** the removed message keys are no longer referenced. `sendTo` is kept because the Library card and row still use it.
+- **Docs:** I found nothing false in `prepare-screen.md`. One thing I checked: going Back from Prepare to a fresh recording's page shows the "Saved to your Library" notice again, the same way the existing post-recording card does.
+
+<details><summary>What the change connects to (7 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Drag handle on a ready copy starts a native file drag (`apps/kaipu-record/src/renderer/src/features/prepare/components/master-copies-panel.tsx:171`) — The OS drags a hard-linked file named after the copy's title. If it fails: Main returns without a word when there is no thumbnail or the id is invalid, and logs any error. The same holds for the existing siblings. Evidence: `apps/kaipu-record/src/renderer/src/features/library/components/gif-viewer.tsx:25-27`, `apps/kaipu-record/src/renderer/src/features/status-cards/export-status-cards.tsx:235`, `apps/kaipu-record/src/main/library/index.ts:161-175`, `apps/kaipu-record/src/preload/index.ts:87`.
+- A destination card opens Prepare on that destination; Not now hides the panel (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:489`) — The Prepare route opens. After Not now the panel is gone and Export a copy appears among the actions. If it fails: The dismissal lives only in component state, so it resets when the page remounts (Back). The PR describes this as intended. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:149-151`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:190-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436`.
+- The size estimate on each destination card (`apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:41`) — The card shows about, up to, or full size; it shows an ellipsis until the file has been read. If it fails: If the file can't be read, probe stays null and the cards keep showing the ellipsis. Clicking a card still works. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:88-95`, `apps/kaipu-record/src/renderer/src/features/prepare/destinations.ts:179-213`.
+- Destination card on "Where is it going?" opens Prepare on that destination (`apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:82`) — The router moves to /prepare/:assetId?to=<destination>. If it fails: Navigation is synchronous. The only async input is the probe: until it resolves, every card except the archive one shows "…". Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:149-151`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:489-505`, `apps/kaipu-record/src/renderer/src/features/prepare/components/destinations-panel.tsx:41-56`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.test.tsx:253-266`.
+- "Not now" hides the destinations panel and brings back "Export a copy" (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:494`) — The panel disappears and the primary Export a copy button appears in the actions row (showDestinations gates both). A heavy master then shows the heavy banner. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:138-139`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:190-191`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:436`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:517`, `apps/documentation/src/content/docs/backlog/prepare-screen.md:101-102`.
+- "Saved to your Library" notice on a fresh recording, dismissed with ✕ (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:394`) — A green role=status notice replaces the standing master note until ✕. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:101`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:128-137`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:341`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.test.tsx:868-881`.
+- The page probes every local recording (no longer only heavy ones) for resolution and estimates (`apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:142`) — The resolution appears in the meta line once the file is read. If it fails: When the probe is null, the dimensions are omitted and the cards show "…". The hook's internals are not changed here. Evidence: `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.tsx:282-289`, `apps/documentation/src/content/docs/backlog/prepare-screen.md:112-113`, `apps/kaipu-record/src/renderer/src/pages/library-detail/library-detail-page.test.tsx:757-771`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 5 | 852 | 4 | reviewed | 13 | $0.58 |
+| Batch 2 of 2 | 9 | 763 | 2 | reviewed | 11 | $0.51 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · 2 batches · $1.09</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=dac8318b631e64780f65ce94b4aaa57261d7d63d -->
+
+<!-- wachi:attempt id=d7a52d32-216e-4450-ae59-406201e8fa4d -->
