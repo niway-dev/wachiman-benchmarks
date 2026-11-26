@@ -6,7 +6,7 @@ reports; it does not repeat their reasoning. Every figure below comes from those
 ## One-minute summary
 
 **Question.** On the same five kaipu-record pull requests (#463 to #467, 27 known bugs), Wachiman
-v1.4.0 caught about 12 known bugs per run and v1.20.1 and v1.21.0 caught 9 to 11. Why? And why does
+v1.4.0 caught about 12 known bugs per run and v1.20.1 and v1.21.0 caught 8 to 11. Why? And why does
 the release baseline now run Sonnet 5.5 on the subscription token?
 
 **Answer.**
@@ -52,7 +52,7 @@ Wachiman:
 | Set | What it measures | Report |
 | --- | --- | --- |
 | W19–W30: v1.5.0, v1.9.0, v1.15.0 on the key and on the token | Turns and known bugs on two pull requests only (#465 and #467), to find the release where turns dropped. Result: none; the credential did | [release bisect](../2026-11-26-release-bisect/README.md) |
-| Credential probe: plain `claude -p` on #465, 27 calls | Turns, cost and known issues per call by credential, cap and cache lifetime. Not Wachiman | [credential probe](../2026-11-26-credential-probe/README.md) |
+| Credential probe: plain `claude -p` on #465, 23 calls | Turns, cost and known issues per call by credential, cap and cache lifetime. Not Wachiman | [credential probe](../2026-11-26-credential-probe/README.md) |
 
 ## Reproduce it from zero
 
@@ -72,11 +72,17 @@ inputs of its sets.
      (W4–W6, W16–W18, W19–W24, W28–W30).
 4. The Wachiman GitHub App and the replay setup links that `bench.sh create` prints.
 
-Not confirmed from the sources: `bench.sh` hardcodes the owner (`niway-dev`), the SSH alias
-(`github-csdev`) and the expected `gh` login (`csdev19`) in its first lines. Anyone else has to
-change those three values before it runs.
+Not confirmed from the sources: `bench.sh` hardcodes these values in its first lines, and anyone
+else has to change them before it runs: `OWNER` (`niway-dev`), `SOURCE_REPO`
+(`niway-dev/kaipu-record`), `SSH_HOST` (`github-csdev`), `GH_LOGIN` (`csdev19`) and `GIT_EMAIL`
+(the owner's address; the commit author of the replay commits). `GIT_NAME` falls back to the owner's
+name when `git config user.name` is empty. Every caller workflow in this folder also sets
+`operator: csdev19`; change it in your copy.
 
-### 2. Create the replay repository and the first set
+### 2. Create the replay repository
+
+Run every `bench.sh` command from the `replay/` folder of this repository (`cd replay`); other
+snippets say where they run.
 
 ```sh
 cd replay
@@ -84,15 +90,16 @@ export KAIPU_CLONE=/tmp/kaipu-mine/repo     # the bare clone
 export BENCH_BRANCH_PREFIX=replay-v140      # one prefix per set of runs
 export BENCH_FOCUS=as-is                    # v1.4.0 reads .github/agent-review.md itself
 ./bench.sh create wachi kaipu-bench-wachi-v3   # repo, main, replay branches; setup PR is #1
-./bench.sh open kaipu-bench-wachi-v3           # one replay PR per manifest row, then /wachi review
-./bench.sh rounds kaipu-bench-wachi-v3 2 3     # rounds 2 and 3 on the same commits
-./bench.sh collect kaipu-bench-wachi-v3 out/ v140   # reviews and comments to out/v140-pr-<n>-*.md
 ```
+
+`create` puts `wachi-workflow.yml` (v1.21.0) on `main`. **Do not run `open` yet.** Do steps 3 and 4
+first, so that the caller for the version you are replaying is on `main` before round 1. Then run
+`open`, `rounds` and `collect` as step 4 shows.
 
 - Add `--dry-run` to any command to print the `gh` and `git` commands without running them.
 - For a repository that already exists, use `push` instead of `create`, with a new
-  `BENCH_BRANCH_PREFIX`:
-  `./bench.sh push kaipu-bench-wachi-v3`, then `open`, `rounds 2 3`, `collect`.
+  `BENCH_BRANCH_PREFIX`: `./bench.sh push kaipu-bench-wachi-v3`. Its `main` keeps whatever caller
+  it has, so step 4 applies the same way.
 - The manifest defaults to [`manifest-2026-10-31.tsv`](manifest-2026-10-31.tsv). The release bisect
   used [`manifest-2026-11-26-bisect.tsv`](manifest-2026-11-26-bisect.tsv) through `BENCH_MANIFEST`.
 - Round 1 is `open`. The engine does not review a head it already marked, so `rounds` pushes the
@@ -132,7 +139,7 @@ only one. Ready-made callers in this folder:
 
 W7–W9 also ran without the focus file: use `BENCH_FOCUS=as-is` with a v1.14.0+ engine.
 
-### 4. Put the caller on the replay repository's `main`, and restore it
+### 4. Put the caller on `main`, run the set, restore the caller
 
 `bench.sh` never installs a caller. The reports say each one was put on `main` "through the
 contents API" before round 1, then `main` went back to `wachi-workflow.yml`. The workflow path
@@ -140,6 +147,7 @@ on `main` is `.github/workflows/wachi-bench.yml`. A sketch of that call (not rec
 sources, not tested here):
 
 ```sh
+# run from the root of this repository
 REPO=niway-dev/kaipu-bench-wachi-v3
 P=.github/workflows/wachi-bench.yml
 SHA=$(gh api "repos/$REPO/contents/$P" --jq .sha)
@@ -148,7 +156,16 @@ gh api -X PUT "repos/$REPO/contents/$P" \
   -f content="$(base64 < replay/wachi-workflow-sonnet.yml | tr -d '\n')"
 ```
 
-After the last round, repeat it with `wachi-workflow.yml`.
+With the caller in place, run the set from `replay/`:
+
+```sh
+cd replay   # same exports as step 2
+./bench.sh open kaipu-bench-wachi-v3           # round 1: one replay PR per manifest row, then /wachi review
+./bench.sh rounds kaipu-bench-wachi-v3 2 3     # rounds 2 and 3 on the same commits
+./bench.sh collect kaipu-bench-wachi-v3 out/ v140   # reviews and comments to out/v140-pr-<n>-*.md
+```
+
+After the last round, put `wachi-workflow.yml` back on `main` with the same call.
 
 ### 5. Label the findings against the known-bug catalogue
 
@@ -160,7 +177,10 @@ After the last round, repeat it with `wachi-workflow.yml`.
    in part), an extra already seen, a new finding, or invalid. These reports used one Claude
    Sonnet 5.5 pass per pull request, not blind. Its judgement calls are written in each report's
    `prs/` files.
-3. Counts come from [`dataset/labelled-runs.csv`](../dataset/labelled-runs.csv) (`run_label` W4–W33).
+3. Counts for W4–W30 come from [`dataset/labelled-runs.csv`](../dataset/labelled-runs.csv)
+   (`run_label`); that file stops at W30. The Sonnet baseline's counts (W31–W33) are in its
+   [README](../2026-11-26-v1.21.0-sonnet-baseline/README.md) and its
+   [`prs/`](../2026-11-26-v1.21.0-sonnet-baseline/prs/) files.
 4. Check first that every review body says the whole pull request was reviewed. A partial review
    is not comparable with a full one.
 
@@ -176,6 +196,7 @@ After the last round, repeat it with `wachi-workflow.yml`.
   one `wachiman-cost` line per batch call (42 calls):
 
   ```sh
+  cd 2026-11-26-v1.21.0-sonnet-baseline   # from the root of this repository
   jq -s '{calls: length, turns_per_call: (map(.turns)|add/length),
           total_usd: (map(.cost_usd)|add), costliest_call: (map(.cost_usd)|max)}' batch-calls.jsonl
   ```
