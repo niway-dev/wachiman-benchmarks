@@ -37,18 +37,45 @@
   $0.75, and writes about 40% fewer output tokens (14,034 against 8,352 on average). Wachiman's
   batches run at $0.75.
 
+## Second round: the cache lifetime and the budget notice (same day, token only)
+
+Claude Code shows the model its spend when a call has `--max-budget-usd`: every turn adds `USD
+budget: $used/$total; $remaining remaining` to the model's context (in the Claude Code 2.1.304
+binary; not in Anthropic's docs). On a subscription it also writes the prompt cache for 1 hour,
+which is documented and can be set with `CLAUDE_CODE_PROMPT_CACHE_TTL`
+([prompt caching](https://code.claude.com/docs/en/prompt-caching.md)). Five runs on the token
+separate the two, with the probe's new `cache_ttl` and `budget_usd: 0` (no cap, so no notice):
+
+| Run | Cap | Cache | Turns | Cost (estimate) | Seconds |
+| --- | --- | --- | --- | --- | --- |
+| [45845006088](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845006088) | $0.75 | 5m (forced) | 14 / 13 / 14 | $0.57 / $0.59 / $0.61 | 93 / 110 / 99 |
+| [45845022582](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845022582) | none | 1h (automatic) | 39 / 28 / 26 | $1.52 / $1.30 / $1.08 | 228 / 187 / 164 |
+| [45845037352](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845037352) | none | 5m (forced) | 26 / 30 / 34 | $0.77 / $0.95 / $1.11 | 183 / 202 / 237 |
+| [45845050918](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845050918) | none, 5 turns | 5m | 6, `error_max_turns`, no review text | $0.17 | 36 |
+| [45845066711](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845066711) | none, 9 turns | 5m | 10, `error_max_turns`, no review text | $0.28 | 56 |
+
+- **With no cap, the token makes as many turns as the key:** 26 to 39, against 27 to 38 on the key
+  at a $3 cap that no call came near. The gap appears only under a cap the model is shown.
+- **At $0.75, forcing the 5-minute cache recovers most of it:** 13 to 14 turns, against 10 to 12 on
+  the automatic 1-hour cache and 15 to 17 on the key. The ranges still do not overlap, and this
+  round ran hours after the first, so part of the rest may be run-to-run spread.
+- **Without a cap, the cache changes the cost, not the turns:** about 30 turns either way, at $0.94
+  on average with 5 minutes against $1.30 with 1 hour.
+- **A turn limit cuts the call with no review:** at 5 and 9 turns both calls ended on
+  `error_max_turns` with no final text. The model is not told the turn limit, so turns cannot be
+  set by hand that way; the cap is the lever that lets the model finish its list.
+
 ## What it means, and what it does not show
 
 - **Measured:** with the same Claude Code version, call and cap, a call on the token makes fewer
   turns than on the key at $0.75, and its prompt cache is written with a different lifetime.
-- **Not measured: why the call stops earlier.** No call reached its cap, so Claude Code did not
-  cut it. One explanation fits both caps: the model is told its budget and wraps up as the spend
-  nears it, and a higher cost per turn makes the token get there in fewer turns. Nothing in the
-  stream shows a budget notice, and Claude Code 2.1.304 ships as a native binary, so this was not
-  checked. The test that would: the same calls with no `--max-budget-usd`. If the gap goes away,
-  the cap is how the credential reaches the turns.
-- **No documentation found.** Anthropic's docs and the claude-code issues searched on 2026-11-26
-  describe no difference in behaviour between the two credentials.
+- **Why the call stops earlier:** no call reached its cap, so Claude Code did not cut it. The
+  model is shown its spend against the cap on every turn, and on the token the 1-hour cache makes
+  each turn cost more, so the spend nears the cap in fewer turns. The second round supports this:
+  no cap, no gap; a 5-minute cache at the same cap, most of the gap gone. That the model stops
+  *because of* the notice is inferred from these counts; its reasoning is not visible.
+- **Documented, and not.** The 1-hour cache on a subscription is in Anthropic's docs. The budget
+  notice is not; it was read from the strings of the Claude Code 2.1.304 binary.
 
 ## Limits
 
