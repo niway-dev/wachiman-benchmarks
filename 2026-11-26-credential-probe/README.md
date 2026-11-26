@@ -65,6 +65,35 @@ separate the two, with the probe's new `cache_ttl` and `budget_usd: 0` (no cap, 
   `error_max_turns` with no final text. The model is not told the turn limit, so turns cannot be
   set by hand that way; the cap is the lever that lets the model finish its list.
 
+## Known bugs found per call
+
+Each call's final text is in [`reviews/`](reviews/), and [`labels.md`](labels.md) matches it
+against #465's known issues ([answer key](../2026-11-26-release-bisect/prs/pr-465.md): E1–E3 and
+A1–A5) and checks every other finding against the code. Labelled by Claude Sonnet 5.5 (effort high)
+without reading the set names first. A5 is about the PR description, which the probe never sees,
+so 7 issues are within reach.
+
+| Set | Turns | Known issues found, per call | Mean |
+| --- | --- | --- | --- |
+| Key, $0.75 | 15 / 17 / 15 | 1 / 2 / 3 | 2.0 |
+| **Token, $0.75, 1-hour cache** | 10 / 12 / 12 | 1 / 1 / 0 | **0.7** |
+| **Token, $0.75, 5-minute cache** | 14 / 13 / 14 | 2 / 3 / 2 | **2.3** |
+| Key, $3 | 38 / 27 / 28 | 2 / 2 / 3 | 2.3 |
+| Token, $3, 1-hour cache | 20 / 26 / 28 | 3 / 2 / 3 | 2.7 |
+| Token, no cap, 1-hour cache | 39 / 28 / 26 | 2 / 2 / 2 | 2.0 |
+| Token, no cap, 5-minute cache | 26 / 30 / 34 | 1 / 1 / 3 | 1.7 |
+
+- **Only one set falls behind: the token at $0.75 on the automatic 1-hour cache**, the setting a
+  Wachiman batch on a subscription token runs with. Forcing the 5-minute cache puts it level with
+  the key.
+- **Past about 15 turns, more turns found no more known issues** here: 2.0 to 2.7 per call with
+  26 to 39 turns, against 2.0 to 2.3 with 13 to 17.
+- **A plain prompt finds far less than Wachiman:** 0 to 3 of 7 per call, where Wachiman's batches
+  found 4 to 8 of these issues per review in the release bisect. The probe isolates the credential;
+  it is not a measure of review quality.
+- Three calls per set: a difference of one issue per call is inside the spread. The 0.7 set is
+  the only one below every call of the others but one.
+
 ## What it means, and what it does not show
 
 - **Measured:** with the same Claude Code version, call and cap, a call on the token makes fewer
