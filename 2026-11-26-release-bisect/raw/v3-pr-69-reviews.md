@@ -1,0 +1,90 @@
+# kaipu-bench-wachi-v3#69 [replay] feat(desktop): Export screen with its own rail entry (replaces Prepare) - bot reviews
+
+## github-actions[bot] · COMMENTED · 2026-11-26T01:46:53Z · commit b12d760
+
+👮 **Wachiman** · review of the whole pull request, at `b12d760`: all 47 files reviewed.
+
+8 finding(s): 4 to fix, 4 to consider; 8 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+**Batch 1 of 6.** Part 1: one fix-level finding, medium confidence. `ExportPage` shows its loading state on every Library re-list, not just the first load. Re-lists come from the cloud catalog refresh started on mount, from tag edits and from account changes. Each one unmounts `ExportScreen` and silently resets the destination the user picked, plus their YouTube preset and framing, back to the URL's `?to=` value. The routes, the legacy `/prepare` redirect, the new Email destination, the import path and the keyboard handling all match the code they reuse. I did not read `probeSource` to confirm it never rejects; if it does, the page would stay on its "reading" state.
+
+**Batch 2 of 6.** Part 2 has two problems to fix.
+
+- **Library drops:** removing `useFileDrop` from the Library leaves file drops there unhandled. Nothing else catches them, so Electron loads the dropped file in the main window and the app disappears. The PR description says the drop "does nothing", which is not what happens.
+- **Misleading illustration:** the new stage shows the YouTube-only "Uploaded at 1080p → sharper" crop for TikTok · Reels and LinkedIn · Feeds too. Those copies are 1080×1920 and 1080×1080, so it promises sharper text the copy doesn't deliver.
+
+There is also a smaller suggestion: the Fill / Fit explanation and preview are now only a hover tooltip. `recent-exports.tsx` and `video-picker.tsx` look correct, and the deleted `destination-detail.tsx` has no remaining references.
+
+**Batch 3 of 6.** Part 3 has no findings.
+
+- **Rail badge (`sidebar.tsx`):** the badge now counts the running export plus finished copies not seen yet. The Library's old steps are all kept: opening a copy's page forgets that copy, and opening the Library or any Export URL clears the finished ones. Starting an export empties the runner's `ready` slot, so the running copy is never also counted as ready. The `export.railBadge` string exists in English and Spanish.
+- **Deleted Prepare files:** nothing in `src` still imports them. `isPrimaryEnter` now lives in `export-page.tsx`.
+- **`use-file-drop.test.tsx`:** it keeps every `useFileDrop` case from the deleted `ImportDropZone` test, checked against a `data-dragging` attribute instead of the old zone.
+- **`destinations.test.ts`:** it now covers Email sharing the Balanced preset with Slack · Discord, and `destinationOfPreset("balanced")` still returning chat. Both match `destinations.ts`.
+
+**Batch 4 of 6.** Part 4 covers the tests. The new Export page test and the path updates in the library-detail test match the code. There is one finding. With the Library's drop import removed, nothing stops the platform default for a file dropped on Library: Electron opens that file in place of the app. The new Library test ("does not take a video dropped on the window") cannot see this in jsdom, so it locks the regression in instead of catching it.
+
+**Batch 5 of 6.** Part 5 is the sidebar badge tests, the new and restyled Export stylesheets, and the deleted Prepare test. I found nothing that blocks the merge, only two optional test gaps in `sidebar.test.tsx`.
+
+- **Stylesheets:** every class the new files define is used in `export-page.tsx`, `export-header.tsx`, `destination-row.tsx` or `export-drop-zone.tsx`. Every token they use exists, in `packages/tokens/css/tokens.css` or the app's `base.css`. The `data-group` values match `DestinationGroupId`.
+- **Deleted Prepare test:** its cases moved to `export-page.test.tsx`, plus redirect tests for the old `/prepare` URLs. Two cases were not carried over, "Back to recording" and the "Prepare another video" footer drop target; those parts of the old screen were removed.
+- **Sidebar tests:**
+  - The test "is active on Export with and without a video" only renders the with-video URL, never bare `/export`.
+  - The running-export half of the badge ("in progress") has no test; every test only feeds in finished copies.
+
+**Batch 6 of 6.** I found one small issue in part 6, an orphaned CSS comment; everything else checks out.
+
+- **Orphaned comment (consider, cleanup):** `library-page.module.css:108` still describes the "Drop a video here" strip, which this PR removes. The comment now sits above the sticky toolbar and reads as if it describes it. Deleting the line fixes it.
+- **Routes:** `routes.ts` has no value imports from workspace packages, so it still follows the preload rule. The window-size test now covers `/export/:id` and `/export`. The legacy `/prepare` redirect replaces the history entry and keeps the query (`?to=`).
+- **Stylesheets:** every class in `export-stage.module.css`, `recent-exports.module.css` and `video-picker.module.css` matches what its component uses. The new `data-tone` values (`fits`, `over`, `lighter`, `not-lighter`) match `SizeBarCard`.
+- **Messages:** the removed `library.import*` and `prepare.prepareAVideo` keys have no remaining references in the app. The new `export.*` and `prepare.*Email` keys are all used, and `en.json` and `es.json` have the same keys.
+- **Backlog doc:** its claims about the rail badge, the redirects, the arrow keys and Enter, recent exports (three in all) and the screen staying put after an export starts match the code.
+
+I didn't verify the doc's note that the progress and ready toasts say "your export" for an Email copy. That copy lives on a sibling branch.
+
+<details><summary>What the change connects to (16 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Library re-list while Export is open with a video (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:117`) — The selected card, YouTube preset and framing reset after a cloud catalog refresh or any other library:changed event. If it fails: The user's choice is lost silently; the screen falls back to the URL destination. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-local-library.ts:41-42`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-local-library.ts:124-134`, `apps/kaipu-record/src/main/library/index.ts:73-76`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:158`.
+- File drop or file dialog import on Export, then the imported video opens (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:85`) — The new video opens on Export with ?to= kept; extra files are named in a toast. If it fails: Import errors go through useImportVideos' own toasts; the destination is read through a ref at completion, so it is the latest one. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:42-56`, `apps/kaipu-record/src/renderer/src/features/prepare/prepare-path.ts:12-15`.
+- Unreadable source probe redirects to /export (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:95`) — Toast plus the drop zone. If it fails: If probeSource rejected instead of resolving, the state would stay 'loading' and the page would show 'reading' indefinitely; probeSource was not read to confirm it never rejects. Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:42-67`.
+- Legacy /prepare URLs redirect to /export (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:168`) — Old links land on Export with the same ?to=. Evidence: `apps/kaipu-record/src/shared/routes.ts:17-24`, `apps/kaipu-record/src/renderer/src/app/router.tsx:68-74`.
+- Global Enter exports and arrows step through destinations (`apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:277`) — Enter starts or opens the copy for the selected card. If it fails: If an export is already running, usePrepareCopy shows a busy toast. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/video-picker.tsx:82-89`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:375-386`.
+- Library stops handling window file drops (useFileDrop / ImportDropZone removed) (`apps/kaipu-record/src/renderer/src/pages/library/library-page.tsx:53`) — Dropping a file on the Library is not cancelled, so Chromium's default navigates the main window to the file. If it fails: The window navigates to file://; the app UI is lost until restart. No will-navigate guard in main. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:8-11`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:29-51`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:55`, `apps/kaipu-record/src/main/index.ts:400-411`.
+- Upload size card and text crops for every send-more destination (`apps/kaipu-record/src/renderer/src/pages/export/export-stage.tsx:93`) — Blurred "Uploaded at 1080p" vs sharp "Uploaded at 1080 × 1080" for LinkedIn · Feeds. Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-stage.tsx:252-257`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-presets.ts:271-284`, `packages/i18n/messages/en.json:917-918`.
+- Recent exports strip reads the export runner and the Library (`apps/kaipu-record/src/renderer/src/pages/export/recent-exports.tsx:34`) — The progress row's percentage follows runner.fraction; a finished row opens /library/:assetId. If it fails: On runner status "error" the running row disappears; the strip shows no error (the status cards own that). Evidence: `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:25-27`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:68-83`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:112`.
+- Video picker lists exportable originals and closes on outside click / Escape (`apps/kaipu-record/src/renderer/src/pages/export/video-picker.tsx:45`) — Picking a row navigates to exportPath(assetId, current destination). Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-copy.ts:22-26`, `apps/kaipu-record/src/renderer/src/features/library/lineage.ts:65-67`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:86-88`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:364`.
+- Rail badge moves from Library to the new Export item and counts the running export plus unannounced finished copies (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111`) — The Export rail item shows a badge labelled through export.railBadge, which exists in en.json and es.json. The Library item no longer carries a badge. If it fails: If the export errors, status becomes 'error' and the running term drops to 0, and the error card is shown separately. The badge state is in memory only, so a relaunch clears it, as documented in read… Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/ready-copies.ts:50-75`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:321-327`, `apps/kaipu-record/src/renderer/src/features/video-editor/export/export-runner.ts:462-463`, `apps/kaipu-record/src/shared/routes.ts:18-20`, `packages/i18n/messages/en.json:946`, `packages/i18n/messages/es.json:946`.
+- Deletes the Prepare page, its destination list, its drop zone and the ImportDropZone test, and moves the useFileDrop coverage to its own test (`apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.test.tsx:1`) — The new test keeps the enter/leave depth, drop-acceptance, non-file-drag and unmount cases, and reads data-dragging instead of the zone's data-active. Nothing in src still imports pages/prepare, ImportDropZone, PrepareDropZone, DEFAULT_DESTINATION or useLibraryBadge. isPrimaryEn… Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:16-61`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.test.tsx:20-73`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:375`.
+- A file dropped on the Library page (its window-wide drop import was removed) (`apps/kaipu-record/src/renderer/src/pages/library/library-page.test.tsx:80`) — Per the hook's own comment, Electron navigates the main window to the dropped file, replacing the app. If it fails: The app UI and any in-renderer work (e.g. a background export) are lost with no error. The test cannot see this in jsdom. Evidence: `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:8-11`, `apps/kaipu-record/src/renderer/src/features/library/hooks/use-file-drop.ts:48-51`, `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:55`, `apps/kaipu-record/src/main/index.ts:400-403`, `apps/kaipu-record/src/renderer/src/pages/library/library-page.test.tsx:80-87`.
+- A video dropped on Export is imported and Export opens on it with the selected destination (`apps/kaipu-record/src/renderer/src/pages/export/export-page.test.tsx:460`) — Export reopens on the new video. A toast names any extra videos. If it fails: Non-video files are rejected with a toast before the IPC call (covered by the test at line 511). Evidence: `apps/kaipu-record/src/renderer/src/features/prepare/use-prepare-import.ts:42-56`, `apps/kaipu-record/src/renderer/src/features/prepare/prepare-path.ts:12-15`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:77-88`.
+- Sidebar Export badge: counts a running export plus finished copies the user hasn't seen. Opening Export or the Library clears the finished ones. (`apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111`) — The Export rail item gets a badge, with the accessible label from tExport('railBadge'). The Library item no longer shows a badge. Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:72-82`, `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`, `apps/kaipu-record/src/renderer/src/shell/sidebar.test.tsx:44-79`, `apps/kaipu-record/src/shared/routes.ts:18-20`.
+- New routes `/export/:assetId` and `/export`; the old `/prepare/:assetId` and `/prepare` become legacy redirects that keep the query (`apps/kaipu-record/src/shared/routes.ts:17-24`) — Old deep links open Export with the same destination preselected. The window-size preset stays `main` for both the new and the legacy paths, and the test pins this. If it fails: An unknown assetId reaches ExportPage and shows `fileNotFound` with a button back to `/export`. An unreadable probe shows a toast and replaces the URL with `/export` (keeping `?to=`). Evidence: `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:168-173`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:95-99`, `apps/kaipu-record/src/renderer/src/pages/export/export-page.tsx:119-129`, `apps/kaipu-record/src/shared/window-size.test.ts:17-31`.
+- Export rail badge label (`export.railBadge`) and the badge count moved from LIBRARY to EXPORT (`packages/i18n/messages/en.json:946`) — A badge on the EXPORT rail item, with the pluralised aria label. Evidence: `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:79-81`, `apps/kaipu-record/src/renderer/src/shell/sidebar.tsx:111-123`, `apps/documentation/src/content/docs/backlog/export-screen.md:26-28`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 6 | 13 | 777 | 4 | reviewed | 12 | $0.45 |
+| Batch 2 of 6 | 5 | 987 | 4 | reviewed | 18 | $0.63 |
+| Batch 3 of 6 | 7 | 789 | 4 | reviewed | 14 | $0.40 |
+| Batch 4 of 6 | 3 | 603 | 2 | reviewed | 14 | $0.40 |
+| Batch 5 of 6 | 8 | 854 | 2 | reviewed | 15 | $0.42 |
+| Batch 6 of 6 | 11 | 843 | 4 | reviewed | 15 | $0.49 |
+
+</details>
+
+<sub>Claude Opus 5.5 via Claude Code 2.1.304 · effort high · review · 6 batches · 106 in / 38k out / 2.3M cache read / 313k cache write · $2.78</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=b12d760bd90b1e9619bab115f500f9c1a30cccf3 -->
+
+<!-- wachi:attempt id=bfde0ba0-e8c6-412f-9cc8-e9e52cba9201 -->

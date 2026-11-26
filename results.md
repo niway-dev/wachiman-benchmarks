@@ -4,8 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-25, v1.20.1 and v1.21.0 replayed against v1.4.0 on the five PRs, per PR and per budget.
-- **Previous update:** 2026-11-12, Martian model arms and false-positive audit added.
+- **Last updated:** 2026-11-26, credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
+- **Previous update:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
   checked against the code by reading, not by running the app.
@@ -71,16 +71,23 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
   PRs (#463 by 1, #466 by 2, #467 by 2), tied on #464, and lost on #465 (by 3). Against the Nov 2
   v1.4.0 set the split is the same: three, one tie, one. The two v1.4.0 sets, same engine, differ
   from each other by up to 2 on a PR (#465: 7 and 5; #466: 5 and 7). Every PR where v1.4.0 is
-  ahead (by 1 or 2) is inside that spread; v1.21.0's lead on #465 (3) is just outside it. That v1.21.0 is behind on most PRs, and never clearly ahead, is the pattern to test
-  with more runs, not a measured loss.
+  ahead (by 1 or 2) is inside that spread; v1.21.0's lead on #465 (3) is just outside it. That v1.21.0 is
+  behind on most PRs, and never clearly ahead, is the pattern to test with more runs, not a
+  measured loss.
 - **What does differ, every time: fewer turns per batch call** (10.1 against 14.1; on #467, 6 to
   15 against 10 to 18 in one run each) **and fewer findings** (71 against 78). Model, effort, turn
-  limit and batch cap are the same (read from the run logs), and no batch ended on a limit, so the
-  model chose to stop earlier. Candidate causes, none tested yet: the batch prompt and what the
-  engine puts in it changed across many releases (`src/engine.ts` alone changed by about 5,400
-  lines between the two), and batches now run four at once instead of one after another. Running
-  releases between v1.4.0 and v1.21.0 on #465 and #467 would show in which release the turns
-  dropped.
+  limit and batch cap are the same (every review records them; one run log of each set was read), and no batch ended on a limit, so the
+  model chose to stop earlier. **The [release bisect](2026-11-26-release-bisect/README.md)
+  (2026-11-26) points to the credential.** v1.4.0 ran on an API key and v1.21.0 on a Claude
+  subscription token. The same v1.15.0 makes about 15 turns per call on the key and about 9 on
+  the token, and v1.5.0 and v1.9.0 on the key make about 15, so no release up to v1.15.0 cut the
+  turns, and parallel batches (v1.16.0) are cleared. v1.20.1 and v1.21.0 were not run on the key:
+  that the whole gap here is the credential is likely, not measured.
+  A [credential probe](2026-11-26-credential-probe/README.md) then ran one plain Claude Code call,
+  with no Wachiman, on #465: at the $0.75 batch cap it made 15 to 17 turns on the key and 10 to 12
+  on the token, and every call ended on its own below the cap. Why it stops earlier is not
+  measured; the token's prompt cache is written for 1 hour instead of 5 minutes, which raises its
+  cost per turn.
 - **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
   every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
   full, which is the whole default budget. Every partial review in this table is a #467 review.
