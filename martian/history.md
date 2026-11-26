@@ -2,7 +2,10 @@
 
 One row per run, newest first. Quality uses our judge route for every row, so rows compare with each
 other and with the [reference tools](reference/README.md#same-judge-scores), not with Martian's
-stored numbers. Cost is the product's own cost (the reviews), at API list prices; the judge's cost
+stored numbers. One exception: the 2026-11-26 v1.22.0 row's judge calls also carried about
+65,000 tokens of claude.ai connector tool definitions, since removed from the judge (see that
+run's README and [the pending refresh](reference/README.md)); that they did not move its scores
+is not checked. Cost is the product's own cost (the reviews), at API list prices; the judge's cost
 is in each run's `metrics.json`, under `judge_cost`.
 
 ## Quality and product cost

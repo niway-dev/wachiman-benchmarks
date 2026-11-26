@@ -50,18 +50,26 @@ calls, against $30.42 to $31.37 for the v1.9.0 runs. From `data/judge-calls/`:
 | 1-hour cache writes | 0.61 M | 5.06 M |
 | Uncached input | 1.58 M | 0.01 M |
 
-Each Opus judge call now carries about 69,000 prompt tokens, mostly read from the cache, against
-about 1,500 in v1.9.0 r3. The cause, found after the run: the profile the judge runs in has claude.ai connectors (MCP servers),
-and the Claude Code CLI loaded their tool definitions into every call even with `--tools ""`. One
-test call (a one-line prompt, not a real judge prompt) measured 65,389 cached prompt tokens and
-$0.063 as the shim ran; with `--strict-mcp-config` and an empty MCP config, 714 tokens and $0.005.
-A real judge call adds its own prompt on top, which the v1.9.0 r3 figure of about 1,500 includes.
-The connectors were added to the judge's profile after v1.9.0 r3 was judged; the fix returns the
-calls to that condition. `scripts/judge_shim.py`
-now passes both. Wachiman's own reviews already pass `--strict-mcp-config`
-([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215/src/providers/claude-code.ts#L225)), so its product cost
-is not affected. The judge model is the same, so the scores stay comparable, though that the
-extra tool definitions did not sway this run's judgments is not checked.
+Each Opus judge call in this run carried about 69,000 prompt tokens, mostly read from the cache,
+against about 1,500 in v1.9.0 r3.
+
+The cause, found after the run: the profile the judge runs in had gained claude.ai connectors (MCP
+servers) after v1.9.0 r3 was judged. The Claude Code CLI loads their tool definitions into every
+call, even with `--tools ""`.
+
+One test call, with a one-line prompt rather than a real judge prompt, measured:
+
+- as the shim ran: 65,389 cached prompt tokens, $0.063;
+- with `--strict-mcp-config` and an empty MCP config: 714 tokens, $0.005.
+
+A real judge call adds its own prompt on top; the v1.9.0 r3 figure of about 1,500 includes it.
+
+`scripts/judge_shim.py` now passes `--strict-mcp-config` and the empty MCP config on every call,
+which returns the calls to the v1.9.0 r3 condition. Wachiman's own reviews already pass
+`--strict-mcp-config`
+([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215/src/providers/claude-code.ts#L225)),
+so the product's cost is not affected. The judge model and prompts are the same as in earlier
+rows; that the extra tool definitions did not move this run's scores is not checked.
 
 ## Incident: the judge port was taken
 
