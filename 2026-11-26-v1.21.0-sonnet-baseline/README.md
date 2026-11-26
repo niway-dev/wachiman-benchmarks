@@ -59,14 +59,19 @@ comments: [`raw/`](raw/). Every batch call's `wachiman-cost` line: [`batch-calls
 - **Sonnet makes about twice the turns of Opus on the token** (19.3 against 10.1). A Sonnet turn costs
   less, so the spend shown against the $0.75 cap grows more slowly; that this is why it keeps going
   is inferred, as in the [credential probe](../2026-11-26-credential-probe/README.md).
+- **Two reviews leaked raw JSON into the posted text.** On #96 (W31) and #100 (W32) a batch
+  summary ends with the model's structured-output tail (`"risk_facts":[],"judgement":[]}`), and
+  #97 shows a literal `\n\n`. The findings were still posted; the text around them is broken.
+  No earlier run's raw reviews in this repository contain `"risk_facts"`.
 - **The first run of a set is not special:** W31 is the highest, W33 the lowest; the spread of
   16 to 12 is the noise this set has to beat.
 
 ## What a next release has to show
 
-Run the same set, three runs, and compare with W31–W33. Known bugs per run inside 12 to 16 is no
-measured change; so is a cost per run inside $5.69 to $5.88 plus or minus the run-to-run spread.
-Only a release whose three runs all fall outside the range has changed something.
+Run the same set, three runs, and compare with W31–W33. A release has changed the result only when
+all three of its runs fall outside a range of this baseline: below 12 or above 16 known bugs, or
+below $5.69 or above $5.88 per run. Anything else reads as "no measured change": three runs cannot
+resolve a smaller difference.
 
 ## Limits
 

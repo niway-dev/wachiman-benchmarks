@@ -117,6 +117,10 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   W4–W6's inputs plus `budget_usd: 10` (and `verify: false` for v1.15.0), on kaipu-record #465 and
   #467 only. v1.5.0, v1.9.0 and the `-api-key` file pass only `ANTHROPIC_API_KEY`;
   `wachi-workflow-v1.15.0.yml` only `CLAUDE_CODE_OAUTH_TOKEN`. Put on `main` the same way.
+- `wachi-workflow-sonnet.yml`: `wachi-workflow.yml` with `claude-sonnet-5-5` and only
+  `CLAUDE_CODE_OAUTH_TOKEN` passed: the release baseline (W31–W33,
+  [report](../2026-11-26-v1.21.0-sonnet-baseline/README.md)). For the next release, change only its
+  pin. Put on `main` the same way, then `main` went back to `wachi-workflow.yml`.
 - `credential-probe.yml`: runs one plain Claude Code call (no Wachiman) per credential and run, by
   hand from the Actions tab ([credential probe](../2026-11-26-credential-probe/README.md)). Put on
   `main` the same way. The run's summary page opens with the comparison: mean turns per
