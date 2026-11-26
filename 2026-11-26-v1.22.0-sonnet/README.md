@@ -44,7 +44,7 @@ Raw reviews and comments: [`raw/`](raw/). Every batch call's `wachiman-cost` lin
 ## Cost and turns, side by side
 
 Cost per review is the last `<sub>` footer of each posted review; cost per run is the sum of its five
-reviews; cost per review in the table is the run's cost / 5. Findings posted is the number of
+reviews; cost per review in the table is the run's cost / 5. Findings posted counts
 every item the reviews posted: inline comments, findings listed with no thread, and questions
 in the body, duplicates included. That is the baseline's method; the per-PR counts are in
 [`prs/`](prs/). Counting only the rows of the reviews' finding tables instead gives 95 for the
