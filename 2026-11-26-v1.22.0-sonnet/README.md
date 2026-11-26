@@ -7,7 +7,9 @@
   [kaipu-bench-wachi-v3](https://github.com/niway-dev/kaipu-bench-wachi-v3), on 2026-11-26. R1–R3
   are labels for this set only; they are not W-numbers.
 - **Compared with:** the v1.21.0 Sonnet baseline (W31–W33, #92–#106), same inputs except the engine pin.
-- **Known bugs caught:** TODO (labelling is a separate pass; nothing in this file is labelled).
+- **Answer:** v1.22.0 costs less and finds as many known bugs. It catches 13, 14 and 12 of the 27
+  known bugs per run (baseline: 16, 14 and 12), at $4.30 to $4.80 a run
+  (baseline: $5.69 to $5.88). Under the release rule below, cost changed and known bugs did not.
 
 ## Setup
 
@@ -59,12 +61,45 @@ another way that this pass could not reproduce.
 | Terminal reasons of batch calls | `success` 42 | `success` 42 |
 | Reviews left partial | 0, 0, 0 | 0, 0, 0 (every review: whole pull request) |
 | Findings posted | 35, 29, 31 (95) | 29, 33, 30 (92) |
+| Known bugs caught (of 27) | 16, 14, 12 (mean 14.0) | 13, 14, 12 (mean 13.0) |
+| Cost per known bug caught (mean run / mean bugs) | $0.41 | $0.35 |
 
 Per review cost, v1.22.0 (R1 / R2 / R3): #463 $1.00 / $1.19 / $1.12, #464 $0.45 / $0.57 / $0.59,
 #465 $0.64 / $0.62 / $0.66, #466 $0.62 / $0.51 / $0.53, #467 $1.59 / $1.71 / $1.90.
+
+## Known bugs per pull request
+
+Labelled against the baseline's known-bug list, one file per pull request in [`prs/`](prs/). A
+partial (the right place, not the right mechanism) is not counted.
+
+| Kaipu PR (known bugs) | R1 | R2 | R3 |
+| --- | --- | --- | --- |
+| [#463](prs/pr-463.md) (6) | 2 | 3 | 3 |
+| [#464](prs/pr-464.md) (4) | 3 | 2 | 2 |
+| [#465](prs/pr-465.md) (3) | 3 | 1 | 1 |
+| [#466](prs/pr-466.md) (4) | 2 | 4 | 3 |
+| [#467](prs/pr-467.md) (10) | 3 | 4 | 3 |
+| **Total (27)** | **13** | **14** | **12** |
+
+Invalid findings: 0, 1 and 2 (one on #466 in R2, two on #467 in R3).
+
+## Verdict under the release rule
+
+The baseline's rule: a measure changed only if all three runs fall outside the baseline's range.
+
+- **Cost: changed.** All three runs ($4.30, $4.60, $4.80) are below the baseline's cheapest
+  ($5.69). Cost per review falls from $1.15 to $0.91, about 21%.
+- **Known bugs: no change.** All three runs (13, 14, 12) are inside 12 to 16.
+- **Turns per batch call: no change.** Mean 19.9 against 19.3, same spread.
+
+What lowered the cost is not isolated here. v1.22.0 changes the prompt cache to a 5-minute
+lifetime and adds a start floor for new batches. With a $10 budget, no batch ran short of money,
+so the start floor most likely did not act and the 5-minute cache is the likely cause. That is
+a hypothesis; a run at the default $3 budget would exercise the start floor.
 
 ## Limits
 
 - Three runs per set; the baseline's own spread was $5.69 to $5.88 per run.
 - Same date and model service as the baseline, not controlled beyond that.
-- No label in this file. Known-bug counts: TODO.
+- Labels are one Sonnet 5.5 pass per pull request, checked against the head code; borderline
+  calls are explained in each `prs/` file.
