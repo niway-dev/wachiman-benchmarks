@@ -4,7 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-12, Martian model arms and false-positive audit added.
+- **Last updated:** 2026-11-25, v1.20.1 and v1.21.0 replayed against v1.4.0 on the five PRs, per PR and per budget.
+- **Previous update:** 2026-11-12, Martian model arms and false-positive audit added.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
   checked against the code by reading, not by running the app.
@@ -12,6 +13,64 @@ no claim the reports do not.
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 - **t3code cases (2026-11-12):** escaped and replayed bugs of pingdotgg/t3code as a second unit next to Martian, one row per run set in [t3code/history.md](t3code/history.md); the key is [t3code/cases.tsv](t3code/cases.tsv).
+
+## Replay of v1.20.1 and v1.21.0 against v1.4.0 (2026-11-25, kaipu-record, five PRs)
+
+Five sets of three runs each, 15 reviews per set, all on Opus 5.5 at effort `high`, on the same
+commits. Known bugs are the 27 Expected rows of the per-PR docs, counted once per run, so a set
+has 81 chances. Reports: [v1.20.1](2026-11-25-v1.20.1-replay/README.md),
+[v1.21.0 with the focus file](2026-11-25-v1.21.0-focus-replay/README.md),
+[v1.21.0 with $10](2026-11-25-v1.21.0-budget-replay/README.md),
+[v1.4.0 again](2026-11-25-v1.4.0-rerun/README.md). Rows: `run_label` W4–W18 in `dataset/`.
+
+**Short version: v1.21.0 does not lose bugs against v1.4.0 when it has the budget to read every
+file (32 against 34 of 81, inside the 9-to-14 spread between runs of one version). With the $3
+default it leaves #467 half read and catches 27.** The cause is the parallel batches: each running
+batch reserves its $0.75 cap, so the ones that start last on a large PR find too little left.
+
+| Per set (15 reviews) | v1.4.0, Nov 2 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0, $3 (W10–W12) | v1.21.0, $10 (W13–W15) | v1.4.0, Nov 25 (W16–W18) |
+| --- | --- | --- | --- | --- | --- |
+| `budget_usd` | 3 | 3 | 3 | 10 | 3 |
+| Known bugs caught (of 81) | 35, plus 4 in part | 30, plus 2 | 27, plus 3 | 32, plus 2 | 34, plus 5 |
+| Per run | 12, 11, 12 | 10, 9, 11 | 9, 8, 10 | 12, 11, 9 | 9, 11, 14 |
+| Distinct known bugs (of 27) | 19 | 16 | 13 | 18 | 17 |
+| Reviews left partial | 0 | 2 | 3 | 0 | 0 |
+| Total cost | $20.87 | $21.45 | $22.04 | $22.25 | $21.47 (billed) |
+| Cost per known bug | $0.60 | $0.71 | $0.82 | $0.70 | $0.63 |
+| Findings posted | 80 | 61 | 65 | 71 | 78 |
+| Turns per batch call | 13.7 | 8.2 | 8.5 | 10.1 | 14.1 |
+| Median wall time of a run | not measured | 97 s | 86 s | 87 s | 180 s |
+
+v1.20.1 does not read the focus file under its new name, and v1.21.0 at $3 does; the other
+inputs match. Cost on the subscription token (W7–W15) is an API-price estimate; W4–W6 and
+W16–W18 ran on a billed API key, because v1.4.0 cannot use the token.
+
+### Per pull request
+
+Size is `git diff --shortstat` between the manifest base and head
+([manifest](replay/manifest-2026-10-31.tsv)). Cost is the range over the three reviews of a set.
+Catches are known bugs caught in the three runs, out of three times the PR's Expected rows.
+
+| PR | Files | Lines | Batches | Cost per review, all sets | Known bugs: v1.4.0 Nov 2 | v1.20.1 | v1.21.0 $3 | v1.21.0 $10 | v1.4.0 Nov 25 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| #463 camera off and on mid-take | 23 | +1413 −44 | 2 | $0.97–$1.27 | 7 of 18 | 6 | 6 | 5 | 6 |
+| #464 ready copy in the Library | 31 | +1139 −123 | 2 | $0.89–$1.30 | 5 of 12 | 5 | 3 | 4 | 4 |
+| #465 recording detail screen | 14 | +1056 −559 | 2 | $0.90–$1.28 | 7 of 9 | 6 | 7 | 8 | 5 |
+| #466 floating "video is ready" | 28 | +1283 −12 | 2 | $0.82–$1.20 | 5 of 12 | 6 | 7 | 5 | 7 |
+| **#467 Export screen** | **47** | **+2676 −2177** | **6** | **$2.75–$3.15** | **11 of 30** | **7** | **4** | **10** | **12** |
+
+- **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
+  every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
+  full, which is the whole default budget. Every partial review in this table is a #467 review.
+- **A partial review costs as much as a full one.** At $3, v1.21.0 spent $2.89–$3.15 on #467 and
+  left 11 to 19 of its 47 files unread. The money went, the review was not finished.
+- **What would prevent it:** an estimate before the review starts, and a stop that asks for more
+  budget when the estimate is above it, instead of a review that runs out halfway. That is the
+  [budget gate design](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-11-21-budget-gate-design.md)
+  in the engine repository, built in two open pull requests: the
+  [skip and approve](https://github.com/niway-dev/wachiman/pull/295) step and the
+  [room for one turn](https://github.com/niway-dev/wachiman/pull/298) fix. Until they ship, a
+  caller that reviews large PRs should raise `budget_usd`.
 
 ## Martian's Code Review Bench (2026-11-07, public PRs)
 
