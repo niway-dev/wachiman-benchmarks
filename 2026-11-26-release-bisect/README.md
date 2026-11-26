@@ -76,6 +76,8 @@ token. Every set at about 15 turns ran on an API key, and every set at about 9 o
 - **A benchmark compares releases on one credential.** The report names it.
 - **The next question is about Claude Code, not Wachiman's engine:** why a batch call on a
   subscription token ends after about 9 turns where the same call on a key takes about 15.
+  The [credential probe](../2026-11-26-credential-probe/README.md) reproduces it with a plain
+  Claude Code call at the same $0.75 cap: 15 to 17 turns on the key, 10 to 12 on the token.
 
 ## Conditions
 

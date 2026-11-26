@@ -4,8 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
-- **Previous update:** 2026-11-12, Martian model arms and false-positive audit added.
+- **Last updated:** 2026-11-26, credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
+- **Previous update:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
 - **The five PRs:** kaipu-record #463–#467, replayed at their exact commits
   ([method](https://github.com/niway-dev/wachiman/blob/main/docs/specs/2026-10-31-review-benchmark-design.md)). Every finding in a replay was
   checked against the code by reading, not by running the app.
@@ -83,6 +83,11 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
   the token, and v1.5.0 and v1.9.0 on the key make about 15, so no release up to v1.15.0 cut the
   turns, and parallel batches (v1.16.0) are cleared. v1.20.1 and v1.21.0 were not run on the key:
   that the whole gap here is the credential is likely, not measured.
+  A [credential probe](2026-11-26-credential-probe/README.md) then ran one plain Claude Code call,
+  with no Wachiman, on #465: at the $0.75 batch cap it made 15 to 17 turns on the key and 10 to 12
+  on the token, and every call ended on its own below the cap. Why it stops earlier is not
+  measured; the token's prompt cache is written for 1 hour instead of 5 minutes, which raises its
+  cost per turn.
 - **The budget only matters on #467.** The four smaller PRs fit in two batches and about $1, and
   every set caught 22 to 24 of their 51 chances. #467 needs six batches and about $3 to read in
   full, which is the whole default budget. Every partial review in this table is a #467 review.
