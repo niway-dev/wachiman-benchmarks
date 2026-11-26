@@ -102,13 +102,48 @@ The baseline's rule: a measure changed only if all three runs fall outside the b
   is one lower (13.0 against 14.0), which is inside the baseline's own spread.
 - **Turns per batch call: no change.** Mean 19.9 against 19.3, same spread.
 
-What lowered the cost is not isolated here. v1.22.0 changes the prompt cache to a 5-minute
-lifetime and adds a start floor for new batches. With a $10 budget, no batch ran short of money,
-so the start floor most likely did not act, and the 5-minute cache is the likely cause. The
-[5-minute cache experiment](../2026-11-26-prompt-cache-5m/README.md) isolated that change on Opus
-5.5 (v1.21.0 plus `promptCacheTtl: 5m`) and also cut the cost of #467, but there turns per batch
-rose by 2 to 3; here they stay flat (19.9 against 19.3). So the cause stays a hypothesis. A run at
-the default $3 budget would exercise the start floor.
+## Why it costs less: same tokens, cheaper cache writes
+
+Summed over the 42 batch calls of each set (from each `batch-calls.jsonl`), v1.22.0 did the same
+work as v1.21.0, or slightly more, and paid less for it:
+
+| 42 batch calls | v1.21.0 | v1.22.0 |
+| --- | --- | --- |
+| Cache read tokens | 19.95 M | 21.66 M |
+| Cache write tokens | 2.79 M | 2.83 M |
+| Output tokens | 0.41 M | 0.44 M |
+| Cost (API-equivalent) | $17.30 | $13.69 |
+
+Fewer tokens did not lower the cost; a lower price per token did. The only change in v1.22.0
+that moves a token price is the prompt cache lifetime: Claude Code on the subscription token
+wrote a 1-hour cache, and v1.22.0 forces 5 minutes (`promptCacheTtl: "5m"`). A 1-hour write is
+priced higher than a 5-minute write; the [5-minute cache experiment](../2026-11-26-prompt-cache-5m/README.md)
+measured $8 against $5 per million written tokens on Opus 5.5, by fitting each call's cost.
+
+- **Measured:** the token counts and costs above; every call ran on the token.
+- **Inferred, not measured:** the Sonnet 5.5 write prices. This set did not fit each call's cost
+  for its write price as the Opus experiment did, so the cache lifetime is the explanation that
+  fits, not a measured one.
+- **Unlike the Opus experiment, turns did not rise** (19.9 against 19.3 per batch call). The
+  saving here comes from price alone.
+- **The start floor most likely did not act:** with a $10 budget, no batch ran short of money. A
+  set at the default $3 budget would exercise it.
+
+## Against v1.4.0, the release before the token
+
+The same five pull requests, labelled against the same 27 known bugs. The v1.4.0 set ran on Opus
+5.5 with an API key (W4 to W6, from the [v1.21.0 Sonnet baseline](../2026-11-26-v1.21.0-sonnet-baseline/README.md)):
+
+| Per run | v1.4.0, Opus, API key (W4–W6) | v1.22.0, Sonnet, token (R1–R3) |
+| --- | --- | --- |
+| Known bugs caught (of 27) | 12, 11, 12 | 13, 14, 12 |
+| Cost per run, mean (API-equivalent) | $6.96 | $4.57 |
+| Cost per known bug caught | $0.60 | $0.35 |
+
+v1.22.0 on Sonnet catches at least as many known bugs for about a third less per run. Under the
+release rule it does not catch *more*: R3 (12) ties v1.4.0's best run. The two sets also differ in
+model and credential, not only in release, so this compares what a user ran then with what a
+user runs now; it does not isolate the engine.
 
 ## Limits
 
