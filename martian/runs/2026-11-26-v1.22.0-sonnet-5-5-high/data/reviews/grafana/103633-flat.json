@@ -1,0 +1,179 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-103633-flat` of grafana-103633-flat against 5634ca44f799a82161f0401dadc286452f3bdbf8 (merge-base 5634ca4)",
+    "repository": {
+      "name": "grafana-103633-flat"
+    },
+    "base": {
+      "sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+      "ref": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+    },
+    "head": {
+      "sha": "7b24a502e02148ea181045ca836a919dc4594418",
+      "ref": "pr-103633-flat"
+    },
+    "title": "pr-103633-flat",
+    "description": "AuthZService: improve authz caching",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "reviewed": [
+      "pkg/services/authz/rbac.go",
+      "pkg/services/authz/rbac/cache.go",
+      "pkg/services/authz/rbac/service.go",
+      "pkg/services/authz/rbac/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/services/authz/rbac/service.go",
+      "line": 139,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Every distinct denied resource now triggers a full permission reload from the DB",
+      "body": "When the cached permission map exists but does not grant the request (lines 123-136), the code falls through to `getIdentityPermissions`. Line 379 shows that `getUserPermissions` no longer checks `permCache`, so this always runs the singleflight DB query (basic role, teams, `GetUserPermissions`). The denial cache is keyed per (user, action, name, folder), so a user who cannot see N resources (for example a per-item Check loop during search or list filtering) causes up to N permission-store queries per 30s, even though the cached map was fresh. Before this change a deny with a fresh `permCache` entry returned without touching the DB. The fallback is what the 'outdated cache' test intends, but its cost scales with denied names. Consider limiting it, for example by skipping the DB reload when the cached entry is younger than a short window, or by caching the denial at action level. Also, `permDenialCache` adds one entry per denied name to the shared local cache, so cardinality is unbounded for 30s.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/cache.go",
+      "line": 30,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Denial cache key is ambiguous when name or folder contain `_`",
+      "body": "`userPermDenialCacheKey` joins `name` and `parent` with `_` and no escaping. (name=`a_b`, parent=`c`) and (name=`a`, parent=`b_c`) produce the same key. Grafana dashboard and folder UIDs may contain underscores. A denial for one resource would then deny the other for the same user and action for 30s. It fails closed and only affects that user, so the impact is small. Using a separator that cannot appear in UIDs, or length-prefixing the fields, avoids it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 981,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Deny test comment contradicts the data it sets; denial-population path is untested",
+      "body": "The comment says 'Allow access to the dashboard to prove this is not checked', but line 982 sets `dash1: false`. The test only proves anything because the default `fakeStore` has a nil `basicRole`, which would make the fallback path fail. Set the value to `true` so the test actually shows that the denial entry wins over the permission map. There is also no test that a DB-path denial writes the entry at service.go:154, none for the `List` fallback to the DB, and none for the anonymous branch of `getCachedIdentityPermissions`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "pkg/services/authz/rbac/service_test.go",
+      "line": 337,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Dead `cacheHit` branches left in TestService_getUserPermissions",
+      "body": "The only `cacheHit: true` case was removed, so `cacheHit` is always false. The `if tc.cacheHit` blocks at lines 367-369 and 388-392 are now dead code. Remove the field and both branches.",
+      "anchor": "outside"
+    },
+    {
+      "path": "pkg/services/authz/rbac.go",
+      "line": 239,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "NoopCache is exported and `newRemoteRBACClient` has a redundant temporary",
+      "body": "`NoopCache` is only used inside this package at line 103, so it does not need to be exported. It adds a new public symbol to `authz`. `newRemoteRBACClient` now assigns `client` and immediately returns `client, nil` (lines 160-169). The helper `newRBACClient` was removed only to split the two call sites, so the temporary adds nothing.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Check consults a denial cache and cached permissions before the DB path",
+      "location": "pkg/services/authz/rbac/service.go:116",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:116-158",
+        "pkg/services/authz/rbac/service.go:379-380",
+        "pkg/services/authz/rbac/cache.go:58-77",
+        "pkg/services/authz/rbac/service.go:32-34"
+      ],
+      "equivalent_path": "Previous Check called getIdentityPermissions, which returned permCache hits from inside getUserPermissions/getAnonymousPermissions (removed at service.go:379 and :423).",
+      "before_after": "Before: the cache lookup was inside the permission loaders, and a cached map that denied was final. After: a denial entry short-circuits to deny. A cached map that allows short-circuits to allow. A cached map that does not allow falls through to a DB reload, and the fresh result is checked again. A DB-path denial is stored in permDenialCache for 30s.",
+      "visible_effect": "A newly granted permission becomes effective immediately if the cached map was stale. A revoked permission or a newly denied one is still served from cache for up to 30s. A denial lasts 30s, even after the DB would allow.",
+      "failure_mode": "Cache read errors are logged and treated as a miss in cacheWrap. If GetUserIdentifiers fails in the cached path, the error is swallowed and the DB path is retried (service.go:123-139). An error from checkPermission on cached perms returns deny with an error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "List uses cached permissions with DB fallback only on cache miss",
+      "location": "pkg/services/authz/rbac/service.go:180",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac/service.go:180-192",
+        "pkg/services/authz/rbac/service.go:342-368"
+      ],
+      "equivalent_path": "Check's cached path, and the prior List that called getIdentityPermissions directly.",
+      "before_after": "Before: List always went through getIdentityPermissions, which used the permCache. After: it calls getCachedIdentityPermissions first and falls back to the DB only on a miss or error. The behaviour matches the old one, with metrics now recorded in List.",
+      "visible_effect": "No change in results. Stale lists can persist for 30s as before.",
+      "failure_mode": "An error from the DB path returns nil with the error, as before.",
+      "evidence_checked": true
+    },
+    {
+      "action": "In-proc AuthZ client switched from a 30s local cache to NoopCache",
+      "location": "pkg/services/authz/rbac.go:101",
+      "status": "closed",
+      "evidence": [
+        "pkg/services/authz/rbac.go:101-105",
+        "pkg/services/authz/rbac.go:160-167",
+        "pkg/services/authz/rbac.go:239-251"
+      ],
+      "equivalent_path": "newRemoteRBACClient keeps authzlib's 30s LocalCache at rbac.go:160-166.",
+      "before_after": "Before: both modes used a 30s client-side cache. After: only the remote client caches. The in-proc client relies on the server-side permCache and denial cache, which each have a 30s TTL.",
+      "visible_effect": "Same worst-case staleness for in-proc, but each in-proc Check now reaches the service and its caches.",
+      "failure_mode": "NoopCache.Get returns cache.ErrNotFound, which the authlib client treats as a miss.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change adds a denial cache and a cached-permissions fast path to Check and List, and moves the permCache lookup out of the DB loaders. The pull request body is only 'AuthZService: improve authz caching'. I found no correctness bug. The main costs are perf and clarity. Each distinct denied resource now forces a full permission reload from the DB, and the denial key is ambiguous when names contain underscores. The tests have a misleading comment, dead `cacheHit` branches, and no coverage of the denial-population path, the `List` fallback to the DB, or the anonymous branch. In rbac.go the in-proc client now uses a NoopCache, which is exported without need.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 273,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.21162330000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "5634ca44f799a82161f0401dadc286452f3bdbf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.21162330000000001,
+    "usage": {
+      "input": 10,
+      "output": 8619,
+      "cacheRead": 137833,
+      "cacheWrite": 44652
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 76977,
+    "stop": "complete",
+    "notices": []
+  }
+}

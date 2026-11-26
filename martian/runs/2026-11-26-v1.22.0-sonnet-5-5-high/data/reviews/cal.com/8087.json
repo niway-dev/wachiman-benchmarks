@@ -1,0 +1,182 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-8087` of cal.com-8087 against ba9688a04a8398c9a8332ee7061bfae2f2efd524 (merge-base ba9688a)",
+    "repository": {
+      "name": "cal.com-8087"
+    },
+    "base": {
+      "sha": "ba9688a04a8398c9a8332ee7061bfae2f2efd524",
+      "ref": "ba9688a04a8398c9a8332ee7061bfae2f2efd524"
+    },
+    "head": {
+      "sha": "820d7fa87e0c824c5dee8082a33efadb1a2566f7",
+      "ref": "pr-8087"
+    },
+    "title": "pr-8087",
+    "description": "fix: remove validateSlug Query (#8015)\nchore: update robots.txt to allow api/app-store (#8023)\nSet GCal & Outlook `iCalUID` in .ics file (#8010)\nfix: flickering of tips card rendering while changing routes (#8065)\nv2.7.7\nAsync import of the appStore packages\nMerge branch 'main' into techdebt/async-app-store-load",
+    "author": "Alex van Andel"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/app-store/_utils/getCalendar.ts",
+      "packages/app-store/index.ts",
+      "packages/app-store/vital/lib/reschedule.ts",
+      "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "packages/core/CalendarManager.ts",
+      "packages/core/EventManager.ts",
+      "packages/core/videoClient.ts",
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/lib/payment/deletePayment.ts",
+      "packages/lib/payment/handlePayment.ts",
+      "packages/trpc/server/routers/viewer/bookings.tsx"
+    ],
+    "reviewed": [
+      "packages/app-store/_utils/getCalendar.ts",
+      "packages/app-store/index.ts",
+      "packages/app-store/vital/lib/reschedule.ts",
+      "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "packages/core/CalendarManager.ts",
+      "packages/core/EventManager.ts",
+      "packages/core/videoClient.ts",
+      "packages/features/bookings/lib/handleCancelBooking.ts",
+      "packages/features/bookings/lib/handleNewBooking.ts",
+      "packages/lib/payment/deletePayment.ts",
+      "packages/lib/payment/handlePayment.ts",
+      "packages/trpc/server/routers/viewer/bookings.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/app-store/vital/lib/reschedule.ts",
+      "line": 125,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "forEach(async) makes the surrounding try/catch useless; calendar delete failures now escape it",
+      "body": "The callback is now `async`, but `forEach` neither awaits it nor collects its promises. The `try/catch` at line 124 only wraps the synchronous `forEach` call. Before this change `getCalendar` was synchronous, so a throw from it (for example the CalendarService constructor) was caught and logged at line 137. Now a rejection from `await getCalendar(...)` (including a failed dynamic `import()`) becomes an unhandled promise rejection and is never logged. The calendar event is then not deleted and nothing reports it. The `deleteEvent` and `deleteMeeting` promises were already dropped before this change, so those failures were already unhandled. Run the deletions with `await Promise.all(bookingRefsFiltered.map(async ...))` inside the `try`, or use a `for...of` loop with `await`. The same change is needed in `packages/app-store/wipemycalother/lib/reschedule.ts:125`, which is a copy of this file.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/wipemycalother/lib/reschedule.ts",
+      "line": 125,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "forEach(async) bypasses the try/catch, same as the vital copy",
+      "body": "This is the same defect as in `packages/app-store/vital/lib/reschedule.ts:125`. The `try` at line 124 can no longer catch errors from `getCalendar`, because the `async` callback's promise is dropped by `forEach`. A failure to load the calendar app becomes an unhandled rejection. Await the deletions with `Promise.all` or a `for...of` loop inside the `try`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/trpc/server/routers/viewer/bookings.tsx",
+      "line": 553,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Calendar and video deletions are fire-and-forget; errors from getCalendar are unhandled",
+      "body": "`bookingRefsFiltered.forEach(async ...)` does not wait for the deletions. A rejection from `getCalendar` is now an unhandled rejection. The `deleteEvent` call also starts only after the module promise resolves. The deletion work is no longer started in the same tick, so it may still be running when the handler continues to `sendRequestRescheduleEmail` and returns. In a serverless runtime that can cut it off. Prefer `await Promise.all(bookingRefsFiltered.map(...))`, with errors handled the way the surrounding code handles them.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/app-store/index.ts",
+      "line": 3,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Dynamic imports start eagerly at module load, so nothing is lazy and one failed import is cached forever",
+      "body": "`appStore` is an object of `import(...)` promises, so every app module is imported as soon as `index.ts` is evaluated. This is the same total load as the old static imports. The PR gives no stated lazy-loading benefit, and it adds `await` to every consumer. If any single app import rejects, for example because of a missing env var or a throw at module top level, its promise stays rejected for the life of the process. That app's calendar, video and payment lookups all fail. If no consumer awaits that key, the failure is also reported as an unhandled rejection at import time. If lazy loading is the goal, use a map of functions (`() => import(...)`). If it is not, the change adds async plumbing for no gain.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/core/CalendarManager.ts",
+      "line": 28,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "getCalendarCredentials now returns an un-awaited Promise in `calendar` with no type or doc signal",
+      "body": "`calendar` in the returned items is now a `Promise<Calendar | null>`. It starts for every credential even when `app.variant !== \"calendar\"`, because `getCalendar` runs before the variant check. The only consumers are `getConnectedCalendars` (which now awaits it at line 48), `apps/web/pages/api/availability/calendar.ts:83` and `packages/trpc/server/routers/viewer.tsx:340,415`. These only pass the result to `getConnectedCalendars`, so they work. If a promise rejects after `getConnectedCalendars` has returned early, it is an unhandled rejection, because the item is never awaited. Consider moving the `getCalendar` call inside the `variant === \"calendar\"` branch.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "getCalendar becomes async and appStore entries become promises",
+      "location": "packages/app-store/_utils/getCalendar.ts:15",
+      "status": "closed",
+      "evidence": [
+        "packages/app-store/_utils/getCalendar.ts:9-22",
+        "packages/app-store/vital/lib/reschedule.ts:124-139",
+        "packages/trpc/server/routers/viewer/bookings.tsx:553-567",
+        "packages/features/bookings/lib/handleCancelBooking.ts:243-265"
+      ],
+      "equivalent_path": "Previous synchronous getCalendar and static appStore lookup",
+      "before_after": "Before, lookup and CalendarService construction were synchronous, so callers' try/catch caught throws. Now every caller must await. I read all listed call sites. They await correctly except the `forEach(async)` sites, where the result is not awaited by anything.",
+      "visible_effect": "Calendar delete, update and create still happen. In the reschedule flows their start is deferred and errors are not caught.",
+      "failure_mode": "A rejected import or constructor throw in the forEach(async) callbacks becomes an unhandled rejection. Elsewhere it propagates to the caller's existing handling.",
+      "evidence_checked": true
+    },
+    {
+      "action": "getConnectedCalendars awaits item.calendar",
+      "location": "packages/core/CalendarManager.ts:48",
+      "status": "closed",
+      "evidence": [
+        "packages/core/CalendarManager.ts:44-56",
+        "packages/core/CalendarManager.ts:94-110",
+        "apps/web/pages/api/availability/calendar.ts:83-85",
+        "packages/trpc/server/routers/viewer.tsx:340-344"
+      ],
+      "equivalent_path": "Previous synchronous destructure of `calendar` from item",
+      "before_after": "The await is inside the per-item try/catch, so a rejected promise yields the 'Could not get connected calendars' error entry for that credential, as before for a sync throw in listCalendars. Callers viewer.tsx and api/availability/calendar.ts pass the result straight in.",
+      "visible_effect": "Connected calendars list unchanged.",
+      "failure_mode": "A rejection is caught and reported as an error entry per credential.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change makes `appStore` an object of dynamic-import promises and `getCalendar` and `getVideoAdapters` async. Most call sites were updated correctly. The three `forEach(async ...)` reschedule sites (the vital and wipemycalother `reschedule.ts` files and `viewer/bookings.tsx`) no longer propagate errors. The `try/catch` in the two `reschedule.ts` files is now ineffective, and the delete work is no longer awaited. The dynamic imports in `index.ts` are started eagerly, so nothing is actually lazy, and a failed import stays cached as a rejected promise. `getCalendarCredentials` now carries un-awaited promises.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 12,
+      "lines": 189,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.20889239999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "ba9688a04a8398c9a8332ee7061bfae2f2efd524"
+  },
+  "execution": {
+    "costUsdEstimate": 0.20889239999999998,
+    "usage": {
+      "input": 14,
+      "output": 9791,
+      "cacheRead": 191044,
+      "cacheWrite": 36740
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 67675,
+    "stop": "complete",
+    "notices": []
+  }
+}

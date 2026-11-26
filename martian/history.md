@@ -9,6 +9,7 @@ is in each run's `metrics.json`, under `judge_cost`.
 
 | Run | PRs | High+Critical | Recall | Precision | F1 (All) | F2 (Core) | False positives | Reviews total | $/PR median | $/PR p90 | $/1k changed lines | $/golden found | $/High+Critical found | Partial reviews |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [2026-11-26 · v1.22.0 · Sonnet 5.5 · high](runs/2026-11-26-v1.22.0-sonnet-5-5-high/) | 50 | 54/66 | 69.9% | 38.2% | 49.4% | 59.6% | 196 | $16.54 | $0.24 | $0.44 | $0.78 | $0.14 | $0.31 | 2 |
 | [2026-11-12 · v1.9.0 · Opus 5.5 · high · repeat 3](runs/2026-11-12-v1.9.0-opus-5-5-high-r3/) | 50 | 48/66 | 64.7% | 39.9% | 49.3% | 57.9% | 169 | $25.59 | $0.49 | $0.63 | $1.21 | $0.23 | $0.53 | 0 |
 | [2026-11-12 · v1.9.0 · Opus 5.5 · high · repeat 2](runs/2026-11-12-v1.9.0-opus-5-5-high-r2/) | 50 | 52/66 | 67.6% | 40.6% | 50.8% | 59.8% | 171 | $25.60 | $0.46 | $0.63 | $1.21 | $0.22 | $0.49 | 0 |
 | [2026-11-12 · v1.9.0 · Sonnet 5.5 · high · repeat 3](runs/2026-11-12-v1.9.0-sonnet-5-5-high-r3/) | 50 | 54/66 | 71.1% | 36.2% | 48.0% | 59.2% | 217 | $16.95 | $0.27 | $0.54 | $0.80 | $0.14 | $0.31 | 1 |

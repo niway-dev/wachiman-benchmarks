@@ -12,13 +12,14 @@
 #   ONLY           extended regex on the worklist row: run only the matching PRs (a re-run of a fixed row)
 #   WACHIMAN_DIR   a Wachiman checkout to run instead of the installed one (pins a version:
 #                  `git archive v1.9.0 | tar -x -C /tmp/wachiman-1.9.0`; the wrapper honours it)
+#   JUDGE_PORT     local port for the judge shim (default 8797); the run stops if another program holds it
 #   RAM_GB         RAM disk size for snapshots (default 6; two Discourse snapshots need about 4)
 # Needs: the installed `wachiman`, ~/.wachiman/claude-personal signed in, ANTHROPIC_API_KEY unset.
 set -u
 LABEL=$1; MODEL=${2:-claude-opus-5-5}; EFFORT=${3:-high}
 HERE=${0:A:h:h}                                   # martian/
 W=${MARTIAN_WORK:-$HOME/.cache/wachiman-martian}
-QUEUES=${QUEUES:-2}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}; WACHIMAN_ARGS=${WACHIMAN_ARGS:-}
+QUEUES=${QUEUES:-2}; PORT=${JUDGE_PORT:-8797}; JUDGE_BATCH=${JUDGE_BATCH:-8}; EXTRA_ENV=${EXTRA_ENV:-}; WACHIMAN_ARGS=${WACHIMAN_ARGS:-}
 JM=anthropic/claude-opus-4-5-20251101; JD=anthropic_claude-opus-4-5-20251101
 PROFILE=$HOME/.wachiman/claude-personal
 RUN=$W/runs/$LABEL; DEST=$HERE/runs/$LABEL
@@ -71,10 +72,13 @@ for repo in $(cut -f1 $RUN/worklist.tsv | sort -u); do
 done
 
 # 4. Dedup and judge through the shim, JUDGE_BATCH calls in flight; step3 twice so failed calls retry
-env -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR=$PROFILE python3 -I $HERE/scripts/judge_shim.py --port 8797 \
+# Another program on the port would answer the judge's calls (a 404 on every one), so refuse it
+lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && { log "port $PORT is taken: set JUDGE_PORT"; exit 2; }
+env -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR=$PROFILE python3 -I $HERE/scripts/judge_shim.py --port $PORT \
   --log $RUN/judge-calls.jsonl --concurrency $JUDGE_BATCH > $RUN/shim.log 2>&1 &
 SHIM=$!; trap "kill $SHIM 2>/dev/null" EXIT; sleep 2
-step() { (cd $RUN/bench && env -u ANTHROPIC_API_KEY MARTIAN_API_KEY=local-shim MARTIAN_BASE_URL=http://127.0.0.1:8797/v1 \
+kill -0 $SHIM 2>/dev/null || { log "judge shim did not start: see $RUN/shim.log"; exit 2; }
+step() { (cd $RUN/bench && env -u ANTHROPIC_API_KEY MARTIAN_API_KEY=local-shim MARTIAN_BASE_URL=http://127.0.0.1:$PORT/v1 \
   MARTIAN_MODEL=$JM $W/venv/bin/python $HERE/scripts/martian_step.py "$@" >> $RUN/judge.log 2>&1) }
 step step2_5_dedup_candidates --batch $JUDGE_BATCH -- --tool wachiman
 for i in 1 2; do step step3_judge_comments --batch $JUDGE_BATCH -- --tool wachiman --evaluations-file results/$JD/wachiman-evaluations.json; done

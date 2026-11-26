@@ -1,0 +1,142 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-1` of discourse-graphite-1 against 3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca (merge-base 3f71fa1)",
+    "repository": {
+      "name": "discourse-graphite-1"
+    },
+    "base": {
+      "sha": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca",
+      "ref": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca"
+    },
+    "head": {
+      "sha": "ffbaf8c54269df2ce510de91245760fddce09896",
+      "ref": "pr-1"
+    },
+    "title": "pr-1",
+    "description": "FEATURE: automatically downsize large images",
+    "author": "Régis Hanol"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "app/assets/javascripts/discourse/lib/utilities.js",
+      "app/controllers/uploads_controller.rb",
+      "app/models/optimized_image.rb"
+    ],
+    "reviewed": [
+      "app/assets/javascripts/discourse/lib/utilities.js",
+      "app/controllers/uploads_controller.rb",
+      "app/models/optimized_image.rb"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/optimized_image.rb",
+      "line": 149,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Second `def self.downsize` overrides the 5-arg one; ResizeEmoji job now raises ArgumentError",
+      "body": "Ruby has no overloading. `downsize(from, to, dimensions, opts={})` at line 149 replaces `downsize(from, to, max_width, max_height, opts={})` at line 145, so the first definition is dead. The existing caller `app/jobs/regular/resize_emoji.rb:14` still calls `OptimizedImage.downsize(path, path, 100, 100, opts)`. That is 5 arguments against a method that now takes at most 4, so it raises `ArgumentError`. Every custom-emoji upload that enqueues `Jobs::ResizeEmoji` then fails, and the emoji is never downsized to 100x100. The same file shows the problem: line 146 is unreachable. Fix by keeping a single `downsize`. Either change it to the `dimensions` form and update `resize_emoji.rb` to pass `\"100x100\"`, or give the new string-dimension variant a different name. `resize` at line 142 only had its internals changed, so it is fine.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/discourse/lib/utilities.js",
+      "line": 182,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Hard-coded 10MB client limit replaces max_attachment_size_kb / max_image_size_kb",
+      "body": "The client check used to read `max_<type>_size_kb`, so it covered both images and attachments. It is now a constant 10MB for everything. Two consequences:\n1. An admin who set `max_attachment_size_kb` above 10MB (for example the `script/import_scripts/tnation.rb:115-116` style settings) can no longer upload attachments larger than 10MB, because the client refuses them. The `max_attachment_size_kb` setting is silently capped.\n2. An attachment between `max_attachment_size_kb` and 10MB is no longer caught on the client. The whole file is uploaded before the server rejects it, which is a worse experience than before. Only images should get the relaxed limit, since only images are downsized server-side. Keep `max_attachment_size_kb` for `type === 'attachment'` and use the larger bound for images.\n\nThe same constant is repeated at line 246 for the 413 message, and at `uploads_controller.rb:55` for API URL downloads, which also ignores `max_attachment_size_kb`.\n\nTests: `test/javascripts/lib/utilities-test.js.es6:52-61` (\"prevents files that are too big from being uploaded\") sets `max_image_size_kb = 5` and a 10KB file, then expects `file_too_large` with `max_size_kb: 5`. With this change the file passes validation and the message would say 10240, so that test will fail. It needs updating, and a test is needed for the new limit.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/uploads_controller.rb",
+      "line": 67,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Downsize with \"80%\" is unsupported for animated GIFs, and the result is ignored",
+      "body": "With `allow_animation: SiteSetting.allow_animated_thumbnails`, `OptimizedImage.optimize` (`optimized_image.rb:155`) switches to `downsize_instructions_animated` when the path matches `/\\.GIF$/i`. That calls `gifsicle --resize-fit 80%` (`optimized_image.rb:120`), and `--resize-fit` expects `WxH`, not a percentage. The command fails and `convert_with` returns false. The loop at lines 66-69 ignores the return value, so it runs 5 no-op attempts and the file stays oversized. The user then gets whatever size error the validator raises, instead of an automatic downsize. If the tempfile path has no `.gif` extension, `convert ...[0]` is used instead, which keeps only the first frame, so animation is lost without notice. Check the return value (break on false). For GIFs, either use a size gifsicle accepts or skip animation handling deliberately. There is also no spec for the new downsizing behaviour in `spec/controllers/uploads_controller_spec.rb`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Controller downsizes oversized images before Upload.create_for",
+      "location": "app/controllers/uploads_controller.rb:63",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/uploads_controller.rb:63-72",
+        "app/models/optimized_image.rb:115-124",
+        "app/models/optimized_image.rb:153-169",
+        "app/models/upload.rb:82-99"
+      ],
+      "equivalent_path": "Upload.create_for resize for cropped image types (app/models/upload.rb:82-99), which also calls OptimizedImage.resize in place on file.path",
+      "before_after": "Before: an image over max_image_size_kb was rejected by the validator. After: up to 5 in-place `convert -resize 80%>` passes run on the tempfile first, and the new size is passed to create_for.",
+      "visible_effect": "Large images are accepted at reduced size. If downsizing fails (GIF with gifsicle and a percentage), the upload still fails with a size error and no downsize happens.",
+      "failure_mode": "convert_with returns false, which the loop ignores and retries 5 times. The tempfile is closed in `ensure` (line 85) either way.",
+      "evidence_checked": true
+    },
+    {
+      "action": "OptimizedImage.downsize signature changed",
+      "location": "app/models/optimized_image.rb:149",
+      "status": "closed",
+      "evidence": [
+        "app/models/optimized_image.rb:145-151",
+        "app/jobs/regular/resize_emoji.rb:14"
+      ],
+      "equivalent_path": "app/jobs/regular/resize_emoji.rb:14 calls downsize(path, path, 100, 100, opts)",
+      "before_after": "Before: the 5-arg form was accepted. After: only the (from, to, dimensions, opts) form exists, so the 5-arg call raises ArgumentError.",
+      "visible_effect": "Custom emoji are no longer resized to 100x100 after upload.",
+      "failure_mode": "The background job raises ArgumentError on each run.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Not safe to merge as is. The duplicate `OptimizedImage.downsize` definition makes the second one win, so the unchanged `ResizeEmoji` job passes 5 arguments and raises ArgumentError. The hard-coded 10MB client limit also overrides `max_attachment_size_kb`, and it breaks the existing JS spec that expects the `max_image_size_kb` limit. The controller's `\\\"80%\\\"` downsize is not supported for animated GIFs, and its result is ignored. I read all three files and the callers I cite; I did not run anything.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 32,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 15,
+      "costUsd": 0.14244500000000002
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca"
+  },
+  "execution": {
+    "costUsdEstimate": 0.14244500000000002,
+    "usage": {
+      "input": 12,
+      "output": 6587,
+      "cacheRead": 113235,
+      "cacheWrite": 26091
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 15,
+    "durationMs": 52875,
+    "stop": "complete",
+    "notices": []
+  }
+}

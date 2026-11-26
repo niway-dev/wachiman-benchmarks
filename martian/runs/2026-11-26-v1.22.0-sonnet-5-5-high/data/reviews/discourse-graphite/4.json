@@ -1,0 +1,341 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-4` of discourse-graphite-4 against 62db063e1e1abe691313ab42682a68f796d63769 (merge-base 62db063)",
+    "repository": {
+      "name": "discourse-graphite-4"
+    },
+    "base": {
+      "sha": "62db063e1e1abe691313ab42682a68f796d63769",
+      "ref": "62db063e1e1abe691313ab42682a68f796d63769"
+    },
+    "head": {
+      "sha": "4f8aed295a29954023b2849c060ef4fb299d1b5d",
+      "ref": "pr-4"
+    },
+    "title": "pr-4",
+    "description": "FEATURE: Embeddable Discourse comments, now with simple-rss instead of feedzirra",
+    "author": "Robin Ward"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "Gemfile",
+      "app/assets/javascripts/embed.js",
+      "app/assets/stylesheets/embed.css.scss",
+      "app/controllers/embed_controller.rb",
+      "app/jobs/regular/retrieve_topic.rb",
+      "app/jobs/scheduled/poll_feed.rb",
+      "app/models/post.rb",
+      "app/models/topic_embed.rb",
+      "app/views/embed/best.html.erb",
+      "app/views/embed/loading.html.erb",
+      "app/views/layouts/embed.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "config/site_settings.yml",
+      "db/migrate/20131210181901_migrate_word_counts.rb",
+      "db/migrate/20131217174004_create_topic_embeds.rb",
+      "db/migrate/20131219203905_add_cook_method_to_posts.rb",
+      "db/migrate/20131223171005_create_top_topics.rb",
+      "lib/post_creator.rb",
+      "lib/post_revisor.rb",
+      "lib/tasks/disqus.thor",
+      "lib/topic_retriever.rb",
+      "spec/components/topic_retriever_spec.rb",
+      "spec/controllers/embed_controller_spec.rb",
+      "spec/jobs/poll_feed_spec.rb",
+      "spec/models/topic_embed_spec.rb"
+    ],
+    "reviewed": [
+      "db/migrate/20131210181901_migrate_word_counts.rb",
+      "db/migrate/20131217174004_create_topic_embeds.rb",
+      "db/migrate/20131219203905_add_cook_method_to_posts.rb",
+      "db/migrate/20131223171005_create_top_topics.rb",
+      "app/assets/javascripts/embed.js",
+      "app/controllers/embed_controller.rb",
+      "app/jobs/regular/retrieve_topic.rb",
+      "app/jobs/scheduled/poll_feed.rb",
+      "app/models/post.rb",
+      "app/models/topic_embed.rb",
+      "app/views/embed/best.html.erb",
+      "app/views/embed/loading.html.erb",
+      "app/views/layouts/embed.html.erb",
+      "config/locales/client.en.yml",
+      "config/locales/server.en.yml",
+      "config/routes.rb",
+      "config/site_settings.yml",
+      "Gemfile",
+      "lib/post_creator.rb",
+      "lib/post_revisor.rb",
+      "lib/tasks/disqus.thor",
+      "lib/topic_retriever.rb",
+      "spec/components/topic_retriever_spec.rb",
+      "spec/controllers/embed_controller_spec.rb",
+      "spec/jobs/poll_feed_spec.rb",
+      "spec/models/topic_embed_spec.rb",
+      "app/assets/stylesheets/embed.css.scss"
+    ],
+    "skipped": [],
+    "excluded": 1,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "app/models/post.rb",
+      "line": 133,
+      "severity": "blocker",
+      "topic": "security",
+      "confidence": "high",
+      "title": "raw_html posts skip all sanitization: untrusted feed/page HTML is stored and served as-is on the forum origin",
+      "body": "`Post#cook` now returns `raw` untouched for `cook_method == raw_html`. The only producers are `TopicEmbed.import` callers, and their input is third-party HTML. `PollFeed` passes `CGI.unescapeHTML(i.content.scrub)` (poll_feed.rb:35), so a feed item containing `<script>` or `onerror=` is unescaped into live markup. `import_remote` passes Readability output, whose whitelist (topic_embed.rb:48-50) keeps `href`, so `javascript:` links survive. `absolutize_urls` only rewrites URLs and calls `to_html` (topic_embed.rb:75). Nothing sanitizes, so the HTML is stored in `cooked` (post_creator.rb:105; post.rb:321 on every save). It is rendered with `raw post.cooked` in embed/best.html.erb:19, which is served from the Discourse origin. It also renders in the normal topic view for every visitor and admin. A compromised or hostile feed/blog therefore gets script execution in the forum origin.\n\n`raw_html` is also not a safe state for later edits: any user with edit rights on that post (a moderator, for example) can put arbitrary HTML into `raw` and it is published unsanitized.\n\nThe footer in `import` interpolates `url` into `<a href='#{url}'>` unescaped (topic_embed.rb:13). `import` only checks `url =~ /^https?:\\/\\//`, and `^` matches after any newline, so a multi-line feed `link` passes. A `'` in the URL breaks out of the attribute.\n\nFix: sanitize the imported HTML to a tag/attribute/protocol whitelist before storing it (e.g. Sanitize or the existing html sanitizer). Escape the URL in the footer and anchor the regex with `\\A`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 65,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "absolutize_urls corrupts protocol-relative URLs",
+      "body": "A value starting with `/` is treated as site-relative and `href.sub(/^\\/+/, '')` strips every leading slash. `//cdn.example.com/a.png` therefore becomes `http://eviltrout.com/cdn.example.com/a.png`, a broken link or image. The same happens for `src` at line 71. Protocol-relative image and link URLs are common in feeds. Skip values starting with `//`, or resolve with `URI.join(url, value)`. Relative values without a leading slash (`images/a.png`, `../x`) are not absolutized at all. Separately, the port test at line 59 compares against 80/443 regardless of scheme, so `https://host:80` loses its port.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/controllers/embed_controller.rb",
+      "line": 26,
+      "severity": "fix",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Forgeable Referer is the only gate for anonymous topic creation from arbitrary URLs under the embeddable host",
+      "body": "`ensure_embeddable` trusts the `Referer` header, which any non-browser client can set. Then `best` enqueues `retrieve_topic` for any `embed_url` (line 15). `TopicRetriever` only checks that the URL's host equals `embeddable_host` (topic_retriever.rb:15) and throttles per exact URL string (line 26). So an anonymous client can send `embed_url=http://<embeddable_host>/x?n=1`, `...?n=2`, and so on. Each distinct string passes the host check, triggers an outbound fetch and, if the remote returns HTML, creates a new topic by `embed_by_username` (topic_embed.rb:22). The unique index is on the raw string (migration line 11). With `feed_polling_enabled`, every distinct URL also re-downloads and re-parses the whole feed synchronously (topic_retriever.rb:40-41). The anon cache (anonymous_cache.rb:14) is also keyed by the full URI and does not limit this. Consider normalizing `embed_url` (strip query/fragment) and rate-limiting per IP or globally. Also decide whether the Referer check is meant as anything beyond a convenience.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/embed/loading.html.erb",
+      "line": 6,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Loading page reloads forever and retrieval failures are silent",
+      "body": "The page reloads every 30s with no attempt cap. The retrieval can silently never produce a topic. `RetrieveTopic` is a no-op when the host mismatches or the URL was retrieved within 60s (topic_retriever.rb:9). `fetch_http` returns when `embed_by_username` is blank or the user is missing (line 50). `PostCreator#create` returns nil when the title is invalid (`import` then returns nil without error), and `open` can raise. In all of these the embedding page shows 'Loading Discussion...' indefinitely. Each reload for a logged-in user or after the 1 minute cache expiry enqueues another job (embed_controller.rb:15). Staff pass `no_throttle` (retrieve_topic.rb:17), so every reload runs a full fetch. Add a bounded retry count (for example via a query param) and an error or empty state.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/jobs/scheduled/poll_feed.rb",
+      "line": 35,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "One bad feed item aborts the whole import; items without `content` raise",
+      "body": "`i.content.scrub` raises NoMethodError when an item has no `content` element. In SimpleRSS, RSS 2.0 items usually carry `description` or `content_encoded`, and `content` mostly comes from Atom. The loop at lines 31-37 has no per-item rescue, and `sidekiq_options retry: false` means nothing retries. `TopicEmbed.import` can also raise: the unique `embed_url` is a 255-char string, so a longer link raises a DB error, and `TopicEmbed.create!` runs with `post.id` nil if the post save was rolled back. Any of these skips every later item until the feed changes. The same code runs inline inside `TopicRetriever#perform_retrieve` (topic_retriever.rb:41), so it also fails retrievals. Fall back to `description`/`content_encoded` and rescue per item with logging.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 48,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Network fetches use Kernel#open with no overall bound; failures abort the caller",
+      "body": "`open(url).read` here and `open(SiteSetting.feed_polling_url)` in poll_feed.rb:29 use open-uri through Kernel#open, with no explicit connect/read timeouts, size limit or redirect policy. The only bound is open-uri's per-read default, so a slow or never-ending response keeps a Sidekiq worker busy. `TopicRetriever` can call this from user-triggered jobs (retrieve_topic.rb:17), and the feed fetch also runs there (topic_retriever.rb:41). A redirect from the embeddable host to an internal address is followed. Kernel#open also treats a leading `|` as a command; that is admin-only for the feed setting, but the Disqus path (disqus.thor:148) passes `t[:link]` from a file. Prefer `URI.parse(url).open(read_timeout:, open_timeout:)` and a body size cap.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/models/topic_embed.rb",
+      "line": 32,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Embed rows can outlive their topic/post, which breaks both update and display",
+      "body": "`topic_embeds` has no FK and the models define no `dependent` cleanup. If the post is hard-deleted, `embed.post` is nil and `PostRevisor.new(nil).revise!` raises when the content hash changes (line 35-36), aborting the feed loop (see poll_feed.rb:31). In the controller, `topic_id_for_embed` still returns the id of a deleted topic, so `TopicView.new` raises NotFound on every request (embed_controller.rb:10-13). Retrieval is never re-triggered because the embed row exists, and the embedding page stays broken. Handle the missing post/topic, for example by deleting the stale embed and re-importing.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/layouts/embed.html.erb",
+      "line": 4,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "embed.css / embed.js are not in the asset precompile list",
+      "body": "config/application.rb:61 lists the precompiled assets (`vendor.js`, `common.css`, ...) and this PR adds neither `embed.css` nor `embed.js`. In production, with `assets:precompile` required (config/initializers/verify_config.rb:29), `stylesheet_link_tag 'embed'` will point at an asset that was never compiled. The iframe will be unstyled or fail to render. The `embed.js` that site owners are supposed to load will also 404. Add both to `config.assets.precompile`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/assets/javascripts/embed.js",
+      "line": 17,
+      "severity": "consider",
+      "topic": "security",
+      "confidence": "medium",
+      "title": "Origin check is a substring test; missing-container and trailing-slash assumptions",
+      "body": "`discourseUrl.indexOf(e.origin) === -1` accepts any origin that is a substring of `discourseUrl`. With `http://forum.example.com/`, a message from `http://forum.example.co` or `http://forum.exam` passes. The only effect is a height change on the iframe, but compare exactly, e.g. `e.origin === new URL(discourseUrl).origin`, and check `e.source === iframe.contentWindow`. Line 5 never checks that `#discourse-comments` exists (`comments.appendChild` throws a TypeError otherwise). Line 7 requires `discourseUrl` to end in `/`; nothing documents that.",
+      "anchor": "diff"
+    },
+    {
+      "path": "lib/tasks/disqus.thor",
+      "line": 148,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Disqus import silently loses --category and now does a network fetch per thread",
+      "body": "The PR removes the `--category` option and the `category:` argument (lines 116 and 140-146). Existing invocations lose category placement, and the PR body does not mention it. Each thread previously created a local permalink post. It now calls `TopicEmbed.import_remote(user, t[:link], title: t[:title])`, which downloads every thread's page (topic_embed.rb:48) and stores the remote HTML. Any HTTP failure or non-200 aborts the import mid-run, and the HTML is stored as unsanitized `raw_html` (see the post.rb finding). If this change is intended, restore the category option and handle fetch failures per thread.",
+      "anchor": "diff"
+    },
+    {
+      "path": "app/views/embed/best.html.erb",
+      "line": 6,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "low",
+      "title": "`<%- end if %>` is a modifier-if; it only works by accident",
+      "body": "`end if` makes the next compiled statement the condition for the whole if/else block above. It evaluates true only because the following whitespace buffer append returns a truthy value. Use `<%- end %>`. Also, `post.user` (line 16-17) is dereferenced without a nil check.",
+      "anchor": "diff"
+    },
+    {
+      "path": "spec/jobs/poll_feed_spec.rb",
+      "line": 31,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Core import paths are untested",
+      "body": "`PollFeed` specs only check that `poll_feed` is or is not called; `poll_feed` itself (feed parsing, link/id fallback, scrub/unescape) has no test. The `require_dependency 'jobs/regular/process_post'` on line 2 is unrelated. `topic_embed_spec` has no test for: the update path asserting the revised raw and the stored sha, a script or `javascript:` payload, protocol-relative URLs, an existing embed whose post is gone, or `Post#cook` for raw_html in isolation. The controller spec's 'tells the topic retriever to work' only passes because `Jobs.enqueue` runs inline in tests, and it never checks that the loading template is rendered.",
+      "anchor": "diff"
+    },
+    {
+      "path": "db/migrate/20131223171005_create_top_topics.rb",
+      "line": 3,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Editing already-shipped migrations; force: true drops tables on re-run",
+      "body": "This changes the existing `create_top_topics` migration to `force: true`, and also touches the whitespace and trailing newline of `20131210181901_migrate_word_counts.rb`. Neither change belongs to the embedding feature. `force: true` drops and recreates an existing `top_topics` table if the migration is ever re-run. The new `topic_embeds` migration (line 3) also uses `force: true`, which would silently wipe embed mappings. Drop the unrelated edits and the `force` options. The new migration versions (20131217, 20131219) are also older than migrations already on the branch (20131223, 20131227, 20131229).",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Anonymous visitor loads /embed/best?embed_url=… (iframe on the embedding site)",
+      "location": "app/controllers/embed_controller.rb:8",
+      "status": "closed",
+      "evidence": [
+        "app/controllers/embed_controller.rb:9-20",
+        "app/controllers/embed_controller.rb:24-31",
+        "lib/middleware/anonymous_cache.rb:14",
+        "lib/middleware/anonymous_cache.rb:82",
+        "app/controllers/application_controller.rb:168-171",
+        "app/views/embed/loading.html.erb:6-11"
+      ],
+      "equivalent_path": "TopicsController#show builds TopicView for the current user and renders the full Ember page",
+      "before_after": "New path checks the Referer host (line 26), looks up TopicEmbed by exact URL string, and builds TopicView with best:5 or enqueues retrieval; it then calls discourse_expires_in, which for anonymous users caches the response 1 minute keyed by host+URI (anonymous_cache.rb:14)",
+      "visible_effect": "Iframe shows best posts, or a 'Loading Discussion...' page that reloads every 30s. The layout posts its body height to the parent window via postMessage.",
+      "failure_mode": "The anon cache serves a hit before the controller runs, so within the minute the Referer check and X-Frame-Options logic are skipped. Content is public, so low impact. A deleted topic raises NotFound on every request; retrieval failures leave the loading page reloading forever.",
+      "evidence_checked": true
+    },
+    {
+      "action": "RetrieveTopic job fetches and imports a remote page or feed",
+      "location": "app/jobs/regular/retrieve_topic.rb:17",
+      "status": "closed",
+      "evidence": [
+        "lib/topic_retriever.rb:8-53",
+        "app/jobs/regular/retrieve_topic.rb:9-18",
+        "app/models/topic_embed.rb:44-53",
+        "app/jobs/scheduled/poll_feed.rb:24-38"
+      ],
+      "equivalent_path": "Jobs::PollFeed (hourly) calls the same TopicEmbed.import",
+      "before_after": "The job checks host equality and a 60s per-URL redis throttle (bypassed for staff), then optionally runs the whole PollFeed synchronously, then fetches the page with open-uri and imports it. The throttle key is set before the work, with setnx then a separate expire.",
+      "visible_effect": "A new topic (and TopicEmbed row) appears; the embedding page shows it on the next 30s reload.",
+      "failure_mode": "No overall timeout on open/feed fetch, so a hung remote holds a worker. Any exception or a nil result is invisible to the visitor, and the throttle blocks a retry for 60s. If the process dies between setnx and expire, the key never expires and that URL is never retrieved again.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Imported HTML stored with cook_method raw_html and rendered unsanitized",
+      "location": "app/models/post.rb:133",
+      "status": "closed",
+      "evidence": [
+        "app/models/post.rb:130-137",
+        "app/models/post.rb:319-322",
+        "lib/post_creator.rb:105",
+        "lib/post_creator.rb:216",
+        "app/views/embed/best.html.erb:19",
+        "app/models/topic_embed.rb:13-22"
+      ],
+      "equivalent_path": "Post#cook via PostAnalyzer/PrettyText, which sanitizes markdown output",
+      "before_after": "Regular path cooks markdown and sanitizes it. The new path returns raw directly in before_create (post_creator.rb:105) and in the before_save recook (post.rb:321). PostRevisor.update_post saves with validations skipped.",
+      "visible_effect": "Topic and embed iframe render remote HTML verbatim, including scripts and event handlers.",
+      "failure_mode": "Stored XSS on the forum origin from any hostile feed item or page. Anyone with edit rights on the post can also publish arbitrary HTML.",
+      "evidence_checked": true
+    },
+    {
+      "action": "embed.js builds an iframe and listens for postMessage resize events",
+      "location": "app/assets/javascripts/embed.js:5",
+      "status": "closed",
+      "evidence": [
+        "app/assets/javascripts/embed.js:5-25",
+        "app/views/layouts/embed.html.erb:6-15"
+      ],
+      "equivalent_path": "none in the repo",
+      "before_after": "Page creates the iframe; the iframe layout posts {type:'discourse-resize', height} to the parent with target origin = full Referer (embed.html.erb:11). The parent filters by substring match on origin.",
+      "visible_effect": "Iframe height adjusts to content.",
+      "failure_mode": "If #discourse-comments is missing the script throws. A message from a lookalike origin can resize the iframe. If the layout's onload fires before the iframe is attached, the size never updates.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Poll/retrieve loops: what bounds the whole wait",
+      "location": "app/jobs/scheduled/poll_feed.rb:29",
+      "status": "closed",
+      "evidence": [
+        "app/jobs/scheduled/poll_feed.rb:28-37",
+        "app/models/topic_embed.rb:48-50",
+        "lib/topic_retriever.rb:40-45",
+        "app/views/embed/loading.html.erb:6-11"
+      ],
+      "before_after": "Nothing bounds the fetch except open-uri's per-read default: no overall deadline or size limit, and the feed is parsed entirely in memory. PollFeed iterates all items with no cap. The embedding page's reload loop (loading.html.erb:6-11) has no attempt limit, only the 30s interval.",
+      "visible_effect": "In the worst case a hung remote leaves the job running and the visitor staring at 'Loading Discussion...' forever.",
+      "failure_mode": "See findings on timeouts and the reload loop.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I reviewed all 27 files in this part by reading them. I did not build or run anything. The main problem is that `raw_html` posts skip all sanitization, so HTML from a feed or remote page is stored and rendered as-is on the forum origin. I rate that a blocker.\n\nOther fixes:\n- **URL handling:** `absolutize_urls` corrupts protocol-relative URLs.\n- **Abuse:** a forged Referer header is the only gate before any URL under the embeddable host can trigger a fetch and a new topic.\n- **Loading page:** it reloads forever, and retrieval failures are silent.\n- **Feed import:** one bad item (including one without `content`) aborts the whole feed import.\n- **Dangling embed rows:** an embed row whose post or topic was deleted breaks both update and display.\n- **Assets:** `embed.css` and `embed.js` are missing from the production precompile list.\n- **Disqus:** the Disqus task silently loses `--category` and now fetches every thread's page.\n\nI also left lower-severity notes on the `embed.js` origin check, `<%- end if %>`, edits to already-shipped migrations, and thin test coverage.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 27,
+      "lines": 659,
+      "maxRisk": 6,
+      "status": "reviewed",
+      "turns": 21,
+      "costUsd": 0.3904337
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "62db063e1e1abe691313ab42682a68f796d63769"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3904337,
+    "usage": {
+      "input": 16,
+      "output": 23171,
+      "cacheRead": 303842,
+      "cacheWrite": 51323
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 21,
+    "durationMs": 178184,
+    "stop": "complete",
+    "notices": []
+  }
+}

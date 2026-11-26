@@ -1,0 +1,103 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `pr-90939-flat` of grafana-90939-flat against cca9dee702ac4338ddc38aa56257273b8143e32e (merge-base cca9dee)",
+    "repository": {
+      "name": "grafana-90939-flat"
+    },
+    "base": {
+      "sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+      "ref": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+    },
+    "head": {
+      "sha": "2d2e0d9159b0cdccc27913deb8c44a9c8227210c",
+      "ref": "pr-90939-flat"
+    },
+    "title": "pr-90939-flat",
+    "description": "Frontend Asset Optimization",
+    "author": "Cristian Sotomayor"
+  },
+  "engine": {
+    "version": "1.22.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "reviewed": [
+      "pkg/api/webassets/webassets.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "pkg/api/webassets/webassets.go",
+      "line": 48,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "No re-check after taking the write lock; file I/O runs under the exclusive lock",
+      "body": "The cache is read under RLock, and the lock is released before `Lock()` is taken at line 48. Nothing re-checks `entryPointAssetsCache` after that. When N requests arrive while the cache is empty, all N pass the check at line 45. Each then takes the write lock in turn and re-reads and re-parses `assets-manifest.json` (line 60), and each overwrites the cache at line 69. The data race is gone, but the work is repeated N times. Fix: after `Lock()`, re-check `cfg.Env != setting.Dev && entryPointAssetsCache != nil` and return early.\n\nIn `setting.Dev` mode the cache is deliberately bypassed. Every call now takes the exclusive lock for the whole file read, so concurrent requests are serialized. Before this change they ran in parallel. That is acceptable for dev, but it is a behaviour change. The same lock also covers `readWebAssetsFromCDN` (line 56), a network call with no timeout beyond `ctx`. That branch is dead today because `cdn` is `\"\"`, but it would block every `GetWebAssets` caller if it were enabled.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "GetWebAssets now guards the package-level cache with an RWMutex: read under RLock, then take the write lock and reload.",
+      "location": "pkg/api/webassets/webassets.go:40",
+      "status": "closed",
+      "evidence": [
+        "pkg/api/webassets/webassets.go:41-47",
+        "pkg/api/webassets/webassets.go:48-49",
+        "pkg/api/webassets/webassets.go:59-70"
+      ],
+      "equivalent_path": "The previous code read `entryPointAssetsCache` and wrote it with no synchronization (a data race). The new code follows the same flow: return the cached value when not in Dev, otherwise reload from file or CDN and store the result.",
+      "before_after": "Before: unlocked read, return if non-nil and not Dev, otherwise load and assign. After: RLock snapshot (lines 41-43), same return condition (line 45), then Lock for the whole reload and assign (lines 48-70). Returned values and the error behaviour are unchanged. The cache is still assigned `result` even when it is nil on error (line 69), as before.",
+      "visible_effect": "Callers receive the same *dtos.EntryPointAssets. Concurrent first requests do redundant reloads, and Dev-mode requests are serialized. No change to the rendered index page.",
+      "failure_mode": "On a load error the cache becomes nil and the next call retries, as before. The write lock is released through defer, so no deadlock on the error path. The returned pointer is shared and not mutated after publication. `SetContentDeliveryURL` runs on `result` before it is stored.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The mutex change removes the data race on `entryPointAssetsCache` and is otherwise behaviour-preserving. The one issue is that there is no re-check after taking the write lock. Concurrent first requests therefore each reload the manifest, and Dev-mode requests are serialized under the exclusive lock. This is a minor performance point, not a correctness defect.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 1,
+      "lines": 16,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 4,
+      "costUsd": 0.0427687
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "cca9dee702ac4338ddc38aa56257273b8143e32e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.0427687,
+    "usage": {
+      "input": 4,
+      "output": 1879,
+      "cacheRead": 16882,
+      "cacheWrite": 8913
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 4,
+    "durationMs": 17338,
+    "stop": "complete",
+    "notices": []
+  }
+}
