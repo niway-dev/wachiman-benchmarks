@@ -70,3 +70,7 @@ shim does not start.
 - One run against three. A difference within the v1.9.0 spread is not a change.
 - Same judge route as every row in [history.md](../../history.md), so the rows compare; not
   comparable with Martian's stored numbers.
+- **Raw data kept as produced.** Three of the 50 review summaries end with a stray quote or carry
+  literal `\n` sequences (for example `cal.com/22532`, `cal.com/14740`). v1.9.0 r3 has two such
+  summaries, so this is an older Wachiman output defect, not new in v1.22.0. It does not reach
+  scoring, which reads findings only.

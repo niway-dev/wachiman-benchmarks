@@ -27,6 +27,7 @@ log() { echo "$(date +%H:%M:%S) $*" | tee -a $RUN/run.log; }
 
 [ -n "${ANTHROPIC_API_KEY:-}" ] && { echo "unset ANTHROPIC_API_KEY first"; exit 2; }
 [ -d $W/repos ] && [ -d $W/martian-upstream ] && [ -x $W/venv/bin/python ] || { echo "cache missing: see README bootstrap"; exit 2; }
+lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && { echo "port $PORT is taken: set JUDGE_PORT"; exit 2; }   # checked again before judging
 mkdir -p $RUN/reviews $RUN/wt
 log "run $LABEL: wachiman $(wachiman --version), model $MODEL, effort $EFFORT, queues $QUEUES ${EXTRA_ENV:+extra: $EXTRA_ENV} ${WACHIMAN_ARGS:+args: $WACHIMAN_ARGS}"
 
