@@ -18,14 +18,18 @@ no claim the reports do not.
 
 Five sets of three runs each, 15 reviews per set, all on Opus 5.5 at effort `high`, on the same
 commits. Known bugs are the 27 Expected rows of the per-PR docs, counted once per run, so a set
-has 81 chances. Reports: [v1.20.1](2026-11-25-v1.20.1-replay/README.md),
+has 81 chances. The headline table further down scores the same W4–W6 runs out of 26 expected
+issues: it uses its own earlier count, so compare W4–W6 with the newer sets only in this table.
+Reports: [v1.20.1](2026-11-25-v1.20.1-replay/README.md),
 [v1.21.0 with the focus file](2026-11-25-v1.21.0-focus-replay/README.md),
 [v1.21.0 with $10](2026-11-25-v1.21.0-budget-replay/README.md),
 [v1.4.0 again](2026-11-25-v1.4.0-rerun/README.md). Rows: `run_label` W4–W18 in `dataset/`.
 
 **Short version: v1.21.0 does not lose bugs against v1.4.0 when it has the budget to read every
 file (32 against 34 of 81, inside the 9-to-14 spread between runs of one version). With the $3
-default it leaves #467 half read and catches 27.** The cause is the parallel batches: each running
+default it leaves 11 to 19 of #467's 47 files unread in every run and catches 27.** The $10 run
+shows the budget is what cut those reviews short. The mechanism, read from the engine code, is the
+parallel batches: each running
 batch reserves its $0.75 cap, so the ones that start last on a large PR find too little left.
 
 | Per set (15 reviews) | v1.4.0, Nov 2 (W4–W6) | v1.20.1 (W7–W9) | v1.21.0, $3 (W10–W12) | v1.21.0, $10 (W13–W15) | v1.4.0, Nov 25 (W16–W18) |
