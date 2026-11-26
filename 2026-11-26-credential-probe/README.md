@@ -69,8 +69,8 @@ separate the two, with the probe's new `cache_ttl` and `budget_usd: 0` (no cap, 
 
 Each call's final text is in [`reviews/`](reviews/), and [`labels.md`](labels.md) matches it
 against #465's known issues ([answer key](../2026-11-26-release-bisect/prs/pr-465.md): E1–E3 and
-A1–A5) and checks every other finding against the code. Labelled by Claude Sonnet 5.5 (effort high)
-without reading the set names first. A5 is about the PR description, which the probe never sees,
+A1–A5) and checks every other finding against the code. Labelled by Claude Sonnet 5.5 (effort high);
+the labeller could see each file's set, so the labels are not blind. A5 is about the PR description, which the probe never sees,
 so 7 issues are within reach.
 
 | Set | Turns | Known issues found, per call | Mean |
@@ -83,13 +83,14 @@ so 7 issues are within reach.
 | Token, no cap, 1-hour cache | 39 / 28 / 26 | 2 / 2 / 2 | 2.0 |
 | Token, no cap, 5-minute cache | 26 / 30 / 34 | 1 / 1 / 3 | 1.7 |
 
-- **Only one set falls behind: the token at $0.75 on the automatic 1-hour cache**, the setting a
+- **The lowest set is the token at $0.75 on the automatic 1-hour cache**, the setting a
   Wachiman batch on a subscription token runs with. Forcing the 5-minute cache puts it level with
   the key.
-- **Past about 15 turns, more turns found no more known issues** here: 2.0 to 2.7 per call with
-  26 to 39 turns, against 2.0 to 2.3 with 13 to 17.
-- **A plain prompt finds far less than Wachiman:** 0 to 3 of 7 per call, where Wachiman's batches
-  found 4 to 8 of these issues per review in the release bisect. The probe isolates the credential;
+- **Past about 15 turns, more turns found no more known issues** here: 1.7 to 2.7 per call with
+  20 to 39 turns, against 2.0 to 2.3 with 13 to 17.
+- **A plain prompt finds far less than Wachiman:** 0 to 3 of 7 per call, where a Wachiman review
+  found 4 to 8 of the 9 issues the release bisect counts for #465 (a count that includes the PR
+  description's A5). The probe isolates the credential;
   it is not a measure of review quality.
 - **Three calls per set:** a difference of one issue per call is inside the spread. The 0.7 set
   is the lowest mean, not a measured loss on its own; it points the same way as the release
@@ -111,8 +112,9 @@ so 7 issues are within reach.
 
 - **One pull request, three calls per credential and cap.** Enough for a 15-against-11 gap with no
   overlap at $0.75, not to size it.
-- **The review text was not compared.** Only counts were recorded; which bugs each call found is
-  not in this report.
+- **One labeller, one pass, not blind.** The bug counts come from one Sonnet 5.5 labelling that
+  could see each file's set; a borderline "found" can go either way (its judgement calls are in
+  [`labels.md`](labels.md)).
 - **Thinking text is almost empty in the stream:** 0 characters in 10 calls, about 220 in the other
   two. The thinking token counts are the only usable record of it.
 - **One call tried Bash once.** The first key call at $3 (38 turns) called `Bash` with `echo`;

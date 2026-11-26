@@ -7,8 +7,8 @@ What was labelled: the 21 final texts in `reviews/*.md` (one plain `claude -p` c
 Key: [`../2026-11-26-release-bisect/prs/pr-465.md`](../2026-11-26-release-bisect/prs/pr-465.md):
 "Expected issues", "Baseline additional findings", "New findings" and "Judgement calls".
 
-Labelled by: Claude Sonnet 5.5, effort high. Each finding was judged on its text only; set names,
-turn counts and costs were not used to decide a label.
+Labelled by: Claude Sonnet 5.5, effort high, told to judge each finding on its text against the
+key. The labelling is not blind: each file name and first line show the set, turns and cost.
 
 Rules (as in the key):
 
