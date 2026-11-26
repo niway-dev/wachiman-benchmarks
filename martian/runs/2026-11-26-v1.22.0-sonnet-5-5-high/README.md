@@ -6,7 +6,8 @@
 - **Engine:** Wachiman v1.22.0 (`79ce0f0`), pinned with `WACHIMAN_DIR` (a `git archive v1.22.0`
   export; the installed CLI was 1.17.0), `claude-sonnet-5-5`, effort `high`, no verifier,
   `AGENT_REVIEW_BUDGET_USD=10`, two queues, `wachiman local` on the owner's subscription
-  (`ANTHROPIC_API_KEY` unset). Same inputs and judge route as the v1.9.0 rows.
+  (`ANTHROPIC_API_KEY` unset). Same inputs, judge model and prompts as the v1.9.0 rows; the judge calls
+  differed in one way, see "Judge cost rose".
 - **Command:** `JUDGE_PORT=8897 WACHIMAN_DIR=/tmp/wachiman-1.22.0 QUEUES=2 ./scripts/run-weekly.sh 2026-11-26-v1.22.0-sonnet-5-5-high claude-sonnet-5-5 high`
 
 ## Against v1.9.0, same model and effort
@@ -49,12 +50,26 @@ calls, against $30.42 to $31.37 for the v1.9.0 runs. From `data/judge-calls/`:
 | 1-hour cache writes | 0.61 M | 5.06 M |
 | Uncached input | 1.58 M | 0.01 M |
 
-Each Opus judge call now carries about 69,000 prompt tokens, mostly read from the cache, against
-about 1,500 in v1.9.0 r3. The
-likely source is the Claude Code CLI or the profile it runs in adding context; which one is not
-checked here. The judge model is the same, so the scores stay comparable, though that the extra
-context does not sway the judgments is not checked either. It does not touch Wachiman's
-product cost, but it makes a run about three times dearer to measure.
+Each Opus judge call in this run carried about 69,000 prompt tokens, mostly read from the cache,
+against about 1,500 in v1.9.0 r3.
+
+The cause, found after the run: the profile the judge runs in had gained claude.ai connectors (MCP
+servers) after v1.9.0 r3 was judged. The Claude Code CLI loads their tool definitions into every
+call, even with `--tools ""`.
+
+One test call, with a one-line prompt rather than a real judge prompt, measured:
+
+- as the shim ran: 65,389 cached prompt tokens, $0.063;
+- with `--strict-mcp-config` and an empty MCP config: 714 tokens, $0.005.
+
+A real judge call adds its own prompt on top; the v1.9.0 r3 figure of about 1,500 includes it.
+
+`scripts/judge_shim.py` now passes `--strict-mcp-config` and the empty MCP config on every call,
+which returns the calls to the v1.9.0 r3 condition. Wachiman's own reviews already pass
+`--strict-mcp-config`
+([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/79ce0f0db5cbb3d627aa9b2a9bfa8bebbbea1215/src/providers/claude-code.ts#L225)),
+so the product's cost is not affected. The judge model and prompts are the same as in earlier
+rows; that the extra tool definitions did not move this run's scores is not checked.
 
 ## Incident: the judge port was taken
 
@@ -68,8 +83,10 @@ shim does not start.
 ## Limits
 
 - One run against three. A difference within the v1.9.0 spread is not a change.
-- Same judge route as every row in [history.md](../../history.md), so the rows compare; not
-  comparable with Martian's stored numbers.
+- Same judge model, prompts and `judge_shim.py` (as it was before the MCP fix) as every row in
+  [history.md](../../history.md), but this run's judge calls also carried the connector tool
+  definitions that the earlier rows' calls did not (see "Judge cost rose"). That they did not
+  move the scores is not checked. Not comparable with Martian's stored numbers.
 - **Raw data kept as produced.** Three of the 50 review summaries end with a stray quote or carry
   literal `\n` sequences (for example `cal.com/22532`, `cal.com/14740`). v1.9.0 r3 has two such
   summaries, so this is an older Wachiman output defect, not new in v1.22.0. It does not reach

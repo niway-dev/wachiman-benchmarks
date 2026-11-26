@@ -10,6 +10,14 @@ on our machine.
 version, or a change to `judge_shim.py`. Then re-run the calibration and the three reference tools,
 and start a new section of [history.md](../history.md), because old rows are no longer comparable.
 
+**Pending refresh (2026-11-26):** `judge_shim.py` now passes `--strict-mcp-config` with an empty
+MCP config, so the judge no longer receives claude.ai connector tool definitions (about 65,000
+tokens a call). The connectors reached the judge's profile after v1.9.0 r3 and were in the calls
+of the v1.22.0 run only; the calibration and earlier rows ran at about 1,500 tokens a call, without
+them. The fix returns the calls to that condition, but it is a change to the shim, and the
+calibration has not been re-run on it. Until it is, rows judged after this change are not proven
+comparable with the rows above them.
+
 ## Calibration (2026-11-07)
 
 | Check | Result | File |
