@@ -7,8 +7,9 @@ point MARTIAN_BASE_URL at it and set MARTIAN_MODEL=anthropic/<model-id>.
 
 What is forwarded: the system message (as --system-prompt) and the user message (on stdin), with
 no tools, no settings, no MCP servers, no session persistence. What is lost: `temperature` (the
-CLI has no such option) and `response_format` (unused by the default pipeline). Every call is appended to a JSONL
-log with its duration, model usage and reported cost, so the run can be audited.
+CLI has no such option) and `response_format` (unused by the default pipeline). Every call is
+appended to a JSONL log with its duration, model usage and reported cost, so the run can be
+audited.
 
 Standard library only. Usage:
   CLAUDE_CONFIG_DIR=~/.wachiman/claude-personal python3 -I judge_shim.py --port 8787 --log calls.jsonl

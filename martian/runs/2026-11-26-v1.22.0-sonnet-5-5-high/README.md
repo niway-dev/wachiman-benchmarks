@@ -55,7 +55,8 @@ cause, found after the run: the profile the judge runs in has claude.ai connecto
 and the Claude Code CLI loaded their tool definitions into every call even with `--tools ""`. One
 test call measured 65,389 cached prompt tokens and $0.063 as the shim ran; with
 `--strict-mcp-config` and an empty MCP config, 714 tokens and $0.005. `scripts/judge_shim.py`
-now passes both. Wachiman's own reviews already pass `--strict-mcp-config`, so its product cost
+now passes both. Wachiman's own reviews already pass `--strict-mcp-config`
+([`src/providers/claude-code.ts`](https://github.com/niway-dev/wachiman/blob/main/src/providers/claude-code.ts)), so its product cost
 is not affected. The judge model is the same, so the scores stay comparable, though that the
 extra tool definitions did not sway this run's judgments is not checked.
 
@@ -71,8 +72,10 @@ shim does not start.
 ## Limits
 
 - One run against three. A difference within the v1.9.0 spread is not a change.
-- Same judge route as every row in [history.md](../../history.md), so the rows compare; not
-  comparable with Martian's stored numbers.
+- Same judge model, prompts and shim as every row in [history.md](../../history.md), but this
+  run's judge calls also carried the connector tool definitions that the earlier rows' calls did
+  not (see "Judge cost rose"). That they did not move the scores is not checked. Not comparable
+  with Martian's stored numbers.
 - **Raw data kept as produced.** Three of the 50 review summaries end with a stray quote or carry
   literal `\n` sequences (for example `cal.com/22532`, `cal.com/14740`). v1.9.0 r3 has two such
   summaries, so this is an older Wachiman output defect, not new in v1.22.0. It does not reach
