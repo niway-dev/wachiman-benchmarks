@@ -378,6 +378,8 @@ const REPLAY_DOCS = [
   { dir: "2026-11-25-v1.21.0-budget-replay/prs", name: "2026-11-25-v1.21.0-budget-replay" },
   { dir: "2026-11-25-v1.4.0-rerun/prs", name: "2026-11-25-v1.4.0-rerun" },
   { dir: "2026-11-26-release-bisect/prs", name: "2026-11-26-release-bisect" },
+  { dir: "2026-11-26-v1.21.0-sonnet-baseline/prs", name: "2026-11-26-v1.21.0-sonnet-baseline" },
+  { dir: "2026-11-26-prompt-cache-5m/prs", name: "2026-11-26-prompt-cache-5m" },
 ];
 const FIELD_DIR = "2026-11-02-field/prs";
 const REPLAY_PRS = ["463", "464", "465", "466", "467"];
@@ -395,6 +397,8 @@ export const PRIMARY_DOC: Record<string, string> = {
   W22: "2026-11-26-release-bisect", W23: "2026-11-26-release-bisect", W24: "2026-11-26-release-bisect",
   W25: "2026-11-26-release-bisect", W26: "2026-11-26-release-bisect", W27: "2026-11-26-release-bisect",
   W28: "2026-11-26-release-bisect", W29: "2026-11-26-release-bisect", W30: "2026-11-26-release-bisect",
+  W31: "2026-11-26-v1.21.0-sonnet-baseline", W32: "2026-11-26-v1.21.0-sonnet-baseline", W33: "2026-11-26-v1.21.0-sonnet-baseline",
+  W34: "2026-11-26-prompt-cache-5m", W35: "2026-11-26-prompt-cache-5m", W36: "2026-11-26-prompt-cache-5m",
 };
 
 function readDoc(ref: string | undefined, path: string): string | null {

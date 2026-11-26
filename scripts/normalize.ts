@@ -177,7 +177,7 @@ export function normalizeRepo(repo: string, repoDir: string, runMap: Map<string,
       into.runLogs.push({
         source_repo: repo, bench_pr: pr.number, run_id: r.databaseId, workflow: r.workflowName, event: r.event,
         conclusion: r.conclusion, created_at: r.createdAt, version: log.version, workflow_ref: log.workflow_ref,
-        model: log.model, effort: log.effort, claude_code_version: log.claude_code_version, calls: log.calls.length,
+        model: log.model, effort: log.effort, claude_code_version: log.claude_code_version, credential: log.credential, calls: log.calls.length,
         turns: log.calls.reduce((s, c) => s + c.turns, 0), cost_usd: log.cost_usd, duration_ms: log.duration_ms,
         confidence_rule_lines: log.confidence_rule.length, engine_lines: log.engine_lines.length, url: r.url,
       });
@@ -306,7 +306,7 @@ const REVIEW_COLUMNS = [
 ] as const;
 const RUNLOG_COLUMNS = [
   "source_repo", "bench_pr", "run_id", "workflow", "event", "conclusion", "created_at", "version", "workflow_ref", "model", "effort",
-  "claude_code_version", "calls", "turns", "cost_usd", "duration_ms", "confidence_rule_lines", "engine_lines", "url",
+  "claude_code_version", "credential", "calls", "turns", "cost_usd", "duration_ms", "confidence_rule_lines", "engine_lines", "url",
 ] as const;
 
 /**
