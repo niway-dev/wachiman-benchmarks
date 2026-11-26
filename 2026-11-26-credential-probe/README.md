@@ -34,7 +34,8 @@
   cost per turn is higher on the token: about $0.060 against $0.038 at $0.75, $0.049 against $0.035
   at $3. On the token that figure is an API-price estimate, not a bill.
 - **The cap shapes depth on the key too.** The same call makes 27 to 38 turns at $3 and 15 to 17 at
-  $0.75, and writes about a third less. Wachiman's batches run at $0.75.
+  $0.75, and writes about 40% fewer output tokens (14,034 against 8,352 on average). Wachiman's
+  batches run at $0.75.
 
 ## What it means, and what it does not show
 
@@ -55,4 +56,8 @@
   overlap at $0.75, not to size it.
 - **The review text was not compared.** Only counts were recorded; which bugs each call found is
   not in this report.
-- **Thinking text is empty in the stream.** `thinking_tokens` counts are the only record of it.
+- **Thinking text is almost empty in the stream:** 0 characters in 10 calls, about 220 in the other
+  two. The thinking token counts are the only usable record of it.
+- **One call tried Bash once.** The first key call at $3 (38 turns) called `Bash` with `echo`;
+  Claude Code refused it ("No such tool available"), which cost that call one turn. Without it,
+  the key's range at $3 would still be 27 to 37.
