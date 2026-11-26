@@ -32,8 +32,9 @@ by v1.20.1.** Neither release lost known bugs against v1.4.0.
   spend it in fewer turns. Why is not measured here; one possibility is more context per turn.
 - **v1.5.0 caught the most on #467** (14 of 30). Three runs per set cannot separate that from the
   9-to-14 spread between runs of one release, so it says "no loss", not "better".
-- **New findings:** the v1.5.0 runs posted 8 that matched no known or earlier bug (5 valid,
-  3 partly valid); the v1.9.0 runs posted 2, both valid.
+- **New findings:** across both PRs, the v1.5.0 runs posted 8 that matched no known or
+  earlier bug (#465 N7 and #467 N23–N29: 5 valid, 3 partly valid). The v1.9.0 runs posted 2 more
+  (#465 N8 and #467 N30, both valid) and re-posted v1.5.0's #467 N24.
   Verdicts are in the per-PR docs.
 
 ## Where to look next
