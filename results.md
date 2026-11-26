@@ -70,8 +70,8 @@ Catches are known bugs caught in the three runs, out of three times the PR's Exp
 - **Head to head, v1.21.0 at $10 against v1.4.0 on the same day:** v1.4.0 caught more on three
   PRs (#463 by 1, #466 by 2, #467 by 2), tied on #464, and lost on #465 (by 3). Against the Nov 2
   v1.4.0 set the split is the same: three, one tie, one. The two v1.4.0 sets, same engine, differ
-  from each other by up to 2 on a PR (#465: 7 and 5; #466: 5 and 7), so each single gap is inside
-  that spread. That v1.21.0 is behind on most PRs, and never clearly ahead, is the pattern to test
+  from each other by up to 2 on a PR (#465: 7 and 5; #466: 5 and 7). Every PR where v1.4.0 is
+  ahead (by 1 or 2) is inside that spread; v1.21.0's lead on #465 (3) is just outside it. That v1.21.0 is behind on most PRs, and never clearly ahead, is the pattern to test
   with more runs, not a measured loss.
 - **What does differ, every time: fewer turns per batch call** (10.1 against 14.1; on #467, 6 to
   15 against 10 to 18 in one run each) **and fewer findings** (71 against 78). Model, effort, turn
