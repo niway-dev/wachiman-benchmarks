@@ -37,25 +37,84 @@
   $0.75, and writes about 40% fewer output tokens (14,034 against 8,352 on average). Wachiman's
   batches run at $0.75.
 
+## Second round: the cache lifetime and the budget notice (same day, token only)
+
+Claude Code shows the model its spend when a call has `--max-budget-usd`: every turn adds `USD
+budget: $used/$total; $remaining remaining` to the model's context (in the Claude Code 2.1.304
+binary; not in Anthropic's docs). On a subscription it also writes the prompt cache for 1 hour,
+which is documented and can be set with `CLAUDE_CODE_PROMPT_CACHE_TTL`
+([prompt caching](https://code.claude.com/docs/en/prompt-caching.md)). Five runs on the token
+separate the two, with the probe's new `cache_ttl` and `budget_usd: 0` (no cap, so no notice):
+
+| Run | Cap | Cache | Turns | Cost (estimate) | Seconds |
+| --- | --- | --- | --- | --- | --- |
+| [45845006088](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845006088) | $0.75 | 5m (forced) | 14 / 13 / 14 | $0.57 / $0.59 / $0.61 | 93 / 110 / 99 |
+| [45845022582](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845022582) | none | 1h (automatic) | 39 / 28 / 26 | $1.52 / $1.30 / $1.08 | 228 / 187 / 164 |
+| [45845037352](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845037352) | none | 5m (forced) | 26 / 30 / 34 | $0.77 / $0.95 / $1.11 | 183 / 202 / 237 |
+| [45845050918](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845050918) | none, 5 turns | 5m | 6, `error_max_turns`, no review text | $0.17 | 36 |
+| [45845066711](https://github.com/niway-dev/kaipu-bench-wachi-v3/actions/runs/45845066711) | none, 9 turns | 5m | 10, `error_max_turns`, no review text | $0.28 | 56 |
+
+- **With no cap, the token makes as many turns as the key:** 26 to 39, against 27 to 38 on the key
+  at a $3 cap that no call came near. The gap appears only under a cap the model is shown.
+- **At $0.75, forcing the 5-minute cache recovers most of it:** 13 to 14 turns, against 10 to 12 on
+  the automatic 1-hour cache and 15 to 17 on the key. The ranges still do not overlap, and this
+  round ran hours after the first, so part of the rest may be run-to-run spread.
+- **Without a cap, the cache changes the cost, not the turns:** about 30 turns either way, at $0.94
+  on average with 5 minutes against $1.30 with 1 hour.
+- **A turn limit cuts the call with no review:** at 5 and 9 turns both calls ended on
+  `error_max_turns` with no final text. The model is not told the turn limit, so turns cannot be
+  set by hand that way; the cap is the lever that lets the model finish its list.
+
+## Known bugs found per call
+
+Each call's final text is in [`reviews/`](reviews/), and [`labels.md`](labels.md) matches it
+against #465's known issues ([answer key](../2026-11-26-release-bisect/prs/pr-465.md): E1–E3 and
+A1–A5) and checks every other finding against the code. Labelled by Claude Sonnet 5.5 (effort high);
+the labeller could see each file's set, so the labels are not blind. A5 is about the PR description, which the probe never sees,
+so 7 issues are within reach.
+
+| Set | Turns | Known issues found, per call | Mean |
+| --- | --- | --- | --- |
+| Key, $0.75 | 15 / 17 / 15 | 1 / 2 / 3 | 2.0 |
+| **Token, $0.75, 1-hour cache** | 10 / 12 / 12 | 1 / 1 / 0 | **0.7** |
+| **Token, $0.75, 5-minute cache** | 14 / 13 / 14 | 2 / 3 / 2 | **2.3** |
+| Key, $3 | 38 / 27 / 28 | 2 / 2 / 3 | 2.3 |
+| Token, $3, 1-hour cache | 20 / 26 / 28 | 3 / 2 / 3 | 2.7 |
+| Token, no cap, 1-hour cache | 39 / 28 / 26 | 2 / 2 / 2 | 2.0 |
+| Token, no cap, 5-minute cache | 26 / 30 / 34 | 1 / 1 / 3 | 1.7 |
+
+- **The lowest set is the token at $0.75 on the automatic 1-hour cache**, the setting a
+  Wachiman batch on a subscription token runs with. Forcing the 5-minute cache puts it level with
+  the key.
+- **Past about 15 turns, more turns found no more known issues** here: 1.7 to 2.7 per call with
+  20 to 39 turns, against 2.0 to 2.3 with 13 to 17.
+- **A plain prompt finds far less than Wachiman:** 0 to 3 of 7 per call, where a Wachiman review
+  found 4 to 8 of the 9 issues the release bisect counts for #465 (a count that includes the PR
+  description's A5). The probe isolates the credential;
+  it is not a measure of review quality.
+- **Three calls per set:** a difference of one issue per call is inside the spread. The 0.7 set
+  is the lowest mean, not a measured loss on its own; it points the same way as the release
+  bisect, where Wachiman on the token found fewer of these issues than on the key.
+
 ## What it means, and what it does not show
 
 - **Measured:** with the same Claude Code version, call and cap, a call on the token makes fewer
   turns than on the key at $0.75, and its prompt cache is written with a different lifetime.
-- **Not measured: why the call stops earlier.** No call reached its cap, so Claude Code did not
-  cut it. One explanation fits both caps: the model is told its budget and wraps up as the spend
-  nears it, and a higher cost per turn makes the token get there in fewer turns. Nothing in the
-  stream shows a budget notice, and Claude Code 2.1.304 ships as a native binary, so this was not
-  checked. The test that would: the same calls with no `--max-budget-usd`. If the gap goes away,
-  the cap is how the credential reaches the turns.
-- **No documentation found.** Anthropic's docs and the claude-code issues searched on 2026-11-26
-  describe no difference in behaviour between the two credentials.
+- **Why the call stops earlier:** no call reached its cap, so Claude Code did not cut it. The
+  model is shown its spend against the cap on every turn, and on the token the 1-hour cache makes
+  each turn cost more, so the spend nears the cap in fewer turns. The second round supports this:
+  no cap, no gap; a 5-minute cache at the same cap, most of the gap gone. That the model stops
+  *because of* the notice is inferred from these counts; its reasoning is not visible.
+- **Documented, and not.** The 1-hour cache on a subscription is in Anthropic's docs. The budget
+  notice is not; it was read from the strings of the Claude Code 2.1.304 binary.
 
 ## Limits
 
 - **One pull request, three calls per credential and cap.** Enough for a 15-against-11 gap with no
   overlap at $0.75, not to size it.
-- **The review text was not compared.** Only counts were recorded; which bugs each call found is
-  not in this report.
+- **One labeller, one pass, not blind.** The bug counts come from one Sonnet 5.5 labelling that
+  could see each file's set; a borderline "found" can go either way (its judgement calls are in
+  [`labels.md`](labels.md)).
 - **Thinking text is almost empty in the stream:** 0 characters in 10 calls, about 220 in the other
   two. The thinking token counts are the only usable record of it.
 - **One call tried Bash once.** The first key call at $3 (38 turns) called `Bash` with `echo`;

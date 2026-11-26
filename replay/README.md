@@ -118,8 +118,11 @@ The setup PR takes number 1, so the benchmark PRs of a repository start at #2.
   #467 only. v1.5.0, v1.9.0 and the `-api-key` file pass only `ANTHROPIC_API_KEY`;
   `wachi-workflow-v1.15.0.yml` only `CLAUDE_CODE_OAUTH_TOKEN`. Put on `main` the same way.
 - `credential-probe.yml`: runs one plain Claude Code call (no Wachiman) per credential and run, by
-  hand from the Actions tab, and tabulates turns and cost
-  ([credential probe](../2026-11-26-credential-probe/README.md)). Put on `main` the same way.
+  hand from the Actions tab ([credential probe](../2026-11-26-credential-probe/README.md)). Put on
+  `main` the same way. The run's summary page opens with the comparison: mean turns per
+  credential and whether the ranges overlap, cost per turn and prompt-cache lifetime. Then one row
+  per credential, the calls that hit a limit or left no summary, and every call, collapsed. The
+  `probe-summary` artifact holds every field of every call in one JSON file.
 
 ## Details worth knowing
 
