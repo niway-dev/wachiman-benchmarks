@@ -121,9 +121,13 @@ priced higher than a 5-minute write; the [5-minute cache experiment](../2026-11-
 measured $8 against $5 per million written tokens on Opus 5.5, by fitting each call's cost.
 
 - **Measured:** the token counts and costs above; every call ran on the token.
-- **Inferred, not measured:** the Sonnet 5.5 write prices. This set did not fit each call's cost
-  for its write price as the Opus experiment did, so the cache lifetime is the explanation that
-  fits, not a measured one.
+- **Measured: the write price fell, nothing else did.** Fitting each batch call's cost to its
+  token counts (least squares, 42 calls per set, largest error under 0.01%) gives the same
+  prices for reads ($0.10 per million) and output ($10) in both sets, and a cache write of $4.00
+  per million in v1.21.0 against $2.50 in v1.22.0. Those are Sonnet 5.5's 1-hour and 5-minute
+  write prices, the same 1.6 ratio as Opus's $8 and $5. At the old write price, v1.22.0's tokens
+  would have cost $17.93. Writes saved $4.25, the extra reads and output gave back $0.64, and
+  the set cost $3.61 less.
 - **Unlike the Opus experiment, turns did not rise** (19.9 against 19.3 per batch call). The
   saving here comes from price alone.
 - **The start floor most likely did not act:** with a $10 budget, no batch ran short of money. A
@@ -143,7 +147,8 @@ The same five pull requests, labelled against the same 27 known bugs. The v1.4.0
 v1.22.0 on Sonnet catches at least as many known bugs for about a third less per run. Under the
 release rule it does not catch *more*: R3 (12) ties v1.4.0's best run. The two sets also differ in
 model and credential, not only in release, so this compares what a user ran then with what a
-user runs now; it does not isolate the engine.
+user runs now; it does not isolate the engine. The W4 to W6 labels also come from earlier labelling passes (copied
+into each `prs/` file), not from the pass that labelled R1 to R3.
 
 ## Limits
 
