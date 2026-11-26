@@ -25,8 +25,9 @@ Reports: [v1.20.1](2026-11-25-v1.20.1-replay/README.md),
 [v1.21.0 with $10](2026-11-25-v1.21.0-budget-replay/README.md),
 [v1.4.0 again](2026-11-25-v1.4.0-rerun/README.md). Rows: `run_label` W4–W18 in `dataset/`.
 
-**Short version: v1.21.0 does not lose bugs against v1.4.0 when it has the budget to read every
-file (32 against 34 of 81, inside the 9-to-14 spread between runs of one version). With the $3
+**Short version: with the budget to read every file, v1.21.0 caught 32 of 81 against v1.4.0's
+34 the same day (35 on Nov 2). Three runs per set cannot tell a gap that small from the 9-to-14
+spread between runs of one version, so no loss is shown. With the $3
 default it leaves 11 to 19 of #467's 47 files unread in every run and catches 27.** The $10 run
 shows the budget is what cut those reviews short. The mechanism, read from the engine code, is the
 parallel batches: each running
@@ -45,8 +46,9 @@ batch reserves its $0.75 cap, so the ones that start last on a large PR find too
 | Turns per batch call | 13.7 | 8.2 | 8.5 | 10.1 | 14.1 |
 | Median wall time of a run | not measured | 97 s | 86 s | 87 s | 180 s |
 
-v1.20.1 does not read the focus file under its new name, and v1.21.0 at $3 does; the other
-inputs match. Cost on the subscription token (W7–W15) is an API-price estimate; W4–W6 and
+The base commits keep kaipu-record's review focus file at its old name, `.github/agent-review.md`.
+v1.20.1 does not read that name, so it ran without the focus file. The v1.21.0 runs added a commit
+that copies it to `.github/wachiman.md`, so they read it. The other inputs match. Cost on the subscription token (W7–W15) is an API-price estimate; W4–W6 and
 W16–W18 ran on a billed API key, because v1.4.0 cannot use the token.
 
 ### Per pull request
