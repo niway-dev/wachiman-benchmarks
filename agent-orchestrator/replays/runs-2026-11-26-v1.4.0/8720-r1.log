@@ -1,0 +1,58 @@
+evidence: 63 symbol(s) found, 27 call site(s), 15453 bytes, 1819 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":12,"cost_usd":0.37983829999999996,"duration_ms":80326}
+--- review at 06f399b ---
+👮 **Wachiman** · review of the whole pull request, at `06f399b`: all 7 files reviewed.
+
+3 finding(s): 1 to fix, 2 to consider; 3 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+I found one fix-level bug and two lower-severity items in the cached-first default-branch resolution and the manager's background fetch. The main bug: for a repo whose remote has just received its first push, the first start can be seeded from the local initial commit. Reading the code, the fetch skip and background-fetch logic otherwise holds up, and the new tests match what the code does.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Automatic default branch resolution answers from the cached remote HEAD and runs the live ls-remote in the background (`backend/internal/adapters/workspace/gitworktree/workspace.go:2051`) — Faster session start. A renamed remote default is picked up one start later. An AO-initialized repo whose remote just received its first push is not picked up inside the window (see finding). If it fails: Background lookup failure is logged through w.logf and the attempt stays recorded for 10 minutes. The cached default is kept, so nothing is lost. With no cache, Resolve failure propagates as before. Evidence: `backend/internal/adapters/workspace/gitworktree/workspace.go:2051-2070`, `backend/internal/adapters/workspace/gitworktree/workspace.go:2074-2086`, `backend/internal/gitdefault/resolver.go:94-111`, `backend/internal/gitdefault/resolver.go:201-225`.
+- Manager skips its own fetch when ResolveDefaultBranch already fetched, and fetches in the background inside a 10-minute fresh window (`backend/internal/session_manager/manager.go:2261`) — Spawns inside the window start without waiting. The base may be up to 10 minutes stale when the session worktree is cut. If it fails: A background fetch failure is logged only; freshAt is not updated, so a later start past the window waits again. Shutdown cancels the work through m.backgroundContext, and WaitBackgroundWorkers track… Evidence: `backend/internal/session_manager/manager.go:2257-2283`, `backend/internal/session_manager/manager.go:2289-2299`, `backend/internal/session_manager/manager.go:2328-2341`, `backend/internal/session_manager/chat_spawn_async.go:640-651`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 7 | 517 | 4 | reviewed | 12 | $0.38 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.38</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=06f399b87ed0bd9bfb0d68708c3dc8b882516316 -->
+--- backend/internal/adapters/workspace/gitworktree/workspace.go:2054 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Cached-first path keeps an AO-initialized local branch after the remote receives its first push (confidence medium)**
+
+With `background` true, or inside the 10-minute window, the code answers from `resolver.Inspect` and skips the live lookup. `Inspect` (`backend/internal/gitdefault/resolver.go:105`) returns the AO-initialized local branch through `initializedBeforeFirstPush` whenever `refs/remotes/<remote>/` is empty. A clone that was empty, got AO's initial commit, and whose remote then received its first push has no `refs/remotes/origin/*` until something fetches. Before this change, `ResolveDefaultBranch` called `Resolve`, which asked the remote live and would have found `main`.
+
+Now the first start after that push is seeded from the local initial commit. The same happens for any `resolveAutomaticDefault(..., false)` call inside the window, because `refreshRemoteHeadInBackground` already recorded the attempt. Nothing logs or shows this: the session branches from the wrong base.
+
+Suggested fix: treat an `Inspect` result with `Source == gitdefault.SourceAOInitialized` while the repository has remotes as 'no usable cache'. Then it falls through to the waiting `Resolve`. The no-remote case can keep taking the fast path.
+
+<!-- wachi:finding -->
+--- backend/internal/adapters/workspace/gitworktree/workspace.go:2063 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: Comment and port doc overstate the lookup limit (confidence high)**
+
+The comment 'Record the attempt even when the remote was unreachable, so an offline machine does not start another lookup for every start in the window' holds only when a cached HEAD exists. When `Inspect` fails inside the window, control falls through to `resolver.Resolve` again (line 2062). A repo with no cached HEAD that is offline therefore still pays a live lookup, up to the 5s budget, on every refresh and every worktree creation.
+
+The new text in `backend/internal/ports/outbound.go:439-442` says an automatic default asks the remote 'at most once per recheck window'. That is also false for this case. Narrow both statements to 'when a cached HEAD exists'.
+
+<!-- wachi:finding -->
+--- backend/internal/session_manager/manager.go:2274 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Fresh-window path changes freshness for explicitly configured branches too (confidence medium)**
+
+`defaultBranchFresh` applies to every target, including configured branches and workspace child repos with an explicit `DefaultBranch`, not only automatic defaults. A start up to 10 minutes after the last successful fetch now seeds its session from a base that can be 10 minutes stale. The fetch happens in the background and lands after `createSessionWorkspace` has resolved its seed. Before, every start after the 30s window waited for the fetch. This tradeoff may be intended, but the PR title and the comment on `defaultBranchFreshWindow` describe it only as skipping a wait. If it is intended, say so in the constant's doc, and consider whether 10 minutes is the right bound for repos where sessions are meant to start from current main.
+
+<!-- wachi:finding -->

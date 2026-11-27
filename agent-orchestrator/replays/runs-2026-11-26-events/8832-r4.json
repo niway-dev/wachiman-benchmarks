@@ -1,0 +1,152 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8832-r4` of ao-replay-8832-r4 against a235f63ffdf2042b26d45188460d263fdb9efaf8 (merge-base a235f63)",
+    "repository": {
+      "name": "ao-replay-8832-r4"
+    },
+    "base": {
+      "sha": "a235f63ffdf2042b26d45188460d263fdb9efaf8",
+      "ref": "a235f63ffdf2042b26d45188460d263fdb9efaf8"
+    },
+    "head": {
+      "sha": "910836ce94b3a339bc7dcdc294cede0c75ef10c6",
+      "ref": "ao-replay/8832-r4"
+    },
+    "title": "ao-replay/8832-r4",
+    "description": "fix(chat): search every file, map nested repos, and retry cancelled opens\nfix(chat): satisfy lint and update workspace read test expectations",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/service/session/workspace_file_paths.go",
+      "backend/internal/service/session/workspace_file_paths_test.go",
+      "backend/internal/service/session/workspace_review.go",
+      "frontend/src/renderer/components/SessionInspector.test.tsx",
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/hooks/useFilesReviewSelection.test.tsx"
+    ],
+    "reviewed": [
+      "backend/internal/service/session/workspace_file_paths.go",
+      "backend/internal/service/session/workspace_file_paths_test.go",
+      "backend/internal/service/session/workspace_review.go",
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/components/SessionInspector.test.tsx",
+      "frontend/src/renderer/hooks/useFilesReviewSelection.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/components/SessionView.tsx",
+      "line": 2448,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Unbounded retry loop on cancelled workspace-file fetch",
+      "body": "The old code retried a CancelledError once. `for (;;)` now retries without limit and has no unmount or abort guard. Two callers await it: `resolvePaneFile` (2286) and `revealResolvedWorkspaceFile` (2560). `queryClient.cancelQueries` runs on the workspace query keys elsewhere (`SessionInspector.tsx:786`, `:921`), and the loop restarts a fetch after every cancel. A caller can therefore keep starting daemon manifest requests after the view has unmounted. It stops only when a fetch finishes without being cancelled. A bounded retry (a few attempts) or a stop condition tied to the component's lifetime would keep the \"retry cancelled opens\" fix and remove that exposure. No test covers the retry.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/service/session/workspace_review.go",
+      "line": 668,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "File search no longer has any bound on the path inventory",
+      "body": "`math.MaxInt` removes the 20000-path cap for search. That is the stated goal (\"search every file\"), and `truncated` is now always false for non-scratch sessions. But `workspaceSourcePaths` still builds `changed`, `unchanged`, `seen` and `paths` for the whole inventory. It also resolves changes for every source on every keystroke-driven search request, because `includeDeleted` is true. On a very large monorepo that is unbounded memory and latency per request. The scratch branch (`scratchWorkspaceFiles`) is still capped and can still report `Truncated`, so the two branches now behave differently. Confirm that an uncapped scan is acceptable, and consider adding a test that searches a workspace with more than 20000 paths.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Workspace file search lists every path (no cap) for non-scratch sessions",
+      "location": "backend/internal/service/session/workspace_review.go:668",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/service/session/workspace_file_paths.go:119-173",
+        "backend/internal/service/session/workspace_review.go:650-700"
+      ],
+      "equivalent_path": "ListWorkspaceFilePaths calls workspaceSourcePaths with maxWorkspaceFilePaths and includeDeleted=false (backend/internal/service/session/workspace_file_paths.go:48)",
+      "before_after": "Before: search used the same 20000 cap, so files past the cap could not be found. After: limit is MaxInt, `total > limit` is never true and `truncated` is never true. Changes are still resolved because includeDeleted is true. The result slice is unbounded, and matches are paginated by cursor and capped at 100 per page.",
+      "visible_effect": "Search finds files beyond the first 20000 paths. The truncated flag no longer shows for source-backed sessions.",
+      "failure_mode": "Very large repos mean more memory and latency per search request. Errors from resolveWorkspaceChanges propagate as before.",
+      "evidence_checked": true
+    },
+    {
+      "action": "workspacePathSourceFor skips a nested-repo source when the path is exactly its prefix plus a slash",
+      "location": "backend/internal/service/session/workspace_file_paths.go:178",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/service/session/workspace_file_paths.go:175-193",
+        "backend/internal/service/session/workspace_file_paths_test.go:169-177"
+      ],
+      "equivalent_path": "Same function previously only checked HasPrefix(path, prefix+\"/\")",
+      "before_after": "Before: \"a/b/\" matched source a/b with an empty relative path, so the change-status lookup was done on \"\". After: it falls back to the parent source, giving rel \"b/\". The new test covers both this and \"a/b/x.go\".",
+      "visible_effect": "A directory-style entry for a nested repo maps to its parent repo instead of an empty path. Normal files are unchanged.",
+      "failure_mode": "No new failure path. A path with no matching source still returns ok=false, which the caller turns into an error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "fetchWorkspaceFiles retries a cancelled fetch indefinitely",
+      "location": "frontend/src/renderer/components/SessionView.tsx:2448",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/SessionView.tsx:2446-2455",
+        "frontend/src/renderer/components/SessionView.tsx:2286",
+        "frontend/src/renderer/components/SessionView.tsx:2560",
+        "frontend/src/renderer/components/SessionInspector.tsx:786"
+      ],
+      "equivalent_path": "The previous code retried once after a CancelledError",
+      "before_after": "Before: one retry, then the error was thrown. After: it loops until a fetch finishes without being cancelled or fails with a non-cancel error.",
+      "visible_effect": "Opening a file by relative path, or a pane file command, survives repeated cancellation of the workspace query.",
+      "failure_mode": "No cap and no unmount guard, so the loop can keep starting requests while cancels continue. A non-cancel error still rejects to the caller.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is small and mostly correct. The nested-repo prefix fix is covered by a new test, and the test expectation updates are consistent with the code. Two non-blocking concerns. The frontend retry loop in `SessionView.tsx` has no limit and no unmount guard. Search in `workspace_review.go` no longer has any cap on the path inventory.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 36,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.2104501
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a235f63ffdf2042b26d45188460d263fdb9efaf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2104501,
+    "usage": {
+      "input": 12,
+      "output": 6682,
+      "cacheRead": 152861,
+      "cacheWrite": 32080
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 48729,
+    "stop": "complete",
+    "notices": []
+  }
+}

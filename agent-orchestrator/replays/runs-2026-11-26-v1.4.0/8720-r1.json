@@ -1,0 +1,30 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.38,
+ "findings": [
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Cached-first path keeps an AO-initialized local branch after the remote receives its first push",
+   "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+   "line": "2054",
+   "body": "With `background` true, or inside the 10-minute window, the code answers from `resolver.Inspect` and skips the live lookup. `Inspect` (`backend/internal/gitdefault/resolver.go:105`) returns the AO-initialized local branch through `initializedBeforeFirstPush` whenever `refs/remotes/<remote>/` is empty. A clone that was empty, got AO's initial commit, and whose remote then received its first push has no `refs/remotes/origin/*` until something fetches. Before this change, `ResolveDefaultBranch` called `Resolve`, which asked the remote live and would have found `main`.\n\nNow the first start after that push is seeded from the local initial commit. The same happens for any `resolveAutomaticDefault(..., false)` call inside the window, because `refreshRemoteHeadInBackground` already recorded the attempt. Nothing logs or shows this: the session branches from the wrong base.\n\nSuggested fix: treat an `Inspect` result with `Source == gitdefault.SourceAOInitialized` while the repository has remotes as 'no usable cache'. Then it falls through to the waiting `Resolve`. The no-remote case can keep taking the fast path."
+  },
+  {
+   "severity": "consider",
+   "kind": "docs",
+   "title": "Comment and port doc overstate the lookup limit",
+   "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+   "line": "2063",
+   "body": "The comment 'Record the attempt even when the remote was unreachable, so an offline machine does not start another lookup for every start in the window' holds only when a cached HEAD exists. When `Inspect` fails inside the window, control falls through to `resolver.Resolve` again (line 2062). A repo with no cached HEAD that is offline therefore still pays a live lookup, up to the 5s budget, on every refresh and every worktree creation.\n\nThe new text in `backend/internal/ports/outbound.go:439-442` says an automatic default asks the remote 'at most once per recheck window'. That is also false for this case. Narrow both statements to 'when a cached HEAD exists'."
+  },
+  {
+   "severity": "consider",
+   "kind": "bug",
+   "title": "Fresh-window path changes freshness for explicitly configured branches too",
+   "path": "backend/internal/session_manager/manager.go",
+   "line": "2274",
+   "body": "`defaultBranchFresh` applies to every target, including configured branches and workspace child repos with an explicit `DefaultBranch`, not only automatic defaults. A start up to 10 minutes after the last successful fetch now seeds its session from a base that can be 10 minutes stale. The fetch happens in the background and lands after `createSessionWorkspace` has resolved its seed. Before, every start after the 30s window waited for the fetch. This tradeoff may be intended, but the PR title and the comment on `defaultBranchFreshWindow` describe it only as skipping a wait. If it is intended, say so in the constant's doc, and consider whether 10 minutes is the right bound for repos where sessions are meant to start from current main."
+  }
+ ]
+}

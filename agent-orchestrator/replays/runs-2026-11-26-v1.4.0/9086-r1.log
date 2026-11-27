@@ -1,0 +1,63 @@
+evidence: 39 symbol(s) found, 27 call site(s), 14292 bytes, 2386 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":13,"cost_usd":0.365884,"duration_ms":79970}
+--- review at a4542d6 ---
+👮 **Wachiman** · review of the whole pull request, at `a4542d6`: all 5 files reviewed.
+
+3 finding(s): 1 to fix, 2 to consider; 3 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The design is sound: parked devices are tracked per session and retired by the reaper. The new tests are coherent and the device.md update matches the code. Two things are wrong at this head commit.
+
+- **Fix:** `retireParked` uses `List`, which still succeeds when one platform's listing fails. A parked simulator that is missing from that listing is forgotten without being shut down, so it keeps running silently. `releaseIfGone` already avoids this by using `ListPlatform`.
+- **Missing code and tests:** the PR body describes follow-ups that are not in this head: per-platform listing, the parked record saved with the lease removal, the record kept until the power-off succeeds, and a stale-listing guard in `Open`. It names four tests for them, and none of those exist in the repository. The body should match the code, or the follow-up commits should be pushed.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- finishRelease now parks an owned, still-running device under the releasing session instead of only releasing driver claims (`backend/internal/devices/service.go:228`) — A closed or ended session's AO-booted simulator stays up until its session ends and no one took it, then is powered off by the reaper. device.md describes this at lines 75-78. If it fails: The parked entry is written only after the hub call and any shutdown return, so a daemon stop before that loses the park (reported as a consider finding). A failed Shutdown with shutdown=true parks t… Evidence: `backend/internal/devices/service.go:228-257`, `backend/internal/devices/service.go:1122-1132`.
+- The reaper calls retireParked each tick, which lists devices and shuts down parked ones whose session ended (`backend/internal/devices/service.go:295`) — The simulator shuts down within about one reaper interval after its session ends, and the state is logged. If the platform listing failed, the record is dropped and the simulator stays up unseen. If it fails: A partial listing failure makes the device look absent, so ownership is dropped with no shutdown and no retry (finding). A failed Shutdown restores the record and retries on the next pass. Evidence: `backend/internal/devices/service.go:282-300`, `backend/internal/devices/service.go:331-366`, `backend/internal/devices/service.go:894-909`, `backend/internal/adapters/device/local/provider.go:596-644`.
+- Open calls forgetStoppedLocked to drop ownership of idle devices listed as off (`backend/internal/devices/service.go:676`) — A simulator the user reboots after AO stopped it is no longer treated as AO's and is left on when a session that borrowed it ends. If it fails: A stale list could drop ownership of a device that has since been booted and parked (low-confidence consider finding). Evidence: `backend/internal/devices/service.go:669-677`, `backend/internal/devices/service.go:787-805`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 5 | 577 | 4 | reviewed | 13 | $0.37 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.37</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=a4542d6c630184148510fd43d2a3a83eb7d32b87 -->
+--- backend/internal/devices/service.go:341 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: retireParked forgets a running simulator, without shutting it down, when its platform failed to list (confidence high)**
+
+`retireParked` calls `Provider.List` (service.go:331). The local provider's `List` still succeeds when one platform's listing fails: it returns the other platform's devices and only records the failure in `listReport`'s `failed` map (provider.go:596-599, 640-644). A parked iOS simulator is then missing from `devices`, so `running` stays false (service.go:341-347). The code then deletes `s.parked[key]` and `s.owned[key]`, saves, and skips the shutdown (service.go:353-366). The simulator keeps running and AO no longer tracks it, which is the leak this PR is meant to fix. It happens silently, and no later pass retries it. A transient `simctl` error while the Android listing succeeds is enough to trigger it.
+
+`releaseIfGone` already handles this case. It uses `DevicePlatformLister.ListPlatform` so that only a clean listing of the device's own platform counts as proof the device is gone (service.go:894-909, ports/device.go:111-114). `retireParked` should do the same: group the ended devices by platform, call `ListPlatform` where the provider supports it, and keep the record (retry next pass) when that call errors. The PR body says this is done ("decided per platform (`ListPlatform`)", `TestRetiringKeepsADeviceWhosePlatformFailedToList`), but neither the code nor that test is in the head commit. No test in this diff covers a partial listing failure.
+
+<!-- wachi:finding -->
+--- backend/internal/devices/service.go:353 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Parked record is persisted too late and dropped too early, so a daemon stop can lose the power-off (confidence medium)**
+
+There are two windows where the persisted record is wrong:
+
+1. `endLeaseLocked` saves `leases.json` with the lease removed and `owned` still set, but no `parked` entry (service.go:207-211). `finishRelease` writes the parked entry only after `releaseControl` (a hub call) and the optional `Shutdown` return (service.go:235-255). If the daemon stops inside that window, the restart loads an owned device with no lease and no parked record. Nothing will ever retire it.
+2. `retireParked` deletes the parked and owned entries and saves them before calling `Shutdown` (service.go:353-367). It re-adds them only if `Shutdown` returns an error. A daemon stop during that call (up to `retireTimeout`, 2 min) loses the record.
+
+The PR body says the follow-ups address both: "the parked record is saved with the lease removal, kept until the power-off succeeds", with tests `TestTheLeaseRemovalSavesTheParkedDevice` and `TestRetiringKeepsTheRecordUntilTheShutdownSucceeds`. Neither the code nor the tests are in this head, and a repo-wide search for those test names finds nothing. Either push the follow-up commits or correct the description. As written, `TestParkedDevicesSurviveADaemonRestart` only covers the case where `finishRelease` completed before the restart.
+
+<!-- wachi:finding -->
+--- backend/internal/devices/service.go:676 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: forgetStoppedLocked acts on a device list taken before the lock (confidence low)**
+
+`devices` comes from `Provider.List` at line 669, outside `s.mu`. `forgetStoppedLocked` then drops `owned` and `parked` for any device listed as off that is `idleLocked` at line 676. If a boot, lease and release of that device all complete between the list and the lock, the device is running and parked but the stale list says off. Its ownership is dropped and it is never powered off. The window is narrow. The PR body lists this guard (`TestAListingFromBeforeABootDropsNothing`) as done, but it is not in the head. Is it going to be added?
+
+<!-- wachi:finding -->

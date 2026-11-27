@@ -1,0 +1,132 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8832-r2` of ao-replay-8832-r2 against 45afff0cf58e1a3288d21f30e659204b65b90338 (merge-base 45afff0)",
+    "repository": {
+      "name": "ao-replay-8832-r2"
+    },
+    "base": {
+      "sha": "45afff0cf58e1a3288d21f30e659204b65b90338",
+      "ref": "45afff0cf58e1a3288d21f30e659204b65b90338"
+    },
+    "head": {
+      "sha": "bcf05194acd0b462a62de99536e592eba6ae3f43",
+      "ref": "ao-replay/8832-r2"
+    },
+    "title": "ao-replay/8832-r2",
+    "description": "fix(chat): say the \"@\" files are loading, and don't refetch after leaving",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/ChatWorkspace.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/ChatWorkspace.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/components/SessionView.tsx",
+      "line": 2583,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "handleOpenFiles change does not obviously deliver \"don't refetch after leaving\"",
+      "body": "The PR title says it stops refetching after leaving, but this swap does not change when the fetch happens. `prefetchQuery` honours the same staleness as the old `fetchQuery` in `fetchWorkspaceFiles` (`frontend/src/renderer/hooks/useSessionWorkspaceFiles.ts:815-821` sets no `staleTime`, so the query-client default applies). What actually changes is that errors are now swallowed. The old `void fetchWorkspaceFiles()` left a rejected promise unhandled. The one-shot retry after `isCancelledError` (`SessionView.tsx:2448-2450`) is also dropped, so a cancelled prefetch just ends. That is probably fine, because the Files explorer's own `useQuery` (`SessionFileExplorer.tsx:116`) fetches again. Please confirm this is the intended effect, and say in the PR body what the refetch fix is, since the files-open path is not the one `useWorkspaceFilePaths` uses. `fetchWorkspaceFiles` is still used elsewhere (`SessionView.tsx:2286`, `:2557`), so no dead code is left.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "New \"Loading files…\" note in the composer's `@` menu while the workspace paths load",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:875",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:874-876",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2268-2275",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2502",
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:435-437",
+        "frontend/src/renderer/hooks/useConversation.ts:2240-2270"
+      ],
+      "equivalent_path": "The existing `skillsNote` / \"Loading skills…\" note for `/` (ChatComposer.tsx:874, 2268-2275, 2502).",
+      "before_after": "Before: `@` with an empty `filePaths` list showed nothing while the list loaded. After: `filesNote` keeps the menu drawn while `filePathsLoading` is true, `menuShown` includes it, and Escape dismisses it by setting `dismissedKey`, exactly as for skills. Keyboard handling still follows `menuOpen` (`suggestions.length`), so Enter sends the message as it does for the skills note.",
+      "visible_effect": "`SessionChatSurface` passes `useWorkspaceFilePaths(...).isLoading` through `ChatWorkspace` to the composer. `isLoading` is react-query's `isFetching && isPending`, so it is true only on the first fetch and not on background refetches that already have data. The first `@` sets `fileMenuAsked`, which enables the query, so there is one render with `isLoading` false before the note appears.",
+      "failure_mode": "If the fetch fails (`retry: false`, error thrown from `queryFn`), `isLoading` becomes false and the note disappears with no error shown. This matches the skills path and the previous behaviour for files. After a remount, `fileMenuAsked` resets and the query is disabled again, so `isLoading` is false until the next `@`. With cached data inside the 30s `staleTime` there is no note and no refetch.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Files-inspector open now prefetches the workspace manifest with `queryClient.prefetchQuery` instead of `void fetchWorkspaceFiles()`",
+      "location": "frontend/src/renderer/components/SessionView.tsx:2583",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/SessionView.tsx:2446-2452",
+        "frontend/src/renderer/components/SessionView.tsx:2577-2584",
+        "frontend/src/renderer/hooks/useSessionWorkspaceFiles.ts:815-821",
+        "frontend/src/renderer/components/SessionFileExplorer.tsx:116",
+        "frontend/src/renderer/lib/query-client.ts:9"
+      ],
+      "equivalent_path": "`fetchWorkspaceFiles` (SessionView.tsx:2446-2452), which used `fetchQuery` and retried once after a cancellation. A sibling `void queryClient.prefetchQuery(...)` call exists in ReviewerSelect.tsx:127.",
+      "before_after": "Before: `fetchQuery` with the same options, fired without a catch. After: `prefetchQuery` with the same options. Cache and staleness behaviour is identical, errors are swallowed, and there is no cancel retry. The callback dependencies are updated to `hostId`, `queryClient`, `sessionId` and `t`.",
+      "visible_effect": "There is no direct UI effect. The result lands in the cache entry that `SessionFileExplorer` reads with `useQuery` (SessionFileExplorer.tsx:116).",
+      "failure_mode": "A rejected or cancelled prefetch is silent. The explorer's own `useQuery` shows the error and retries on its own.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The \"Loading files…\" note mirrors the existing skills note, and its prop wiring and Escape handling are consistent. The test covers the note appearing and Escape closing it. The `useConversation.ts` change only moves a doc comment onto the hook it describes. One consider-level question: the `SessionView` swap to `prefetchQuery` keeps the same staleness behaviour and only swallows errors and drops the cancel retry, so it may not deliver the \\\"don't refetch after leaving\\\" claim in the PR title.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 45,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 14,
+      "costUsd": 0.2003508
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "45afff0cf58e1a3288d21f30e659204b65b90338"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2003508,
+    "usage": {
+      "input": 10,
+      "output": 6307,
+      "cacheRead": 117288,
+      "cacheWrite": 31383
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 14,
+    "durationMs": 49136,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,41 @@
+evidence: 7 symbol(s) found, 20 call site(s), 15397 bytes, 1308 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":10,"cost_usd":0.18623670000000003,"duration_ms":35218}
+--- review at 910836c ---
+👮 **Wachiman** · review of the whole pull request, at `910836c`: all 6 files reviewed.
+
+1 finding(s): 1 to consider; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The backend changes look correct. `math.MaxInt` for search removes the cap as intended, and the prefix guard has a matching test. The test edits (signal assertions) match the new abort-signal behavior. One consider-level finding: `fetchWorkspaceFiles` in `SessionView.tsx` now retries cancelled reads in an unbounded `for (;;)` loop with no unmount guard.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Search and listing call workspaceSourcePaths with different limits (math.MaxInt for search) (`backend/internal/service/session/workspace_review.go:668`) — Search matches every file in the workspace, not just the first 20,000. If it fails: A resolveWorkspaceChanges error is returned and fails the search. This matches the earlier path, which also resolved changes when includeDeleted was true. Evidence: `backend/internal/service/session/workspace_file_paths.go:119-173`, `backend/internal/service/session/workspace_review.go:668`.
+- workspacePathSourceFor skips a source when the path equals prefix+"/" (empty relative path) (`backend/internal/service/session/workspace_file_paths.go:178`) — A directory-like entry is no longer attributed to the nested repo with an empty path, so no empty-path lookup is made in `workspaceSourceFileSummary`. If it fails: If no other source matches, `ok` is false and `workspaceSourceFileSummary` returns the 'no worktree owns' error. Evidence: `backend/internal/service/session/workspace_file_paths.go:175-193`, `backend/internal/service/session/workspace_file_paths_test.go:169-177`.
+- fetchWorkspaceFiles loops on CancelledError (`frontend/src/renderer/components/SessionView.tsx:2446`) — File-path resolution for pane commands and transcript links waits for the read instead of failing on a cancellation. If it fails: Repeated cancellation keeps the loop retrying after the view has gone. A caller never settles if every attempt is cancelled. Evidence: `frontend/src/renderer/components/SessionView.tsx:2446-2455`, `frontend/src/renderer/components/SessionView.tsx:2286`, `frontend/src/renderer/components/SessionView.tsx:2560`, `frontend/src/renderer/hooks/useSessionWorkspaceFiles.ts:815-822`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 6 | 36 | 4 | reviewed | 10 | $0.19 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.19</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=910836ce94b3a339bc7dcdc294cede0c75ef10c6 -->
+--- frontend/src/renderer/components/SessionView.tsx:2448 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: fetchWorkspaceFiles retries cancelled reads forever, with no bound and no exit on unmount (confidence medium)**
+
+The old code retried a `CancelledError` once. The new `for (;;)` loop retries every cancellation. The loop has no attempt limit, and it does not check whether the view is still mounted or the session has changed. This PR makes cancellation routine, because the manifest query now takes the abort signal, and `useQuery` observers such as `SessionFileExplorer` and `SessionBranchSummary` share that query key. A cancelled read can therefore come back repeatedly. An awaiting caller (`resolvePaneFile` at line 2286, `revealResolvedWorkspaceFile` at line 2560) keeps issuing `fetchQuery` calls after the user has left the chat. If cancellation arrives immediately each time, for example from a repeated `cancelQueries` or a mocked rejection, the loop spins on microtasks and never yields. Consider a small fixed retry count (for example 2–3), then rethrow. Alternatively, check `isCancelledError` against a `cancelled` flag set on unmount or session change.
+
+<!-- wachi:finding -->

@@ -1,0 +1,213 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9055-r5` of ao-replay-9055-r5 against 859c3b7d0beb32234f88f4939b9948cdc21eedd4 (merge-base 859c3b7)",
+    "repository": {
+      "name": "ao-replay-9055-r5"
+    },
+    "base": {
+      "sha": "859c3b7d0beb32234f88f4939b9948cdc21eedd4",
+      "ref": "859c3b7d0beb32234f88f4939b9948cdc21eedd4"
+    },
+    "head": {
+      "sha": "f767aefea07165e996fa14ce3dde80b559d53457",
+      "ref": "ao-replay/9055-r5"
+    },
+    "title": "ao-replay/9055-r5",
+    "description": "refactor(chat): keep attaching during a restore to the case that needs it",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.ts",
+      "line": 2437,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Staging POST no longer receives the abort signal",
+      "body": "The diff removes `signal,` from the `POST /api/v1/sessions/{sessionId}/attachments` call. The `signal` that `ChatComposer.prepareAttachments` passes (ChatComposer.tsx:753) is aborted when the user removes a pending file (useFileAttachments.ts:652, `whenAllAborted` at 568). It now reaches only `toWireAttachments`, which uses it for large-file uploads (attachment-uploads.ts:42). A small inline file's staging request is no longer cancelled by removal. The request still runs, and a slow or stalled one keeps the hook busy. The daemon still writes the removed file into the session worktree. The wait on `restore.continue()` at line 2428 ignores the signal as well, so removing a pending file during a restore does not stop it either. The useFileAttachments tests at lines 441-485 rely on the signal reaching the preparer. Pass `signal` to the POST and race the restore wait against it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "line": 577,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Removing the guard shows a false \"Nothing was attached\" error after the user cancels every pending file",
+      "body": "The deleted line `if (acceptedFresh.every((attachment) => cancelled(attachment.id))) return [];` sat in the batch-path catch (non-`prepareEach`, which is what ChatComposer uses without cloud attachments). When the user removes every pending file, `whenAllAborted` aborts the preparer (lines 568-569). If staging rejects because of that abort (a large-file upload does, via attachment-uploads.ts:35-42), the catch now falls through to `errors.add(\"Files couldn’t be saved. Nothing was attached.\")` and `setError`. The user cancelled on purpose and still sees a failure banner. The per-file path at lines 555 and 560 still checks `signal.aborted`, and the batch path no longer does. Restore the guard.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 1767,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Enter on a file-only draft is silently ignored during a send",
+      "body": "The hold condition during an in-flight submit is now `textRef.current.trim() || fileAttachments.hasPendingReads()`. A file that has already finished staging, with no text, does not count. Enter then reaches `return submitInFlight.current` and nothing is held or sent. The chip stays and the user has to press Enter again after the first send lands. Before this change `nextDraftHasFiles` counted settled staged files too. The new test at ChatComposer.optimistic.test.tsx:152 presses Enter while staging is still pending, so it only covers the pending-read case. Add a test for Enter after the file has settled, and either hold that draft or accept the behaviour on purpose.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 2693,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Files taken for the next message cannot be removed while the first one sends",
+      "body": "Remove is now disabled by `controlsDisabled || queuedEditRecovery || draftMutationPending || fileAttachments.preparing`. `draftMutationPending` is true for the whole optimistic send (line 955-956), which is when `takesNextFiles` lets the user add files. Files can be added during a restore but not removed until it finishes. The old `attachBlocked` exempted `takesNextFiles`, and a removed test covered removal. A wrong file added while a slow restore runs gets sent with the next message unless the user waits.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 2276,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "A held message now picks up files added after its Enter",
+      "body": "`HeldSubmit.files` and the `nextFilesKey()` check were removed. The held send is now guarded only by `textRef.current !== heldSubmit.text`. A file attached after the user pressed Enter but before the first send lands is added to the held message. The removed test \"does not send a held message whose files changed after its Enter\" covered this. Is that intended?",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.ts",
+      "line": 2428,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Is Mutation.continue() safe for waiting on a running restore?",
+      "body": "`restore.continue()` resumes a paused mutation. If a mutation is `pending` but its retryer does not exist yet (between the pending dispatch and `onMutate` finishing), TanStack's `continue()` falls back to `execute(variables)`. That would start a second restore. The previous `restoreInFlight` map only awaited the existing promise. Have you checked that this window cannot be hit in the installed @tanstack/react-query version? If not, a plain wait on the mutation's settle would be safer.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "line": 1715,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Dropped tests leave the new restore-wait and the remount cases uncovered",
+      "body": "The deleted tests covered a restore started outside the chat, and the chat being hidden or remounted while a send lands (the `Activity` tests). The new `useStageAttachments` path waits on the `resume-agent` mutation key, and the remaining tests only cover the case where the chat's own `send` starts the restore. There is no test for a restore started by `ResumeAgentControl` or `SessionView` (same mutation key), for `archived=false` not waiting, or for a restore started through `useRestoreSession` directly, which is no longer awaited at all.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Stage attachments wait for a pending restore through the mutation cache instead of the restoreInFlight map",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2426",
+      "status": "open",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:2426-2429",
+        "frontend/src/renderer/hooks/useConversation.ts:1241-1253",
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:446",
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:953"
+      ],
+      "equivalent_path": "Removed `restoreInFlight` in useRestoreSession.ts, which awaited the in-flight restore promise and asserted success",
+      "before_after": "Before: any restore through useRestoreSession was awaited, and a failure became SESSION_RESTORE_FAILED. After: only pending `resume-agent` mutations are awaited, and only when `archived` is true, so a restore called directly through useRestoreSession is not awaited. A rejected mutation makes `continue()` reject with the mutation's error, which already carries SESSION_RESTORE_FAILED (useConversation.ts:1252).",
+      "visible_effect": "A file pasted during a restore stays in the Attaching state until the restore finishes. If the restore fails, the file attach fails and the composer shows the send error message.",
+      "failure_mode": "The abort signal is not honoured while waiting. Whether `continue()` can re-run a restore on a mutation that has no retryer yet was not confirmed.",
+      "open_question": "Does Mutation.continue() in the installed @tanstack/query-core re-execute a pending mutation whose retryer is not created yet?",
+      "candidates": [
+        "frontend/node_modules/@tanstack/query-core/build/modern/mutation.js"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "The composer takes files for the next message during a restore only when the sent message had no files",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:700",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:697-701",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:933",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1175-1183",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1767",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2693"
+      ],
+      "equivalent_path": "Previously `dropSent` and `unsentAttachments` filtered the sent files out of the live list. Now `sentFiles` turns file intake off and the strip hides the list.",
+      "before_after": "After the accepted send, `clearAcceptedDraft` and `applyAcceptedDraftResult` clear or reconcile `fileAttachments` against the persisted draft (lines 1175-1183). That is safe because next files are only taken when the sent message had none.",
+      "visible_effect": "Files added during a restore appear as chips and are sent with the next Enter. When the sent message had files, Attach is disabled and its chips are hidden.",
+      "failure_mode": "Enter on a file-only draft that has already settled is ignored during the send (finding at line 1767). Remove is disabled for next files (finding at line 2693).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Staging POST now sent without the abort signal",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2433",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:2433-2437",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:753",
+        "frontend/src/renderer/hooks/useFileAttachments.ts:568-583",
+        "frontend/src/renderer/lib/attachment-uploads.ts:35-42"
+      ],
+      "equivalent_path": "useFileAttachments aborts per-file controllers on cancelPending, remove and clear, and passes the signal to prepareAttachments",
+      "before_after": "Before: the POST was aborted with the signal. After: only toWireAttachments sees it, so the POST runs to completion after the file is removed.",
+      "visible_effect": "A removed file can still be written into the worktree. In the batch path a spurious save-failed error can show, because the cancel guard was also deleted (useFileAttachments.ts:577).",
+      "failure_mode": "A stalled staging request is not cancellable.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The PR removes the sent-file bookkeeping and has the stager wait on a pending `resume-agent` mutation instead of the `restoreInFlight` map. Two regressions tie the removed code to the abort path. The staging POST no longer gets the abort signal, and the cancelled-batch guard in `useFileAttachments` is gone, so removing every pending file can show a false \"Nothing was attached\" error. There are also behaviour gaps: Enter on an already-settled file-only draft during a send is ignored, next-message files cannot be removed during a restore, and a held message can pick up files added after its Enter. Whether `Mutation.continue()` is safe on a running mutation is an open question. I deleted tests and did not replace the coverage for the restore wait and the hidden/remounted-chat cases.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 409,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 33,
+      "costUsd": 0.5877064000000001
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "859c3b7d0beb32234f88f4939b9948cdc21eedd4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5877064000000001,
+    "usage": {
+      "input": 30,
+      "output": 17785,
+      "cacheRead": 854844,
+      "cacheWrite": 81078
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 33,
+    "durationMs": 166882,
+    "stop": "complete",
+    "notices": []
+  }
+}

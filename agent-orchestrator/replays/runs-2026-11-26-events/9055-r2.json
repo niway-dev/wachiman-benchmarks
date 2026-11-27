@@ -1,0 +1,176 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9055-r2` of ao-replay-9055-r2 against fb22a438eafe7cc3e1dba99681e052223caacee3 (merge-base fb22a43)",
+    "repository": {
+      "name": "ao-replay-9055-r2"
+    },
+    "base": {
+      "sha": "fb22a438eafe7cc3e1dba99681e052223caacee3",
+      "ref": "fb22a438eafe7cc3e1dba99681e052223caacee3"
+    },
+    "head": {
+      "sha": "dc51ca766761ed7205137cadbc2ee01c640ef7da",
+      "ref": "ao-replay/9055-r2"
+    },
+    "title": "ao-replay/9055-r2",
+    "description": "fix(chat): keep files taken during a send apart from the sent ones",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 724,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "high",
+      "title": "unsentAttachments re-reads and parses the stored draft on every call, including during render",
+      "body": "The default `delivery = draftScope && readChatSessionDraft(draftScope).composer.delivery` runs `loadChatSessionDraft` (storage read plus JSON parse, see `chat-drafts.ts:929-933`) on every call without an explicit delivery. The call at line 936 runs in render, and when `durableDelivery` is `undefined` the default fires and reads storage. The hook calls it once per file inside the `processFiles` read loop (`useFileAttachments.ts:477`) and once more at line 515. Passing an explicit `undefined` also means \"use whatever is stored\", not \"no delivery\", and that is easy to misread. Consider reading the delivery once per `processFiles` call or per render, or taking the delivery as a required argument.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "line": 953,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Comment explaining the stageAttachments gate was deleted with no related change",
+      "body": "The deleted comment said an archived session's worktree is gone until its first message's restore runs, so files are taken once that restore is under way. That still describes the gate on this line (`sessionIsActive(session) || commands.resumingAgent`), and this PR makes the restore ordering in `useStageAttachments` depend on it. AGENTS.md asks for surgical changes without drive-by cleanup. Restore the comment.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "line": 1744,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No test for staging when a restore started outside the chat fails",
+      "body": "The new test only covers an external restore that succeeds. The new `restoreInFlight` and `assertRestored` branch in `useStageAttachments` (`useConversation.ts:2428-2429`) also turns a failed external restore into a `SESSION_RESTORE_FAILED` rejection. The existing failure test at 1768 goes through the send path, so that branch is not exercised. In the composer tests, the `dropSent` call in the park effect (`ChatComposer.tsx:1415`) is not exercised with an unanswered send that parks, only with a refused one.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "line": 2518,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "medium",
+      "title": "Error code string duplicated instead of shared",
+      "body": "`\"SESSION_RESTORE_FAILED\"` is now spelled out in ChatComposer. `useConversation.ts:971` defines it as a private const, and `lib/composer-send-failure.ts:12` repeats the literal. Exporting one constant would stop the three copies from drifting.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Staging a file first waits for any restore of the same session, including one started outside the chat",
+      "location": "frontend/src/renderer/hooks/useRestoreSession.ts:141",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useRestoreSession.ts:50-54",
+        "frontend/src/renderer/hooks/useRestoreSession.ts:141-148",
+        "frontend/src/renderer/hooks/useFileAttachments.ts:548-565"
+      ],
+      "equivalent_path": "Before this change only the send path's own `restoresInFlight` map (in useConversation) was awaited, after the upload had been prepared. A restore started from another caller, such as a restore button, was not tracked.",
+      "before_after": "Before, `toWireAttachments` ran first and then `restoresInFlight.get(key)` was awaited. Now `useStageAttachments` awaits `restoreInFlight(sessionId, hostId)` and runs `assertRestored` before any upload work. Every `useRestoreSession` call registers in the shared map and removes itself in `.finally` only if it is still the registered promise.",
+      "visible_effect": "A file taken while an archived session restores is staged only after the worktree is back. A failed restore surfaces as a SESSION_RESTORE_FAILED attachment error.",
+      "failure_mode": "If the restore never settles, staging waits and does not observe the abort signal until it settles. Cancelling removes the chip, but the stalled call stays pending. A restore that fails is reported through the thrown error.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Files taken during a send are separated from the sent ones (unsentAttachments, dropSent)",
+      "location": "frontend/src/renderer/hooks/useFileAttachments.ts:677",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useFileAttachments.ts:677-686",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1251-1253",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1415",
+        "frontend/src/renderer/lib/chat-drafts.ts:1647-1670"
+      ],
+      "equivalent_path": "`clear()` and `reconcilePersistedAttachments` reset the whole attachment list; `clearAcceptedChatComposer` already filters the durable draft by accepted ids.",
+      "before_after": "Before, the file limit and the persisted list counted every attachment, sent ones included. Now the limit, the persisted descriptors and the strip use `unsentAttachments`. On acceptance (`acceptAndClearDurableDelivery`) and on parking, `dropSent` removes the sent ids from the live ref, state and shared registry entry. It does not call `onAttachmentsChange`, because the durable draft is cleared separately.",
+      "visible_effect": "The next message keeps its own files and its own 8-file limit during a send, and the sent files do not reappear in a re-shown chat.",
+      "failure_mode": "Storage read failures in the default delivery lookup are treated as no delivery. The sent files then count toward the limit until `dropSent` runs.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Enter during a send now holds a draft that has only files, and a refused send keeps the box when only files were taken",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:1775",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1766-1782",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2210-2222",
+        "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx:237-256"
+      ],
+      "equivalent_path": "The same hold-for-next path for typed text (`heldDuringSubmit`).",
+      "before_after": "The hold condition was `textRef.current.trim()` only. It is now text or `nextDraftHasFiles()`. The failure restore at 2217 also skips restoring the sent text when next files exist.",
+      "visible_effect": "A file-only next message sends right after the first lands. A refused first message stays in the strip instead of overwriting the next draft.",
+      "failure_mode": "The held entry has empty text, and the test relies on the send path accepting an attachment-only message. Unanswered sends that do not park keep the delivery recoverable via the uncertain notice.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is consistent with the call sites I read (`clearAcceptedChatComposer`, the shared attachment registry, the park effect). I found no blocker or bug. The remaining notes are minor: `unsentAttachments` reads and parses the stored draft on every call, including in render and once per file in the read loop. A comment explaining the `stageAttachments` gate was deleted without need. There is no test for a failed external restore or for `dropSent` on the park path. The `SESSION_RESTORE_FAILED` string is duplicated.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 300,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 18,
+      "costUsd": 0.4160274
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fb22a438eafe7cc3e1dba99681e052223caacee3"
+  },
+  "execution": {
+    "costUsdEstimate": 0.4160274,
+    "usage": {
+      "input": 18,
+      "output": 12292,
+      "cacheRead": 441834,
+      "cacheWrite": 62222
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 18,
+    "durationMs": 103501,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9086-r1` of ao-replay-9086-r1 against 707eeff96e6640f0c8a3f4f40e495b1a6c894ec4 (merge-base 707eeff)",
+    "repository": {
+      "name": "ao-replay-9086-r1"
+    },
+    "base": {
+      "sha": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4",
+      "ref": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4"
+    },
+    "head": {
+      "sha": "a4542d6c630184148510fd43d2a3a83eb7d32b87",
+      "ref": "ao-replay/9086-r1"
+    },
+    "title": "ao-replay/9086-r1",
+    "description": "fix(devices): power off a simulator AO started once its session ends",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/devices/leasestore.go",
+      "backend/internal/devices/leasestore_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/skillassets/using-ao/commands/device.md"
+    ],
+    "reviewed": [
+      "backend/internal/devices/leasestore.go",
+      "backend/internal/devices/leasestore_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/skillassets/using-ao/commands/device.md"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/devices/service.go",
+      "line": 342,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "retireParked forgets a running device when the platform's listing failed, so it is never powered off",
+      "body": "`retireParked` takes one `Provider.List` and treats a parked device missing from it as not running (`running` stays false at line 341). It then deletes it from `parked` and `owned` (lines 353-354), saves, and skips the shutdown (line 364). `List` can succeed with a platform's devices missing. The local provider says so at `backend/internal/adapters/device/local/provider.go:601-603`: \"List still succeeds then, with whatever else listed\". `ports.DevicePlatformLister` (`backend/internal/ports/device.go:109-112`) exists for this case. `releaseIfGone` (`service.go:897-903`) already uses `ListPlatform` for that reason: a device absent from a plain `List` proves nothing.\n\nIf `simctl` errors during a pass while emulators still list, every parked iOS simulator that ended with its session is dropped from AO's records. It stays running, which is the bug #9084 fixes. Nothing is logged: the \"not running\" branch skips the shutdown without a log line. It will not be retried, because the claim is gone.\n\nFix: for each ended parked device, look it up with `ListPlatform(ctx, p.device.Platform)` when the provider implements `DevicePlatformLister`, as `releaseIfGone` does. On error, keep the device parked and retry next pass. Forget it only on a clean list that lacks it or shows it off. Add a test with a provider whose `ListPlatform` fails, like `platformListFails` at `service_test.go:1288`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/skillassets/using-ao/commands/device.md",
+      "line": 75,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "medium",
+      "title": "\"Stays on for another session to take\" omits that it is powered off when the closing session ends",
+      "body": "After `ao device close` without `--shutdown`, a device AO started is powered off when the closing session ends, unless another session took it (`service.go:223-227`, `retireParked`). The sentence at line 75 says only that it \"stays on for another session to take\", and lines 76-78 cover the other session-end case. An agent reading it could expect the device to outlive the session that closed it. Suggest: \"Without `--shutdown` the device stays on until this session ends, for another session to take.\"",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "finishRelease now parks an owned, still-running device under the releasing session (instead of leaving it as an unmarked owned device)",
+      "location": "backend/internal/devices/service.go:228",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:228-257",
+        "backend/internal/devices/service.go:918-922",
+        "backend/internal/devices/service.go:1129-1130"
+      ],
+      "equivalent_path": "The previous finishRelease only released driver control and optionally shut down. The callers pruneEnded (555), releaseIfGone (922), LiveLease (1057), HubTarget (1283), Open's replace path (768) and Close (1129) all go through it.",
+      "before_after": "Before: release control, shut down if asked, return. After: the same, then under s.mu a successful shutdown deletes owned and parked, an owned device is parked with the session id, and any other device is untouched. The `releasing` flag is cleared by the earlier defer after the park is recorded, so retireParked cannot see the device as idle in between. The deferred Unlock runs before the deferred releasing-delete (LIFO), so there is no deadlock.",
+      "visible_effect": "A simulator or emulator AO started is powered off by the reaper after its session ends. One that was already running is left on.",
+      "failure_mode": "A failed shutdown with shutdown=true falls into the owned case and parks the device. Close still returns DEVICE_SHUTDOWN_FAILED, and the device is retried when the session ends. releaseIfGone parks a deleted device, which retireParked later forgets.",
+      "evidence_checked": true
+    },
+    {
+      "action": "The reaper calls retireParked after pruneEnded each tick, listing devices and shutting down ended sessions' parked simulators",
+      "location": "backend/internal/devices/service.go:295",
+      "status": "open",
+      "evidence": [
+        "backend/internal/devices/service.go:282-300",
+        "backend/internal/devices/service.go:302-385",
+        "backend/internal/devices/service.go:162-164"
+      ],
+      "equivalent_path": "pruneEnded in the same loop (30s tick, per-pass timeout `every`) and Open/Status, which also call pruneEnded. Open's failed-open rollback also shuts down a device under a 2-minute timeout.",
+      "before_after": "Before: only leases were pruned. After: a second pass runs under `retireTimeout` (2 min) covering the Sessions lookups, one List, and sequential Shutdowns. The pass is bounded by that single context only if the provider honours ctx. After the ctx expires, remaining Shutdowns fail fast and the devices are re-parked and saved.",
+      "visible_effect": "The simulator goes off within roughly one reap interval after the session ends. A device being shut down is marked `releasing`, so an Open for it gets DEVICE_IN_USE (\"busy ... Try again in a moment\") for up to the shutdown time.",
+      "failure_mode": "A hung Shutdown holds the reap loop for up to 2 minutes, so reaper-driven prunes are delayed. Status and Open still prune on their own. A failed List is logged at Debug and retried next tick. The ticker drops ticks while blocked. The bound relies on the real provider's Shutdown honouring ctx, which I did not read. Separate defect: a partial List makes a parked device be forgotten without a shutdown (see finding).",
+      "open_question": "Does the local provider's Shutdown honour ctx, so retireTimeout really bounds the pass?",
+      "candidates": [
+        "backend/internal/adapters/device/local/provider.go"
+      ],
+      "evidence_checked": true
+    },
+    {
+      "action": "Parked records are persisted in leases.json and reloaded in loadLeases; Open calls forgetStoppedLocked before picking",
+      "location": "backend/internal/devices/leasestore.go:89",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/leasestore.go:61-97",
+        "backend/internal/devices/service.go:787-805",
+        "backend/internal/devices/service.go:700-710",
+        "backend/internal/devices/leasestore_test.go:79-99"
+      ],
+      "equivalent_path": "The existing Owned persistence in saveLocked/loadLeases.",
+      "before_after": "The record is reloaded only when its device is still in owned, so an unreadable file or a stale parked entry cannot create a claim. A restart between close and session end still powers the device off (leasestore_test.go:79-99). forgetStoppedLocked drops owned and parked for idle devices listed as off, so a simulator the user later boots is not powered off by AO.",
+      "visible_effect": "Devices survive a daemon restart as AO's to power off. After an upgrade, devices recorded only in `owned` (no lease, no parked entry) have no session to wait on and are not powered off until reused.",
+      "failure_mode": "Open's failed-open rollback deletes owned and parked (line 707-708) without saveLocked, so the file keeps a stale entry. It is harmless: retireParked forgets a device that is not running. The restart test leaves the first service's reaper goroutine running (it is never Shutdown).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The parking and retirement logic is largely sound: lock ordering, the idle checks and the re-check under lock before shutdown all hold, and the tests match the behaviour they name. One real defect: `retireParked` forgets a running parked device without powering it off when the provider's `List` succeeds but omits that platform's devices. That is the documented partial-list case that `releaseIfGone` already guards with `ListPlatform`, and it silently brings back #9084. There is also a minor wording gap in `device.md`. I left the 2-minute bound on a reaper pass open, because I did not read the provider's `Shutdown` to see whether it honours ctx.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 577,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.5310034
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "707eeff96e6640f0c8a3f4f40e495b1a6c894ec4"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5310034,
+    "usage": {
+      "input": 22,
+      "output": 16619,
+      "cacheRead": 612774,
+      "cacheWrite": 75873
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 149983,
+    "stop": "complete",
+    "notices": []
+  }
+}

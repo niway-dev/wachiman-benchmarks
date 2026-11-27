@@ -1,0 +1,138 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8720-r2` of ao-replay-8720-r2 against 06f399b87ed0bd9bfb0d68708c3dc8b882516316 (merge-base 06f399b)",
+    "repository": {
+      "name": "ao-replay-8720-r2"
+    },
+    "base": {
+      "sha": "06f399b87ed0bd9bfb0d68708c3dc8b882516316",
+      "ref": "06f399b87ed0bd9bfb0d68708c3dc8b882516316"
+    },
+    "head": {
+      "sha": "34b9a0d0e89d7fbae444d6aae6e8cd6ece8feda9",
+      "ref": "ao-replay/8720-r2"
+    },
+    "title": "ao-replay/8720-r2",
+    "description": "fix(spawn): share one deadline across base resolution and fetch",
+    "author": "ronish"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/adapters/workspace/router/router.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager.go",
+      "backend/internal/session_manager/manager_test.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/adapters/workspace/router/router.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager.go",
+      "backend/internal/session_manager/manager_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/session_manager/manager_test.go",
+      "line": 6122,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "high",
+      "title": "Shared-budget test cannot tell a shared deadline from a per-repo one",
+      "body": "The test sets a 25ms budget, makes every lookup block until its `remoteCtx` expires, and asserts the run finishes in under 250ms. With four repositories, a deadline of 25ms *per repository* would take about 100ms, which also passes. The name, `...SharesOneBudgetAcrossResolution`, and the error message, 'one shared 25ms budget', claim more than the assertion checks.\n\nThe test also never exercises the pre-change code path. The fake's `ResolveDefaultBranch` ignores `resolveRemoteFunc` (manager_test.go:1303), so the old direct call would return immediately and pass too.\n\nTo make it discriminating, record in `resolveRemoteFunc` the `remoteCtx.Deadline()` of each call and assert they are all equal. Alternatively, use a larger budget such as 200ms and a tighter bound, for example under 2x the budget.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/session_manager/manager.go",
+      "line": 2235,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Resolution now draws from the same 5s budget as the fetches, which can starve later repos",
+      "body": "Before this change each repo's `ResolveDefaultBranch` got its own `defaultBranchResolutionBudget` (workspace.go:193), and the fetches got a separate `defaultBranchRefreshTimeout`. Now one 5s `fetchCtx` covers all resolution and all fetches (manager.go:2235-2240, 2287).\n\nA repo with no cached remote HEAD takes the live path. That path does `ls-remote` and then a branch fetch under `remoteCtx` (gitdefault/resolver.go:151-157). A slow first-time fetch of one child can use the whole budget. Later children with no cached HEAD then fail resolution with 'could not resolve remote HEAD' (resolver.go:175-193). Every `FetchDefaultBranch(fetchCtx, ...)` after that also fails with a deadline error, and each failure is logged as a warning.\n\nThe shared deadline is stated as intentional in the new comment, and worktree creation re-resolves with its own budget (workspace.go:2124-2128), so the effect is limited to a missing base ref and extra warnings for a workspace's first start. Please confirm that is the intended trade-off.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Default-branch resolution for every repo of a project start now runs under one shared deadline (`fetchCtx`) passed as `remoteCtx` to `ResolveDefaultBranchWithin`",
+      "location": "backend/internal/session_manager/manager.go:2235",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/session_manager/manager.go:2235-2242",
+        "backend/internal/session_manager/manager.go:2249-2264",
+        "backend/internal/session_manager/manager.go:2287-2290",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:192-207",
+        "backend/internal/gitdefault/resolver.go:139-194",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2124-2128"
+      ],
+      "equivalent_path": "Previous `refresher.ResolveDefaultBranch`, which gave each repo its own 5s `defaultBranchResolutionBudget` (workspace.go:193), followed by a fresh 5s fetch deadline. Other callers of `refreshDefaultBranchesBestEffort` are chat_spawn_async.go:187 and task_preparation.go:90, and both inherit the change.",
+      "before_after": "Before: N repos could spend up to N*5s resolving, then a further 5s fetching. After: resolution and fetches together are bounded by one `defaultBranchRefreshTimeout` (5s default, manager.go:930). ctx still bounds local Git reads, so a repo whose lookup hit the deadline still answers from cached or local refs (resolver.go:175-180).",
+      "visible_effect": "Spawn start latency from default-branch refresh is capped at about 5s, regardless of how many child repos the workspace has. A repo that loses the budget race has no base ref in the returned map and falls back to the adapter's own resolution at worktree creation.",
+      "failure_mode": "If the budget is spent, later resolutions without a cached HEAD return an error, which is logged and skipped. Later fetches fail with a deadline error, which is logged, and the session starts on local refs. Nothing is lost for the rest of the session.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Router forwards `ResolveDefaultBranchWithin` to the git adapter, with a fallback to the unbudgeted `ResolveDefaultBranch`",
+      "location": "backend/internal/adapters/workspace/router/router.go:63",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/workspace/router/router.go:57-68",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:192-200"
+      ],
+      "equivalent_path": "The existing router `ResolveDefaultBranch` delegation at router.go:57-58",
+      "before_after": "The router now always satisfies the budgeted interface, so the manager's type assertion succeeds. If the wrapped git adapter lacks the method, the router falls back to the adapter's own budget, so behaviour matches the pre-change path.",
+      "visible_effect": "None directly. It only changes how long default-branch resolution can block a spawn.",
+      "failure_mode": "No new failure path. Errors are returned unchanged.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The production change is sound. The shared deadline reaches the git adapter, the router falls back when the adapter lacks the method, and local Git reads stay on `ctx`, so resolution still answers from cached refs after the deadline passes. I found two things, both \"consider\". The new test would also pass with a per-repo budget (about 100ms against a 250ms bound), so it doesn't check what its name says. Resolution and fetch now share one 5s budget, so a slow first-time resolve can starve later children and fetches. I only read the code and did not run any tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 87,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.2181228
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "06f399b87ed0bd9bfb0d68708c3dc8b882516316"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2181228,
+    "usage": {
+      "input": 12,
+      "output": 5806,
+      "cacheRead": 167708,
+      "cacheWrite": 35817
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 49920,
+    "stop": "complete",
+    "notices": []
+  }
+}

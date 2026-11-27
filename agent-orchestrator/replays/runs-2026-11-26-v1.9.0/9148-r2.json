@@ -1,0 +1,126 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9148-r2` of ao-replay-9148-r2 against 647bd68994e83060e3c415c45a15f4d50c63572b (merge-base 647bd68)",
+    "repository": {
+      "name": "ao-replay-9148-r2"
+    },
+    "base": {
+      "sha": "647bd68994e83060e3c415c45a15f4d50c63572b",
+      "ref": "647bd68994e83060e3c415c45a15f4d50c63572b"
+    },
+    "head": {
+      "sha": "3b55164c155f14a32052dfa209381f2b5d7c4c63",
+      "ref": "ao-replay/9148-r2"
+    },
+    "title": "ao-replay/9148-r2",
+    "description": "fix(mobile): keep remembered / lists to their own agent and project",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/mobile/lib/chat/rememberedSkills.test.ts",
+      "packages/mobile/lib/chat/rememberedSkills.ts",
+      "packages/mobile/lib/chat/useConversation.ts",
+      "packages/mobile/lib/chat/useConversation.turnOptions.test.tsx"
+    ],
+    "reviewed": [
+      "packages/mobile/lib/chat/rememberedSkills.ts",
+      "packages/mobile/lib/chat/useConversation.ts",
+      "packages/mobile/lib/chat/rememberedSkills.test.ts",
+      "packages/mobile/lib/chat/useConversation.turnOptions.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/mobile/lib/chat/useConversation.ts",
+      "line": 237,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Clearing skills at an agent switch still lets the outgoing list be remembered under the new agent",
+      "body": "The switch effect (useConversation.ts:216-238) calls `setSkills([])`, but that only takes effect on the next render. In the commit where `snapshot.harness` changes, `ChatSessionScreen` has already rendered with the new `skillsHarness` (`ChatSessionScreen.tsx:379`) and the old `conversation.skills`. Its effect at `ChatSessionScreen.tsx:380-382` runs in that same commit, after the hook's effect, and calls `rememberChatSkills(host, newHarness, projectId, <old agent's skills>)`. That stores the outgoing agent's list under the new agent's key. The next render sees `skills = []`, and `rememberChatSkills` returns early on an empty list (`rememberedSkills.ts:25`), so the bad entry is never cleared. The New task page then offers the old agent's skills for the new agent until a chat of the new agent loads its own list. This is the bug the change says it fixes (the New task page showing the outgoing agent's list). The new test only checks `conversation.skills`, so it does not catch this. A fix would be to have the remembering effect ignore skills read for a different harness, for example by storing the harness alongside `skills` in hook state, or to call `forgetChatSkills` for the new key at the switch. I did not read how the screen orders these renders at runtime, so I'm not certain the interleaving is as described.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Remember a chat's \"/\" list under its own project key only, with no machine-wide fallback write",
+      "location": "packages/mobile/lib/chat/rememberedSkills.ts:26",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/chat/rememberedSkills.ts:24-35",
+        "packages/mobile/lib/spawnSkills.ts:20-24",
+        "packages/mobile/lib/disconnect.ts:25",
+        "packages/mobile/lib/chat/ChatSessionScreen.tsx:380-382"
+      ],
+      "equivalent_path": "The previous code wrote both the host+harness key and the project key; rememberedChatSkills (rememberedSkills.ts:33) and loadSpawnSkills (packages/mobile/lib/spawnSkills.ts:20) read it.",
+      "before_after": "Before, a project chat also overwrote the machine-wide list, so another project's skills leaked into New task. Now only no-project chats feed the host-wide fallback; the read path is unchanged.",
+      "visible_effect": "The New task page for project B no longer lists project A's own skills. A project with no remembered list and no no-project chat starts empty, then merges the disk-scanned skills.",
+      "failure_mode": "No async work. The map is in memory and cleared by forgetRememberedChatSkills on disconnect (disconnect.ts:25, 69).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Clear the skills state and skillsCache entry when the chat's agent changes; drop a skills load that finished after a switch",
+      "location": "packages/mobile/lib/chat/useConversation.ts:235",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/chat/useConversation.ts:216-238",
+        "packages/mobile/lib/chat/useConversation.ts:394-409",
+        "packages/mobile/lib/chat/useConversation.ts:636-641",
+        "packages/mobile/lib/chat/ChatSessionScreen.tsx:379-382"
+      ],
+      "equivalent_path": "The same effect already clears models/configOptions and turnOptionsCache, and loadTurnOptions (useConversation.ts:358-391) checks harnessRef after its await. reloadMcp (useConversation.ts:636-641) clears skillsCache and skills.",
+      "before_after": "Same as the turn-options path: state and cache reset at the switch, and the late result is dropped. The skills path does not use a request counter, only the harness comparison.",
+      "visible_effect": "The chat's own \"/\" menu no longer shows the old agent's skills after a switch. The remembered list for New task can still be set from the stale list for one commit (see finding).",
+      "failure_mode": "If getConversationSkills rejects, the catch returns the current `skills` silently, as before. A stale-harness load returns [] and deletes the cache entry.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The remembered-skills change (project lists no longer leak to other projects) looks correct and is covered by tests. One probable gap remains. At an agent switch, `ChatSessionScreen`'s remember-effect runs in the same commit as the clear, with the new harness name and the old skills, so it can store the outgoing agent's list under the new agent's key. Nothing clears it afterwards, and the new tests don't cover it.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 4,
+      "lines": 65,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 8,
+      "costUsd": 0.1758681
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "647bd68994e83060e3c415c45a15f4d50c63572b"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1758681,
+    "usage": {
+      "input": 10,
+      "output": 3764,
+      "cacheRead": 124481,
+      "cacheWrite": 31440
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 8,
+    "durationMs": 37228,
+    "stop": "complete",
+    "notices": []
+  }
+}

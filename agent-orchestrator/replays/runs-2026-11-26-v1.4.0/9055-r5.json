@@ -1,0 +1,47 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.66,
+ "findings": [
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Cancelled file is still uploaded: the abort signal no longer reaches the attachments POST or the restore wait",
+   "path": "frontend/src/renderer/hooks/useConversation.ts",
+   "line": "2433",
+   "body": "The diff removes `signal,` from the `/attachments` POST, and the new `await Promise.all(restores.map((restore) => restore.continue()))` at line 2428 ignores the signal as well. `signal` is still passed to `toWireAttachments`, but that only aborts the large-file upload (`attachment-uploads.ts:72-74`). Inline-data files such as pasted images don't use it. So a user who cancels a pending attachment while the restore runs (the 'Attaching x' item, `useFileAttachments.ts:545-555`) still gets the file POSTed into the restored worktree once the restore ends. Their cancelled file is written there and can't be aborted. The PR body says 'A file removed while it waits is never uploaded', and the code doesn't do that. No test in the diff covers it. I found no 'removed' or abort test in `useConversation.test.tsx`; the only signal assertions are at lines 1237 and 2006. Fix: check `signal?.aborted` after the wait and before the POST (throw an AbortError), and pass `signal` to the POST again. Add a test where a file is cancelled during the restore and the attachments POST is never made.",
+   "outside": true
+  },
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Enter on a box holding only an already-staged file is no longer held; it is silently dropped",
+   "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+   "line": "1767",
+   "body": "The hold condition is now `textRef.current.trim() || fileAttachments.hasPendingReads()`. The removed `nextDraftHasFiles()` also counted staged files (`nextFiles(delivery).length > 0`). So a next-message file that finishes staging during the restore, followed by Enter with no text, falls through to `return submitInFlight.current` at line 1774. Nothing is held and nothing is sent after the first message lands. The file sits in the box until the user presses Enter again. The new test 'sends a file entered on its own during a restore' only presses Enter while staging is still pending, so it doesn't catch this. The PR body says 'Enter on a box that holds only a file is held and sent next, as it is for text'. That is true only while the file is still being read. Hold on any attachment that is staged or pending, for example `fileAttachments.getAttachments().length > 0 || fileAttachments.hasPendingReads()`, and add a test for the staged case."
+  },
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "A held file-only Enter now sends whatever files are in the box when the first send ends",
+   "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+   "line": "2276",
+   "body": "The removed `heldSubmit.files !== nextFilesKey()` check was the only thing tying a held Enter to the files that were present at that Enter. For a file-only draft, `heldSubmit.text` is `\"\"`, so the text check at line 2276 always passes. Sequence: the user presses Enter with file A while a restore-send is in flight, then cancels or removes A and attaches B. When the first send lands, B is sent automatically without the user pressing Enter on it. The deleted test 'does not send a held message whose files changed after its Enter' covered exactly this, and the PR removes it along with the guard. Keep a files fingerprint in `HeldSubmit` for held drafts with no text, or drop the held submit when the attachment set changes after the Enter."
+  },
+  {
+   "severity": "consider",
+   "kind": "question",
+   "title": "Is `Mutation.continue()` a safe way to await a pending restore?",
+   "path": "frontend/src/renderer/hooks/useConversation.ts",
+   "line": "2428",
+   "body": "`continue()` exists to resume a paused or dehydrated mutation. As I remember the TanStack Query v5 source (I could not read the installed copy), it returns the retryer's promise when one exists. Otherwise it calls `execute(state.variables)` again. Awaiting a pending `resume-agent` mutation this way would then run the restore a second time if the retryer isn't set yet, and would force a mutation that is paused offline to run. Did you confirm that neither case can occur here? An alternative is to await the promise `useConversationCommands` already holds for the send, or to wait with `queryClient.isMutating` and a `MutationObserver`."
+  },
+  {
+   "severity": "consider",
+   "kind": "tests",
+   "title": "Tests for the sent/next-file ordering cases were dropped without replacement",
+   "path": "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+   "line": "119",
+   "body": "The deleted tests covered a hidden `Activity` chat when the send lands, a remount mid-send, and a refused message with a next file. They also covered the 8-file limit and removal during a send, and the held Enter whose files changed. Some of them guarded code this PR removes (`dropSent`, `unsentAttachments`). Others covered behaviour that is still reachable, such as the refused-send-with-next-file case that the PR body lists under risks. The replacement tests only exercise the happy path, a reject-with-reason path, and the no-files gate. At minimum, restore a test for a refused first message when a next file was taken, and one for Enter on a staged file-only draft (see the finding at ChatComposer.tsx:1767)."
+  }
+ ]
+}

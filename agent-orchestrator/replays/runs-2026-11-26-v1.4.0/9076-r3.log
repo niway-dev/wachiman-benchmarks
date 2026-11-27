@@ -1,0 +1,46 @@
+evidence: 21 symbol(s) found, 30 call site(s), 15686 bytes, 2322 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":13,"cost_usd":0.24187170000000002,"duration_ms":52161}
+--- review at 371e04d ---
+👮 **Wachiman** · review of the whole pull request, at `371e04d`: all 2 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The refactor to read boots before the helpers exist is sound. The new Boot ordering matches the new test, which would fail on the old code. There are two non-blocking points: `EnsureReady` now runs a `simctl` call inline with no deadline of its own, and `TestHubStartRecordsEverySimulatorsBoot` no longer tests the `EnsureReady` wiring.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Boot reads simctl boots before the stream helper is created and stores that value once Boot finishes (replaces recordBoots after Boot) (`backend/internal/adapters/device/local/provider.go:1010`) — A simulator rebooted outside AO right after AO's helper was made is now detected on the next lease look, and the hub is restarted so touch input works again. If it fails: If simctl fails, currentBoots returns nil, helperBoot is empty and nothing is recorded. The next look is then a first sighting, so one outside reboot can go unnoticed, which matches the old behaviour… Evidence: `backend/internal/adapters/device/local/provider.go:1010-1015`, `backend/internal/adapters/device/local/provider.go:1040-1044`, `backend/internal/adapters/device/local/provider.go:1097-1119`, `backend/internal/adapters/device/local/provider.go:695-735`.
+- EnsureReady reads boots synchronously before startHub and stores them under p.mu after p.hub is set (`backend/internal/adapters/device/local/provider.go:241`) — The first device operation is delayed by one simctl call. If NoteBooted recorded a newer boot while the hub was starting, the older pre-start read overwrites it. The result is at most one extra hub restart, which the comment accepts. If it fails: A hung simctl blocks EnsureReady for every caller until ctx ends. See the finding on provider.go:241. Evidence: `backend/internal/adapters/device/local/provider.go:192-194`, `backend/internal/adapters/device/local/provider.go:237-257`, `backend/internal/adapters/device/local/provider.go:126-128`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 2 | 106 | 4 | reviewed | 13 | $0.24 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.24</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=371e04dd49ec134916e80218e21ab431d7ac5060 -->
+--- backend/internal/adapters/device/local/provider.go:241 ---
+👮 **Wachiman** · 🟡⚡ **Consider · perf: simctl read now runs synchronously in EnsureReady with no deadline of its own (confidence medium)**
+
+The old code recorded boots in a goroutine bounded by `context.WithTimeout(p.life, 30*time.Second)`. `p.currentBoots(ctx)` now runs `xcrun simctl list devices` inline, while `EnsureReady` holds `p.startMu`, so every concurrent caller waits behind it. Its only bound is the caller's ctx (`p.run` at provider.go:126 adds no timeout). A wedged CoreSimulator can hang `simctl list`, and that would block hub startup. The failure path does degrade to nil, but only after ctx ends. Wrapping this one call in a short `context.WithTimeout` (about 15–30s, like the old goroutine) would keep the old bound. The read has to happen before `startHub`, so it cannot go back to a goroutine.
+
+<!-- wachi:finding -->
+--- backend/internal/adapters/device/local/toolchain_test.go:984 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: TestHubStartRecordsEverySimulatorsBoot no longer exercises the hub-start wiring (confidence medium)**
+
+The test used to call `recordBoots`. It now calls `currentBoots` and `storeBootsLocked` by hand, so it only tests that the two helpers compose. It would still pass if `EnsureReady` stopped calling them, or called them after `startHub`, which is the ordering this PR changes. `EnsureReady` has no test for 'boots are read before the hub starts and stored once it is installed'. The test name and its comment ('A hub's helpers belong to the boots its simulators were on when it started') claim more than it checks. Either drive `EnsureReady` with fake `lookPath`/`run` or rename the test to match what it does.
+
+<!-- wachi:finding -->

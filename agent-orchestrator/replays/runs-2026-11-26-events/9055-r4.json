@@ -1,0 +1,156 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9055-r4` of ao-replay-9055-r4 against dc51ca766761ed7205137cadbc2ee01c640ef7da (merge-base dc51ca7)",
+    "repository": {
+      "name": "ao-replay-9055-r4"
+    },
+    "base": {
+      "sha": "dc51ca766761ed7205137cadbc2ee01c640ef7da",
+      "ref": "dc51ca766761ed7205137cadbc2ee01c640ef7da"
+    },
+    "head": {
+      "sha": "859c3b7d0beb32234f88f4939b9948cdc21eedd4",
+      "ref": "ao-replay/9055-r4"
+    },
+    "title": "ao-replay/9055-r4",
+    "description": "fix(chat): take files during a send only while an archived chat restores",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/ChatWorkspace.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/ChatComposer.tsx",
+      "frontend/src/renderer/components/chat/ChatWorkspace.tsx",
+      "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "frontend/src/renderer/hooks/useRestoreSession.ts",
+      "frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx",
+      "frontend/src/renderer/hooks/useConversation.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/hooks/useFileAttachments.ts",
+      "line": 582,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "New 'every pending file was cancelled' branch has no test",
+      "body": "The early return at line 582 suppresses \"Files couldn’t be saved. Nothing was attached.\" when the user removed every pending file while staging was failing or aborted. Nothing in this PR's tests reaches it. The new composer tests only remove an already-staged file (`ChatComposer.optimistic.test.tsx:342-344`), and the existing \"Nothing was attached\" assertions (`ChatComposer.test.tsx:286`, `:2899`) are older. Add a case to `useFileAttachments.test.ts` where `prepareAttachments` rejects after `cancelPending` on all ids, and assert no error is set.\n\nThe early return also skips the `setError(nextError)` / `notifySharedAttachmentEntry` calls at lines 594-596. An error left over from an earlier batch is therefore not cleared on this path. Check that this is intended.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useRestoreSession.ts",
+      "line": 143,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "medium",
+      "title": "A second restore for the same key still POSTs to the daemon",
+      "body": "When a restore is already in flight, line 143 returns a fresh `restoreSession(...)` without registering it. The caller gets its own result, and for local sessions that is another `POST /restore` request. The updated test (`useConversation.test.tsx:1747-1759`) expects exactly this: the second POST is answered with `OPERATION_IN_PROGRESS` and the caller sees `{status:\"error\"}`.\n\nThe fix is sound: the old code let the second call overwrite the map entry, and its early finish deleted the entry while the first restore was still running. But the second caller gets an error result for what is really \"already restoring\". If any caller surfaces `result.message` to the user, they would see a spurious failure. Would it be better to return the in-flight promise (join, as the cloud path does) instead of issuing a second request? If the second POST is deliberate, please say why.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Composer accepts files pasted, dropped or picked during an optimistic send only while an archived chat restores (`takesNextFiles = optimisticSend && restoring`)",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:701",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:700-701",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:968",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2462",
+        "frontend/src/renderer/components/chat/ChatWorkspace.tsx:1080",
+        "frontend/src/renderer/components/chat/ChatWorkspace.tsx:2545"
+      ],
+      "equivalent_path": "Previously `optimisticSend` alone allowed it; the gates are `attachBlocked`, `acceptsFiles`, `onDragOver`, strip remove click, and the picker and Add menu `disabled`.",
+      "before_after": "All six sites were switched from `!optimisticSend` to `!takesNextFiles` (lines 968, 2462, 2607, 2698, 2851, 2874). `restoring` is passed from `ChatWorkspace.tsx:2545`, where it is `Boolean(resumingAgent) && restoringArchived.current === session?.id` (line 1080). Other callers of ChatComposer don't pass it, so it defaults to false and they now block files during an optimistic send.",
+      "visible_effect": "Attach button, paste and drop are disabled during an ordinary send. During a restore send they stay enabled, and a second file can be added while the first is still preparing, since `preparing` no longer blocks when `takesNextFiles` is true.",
+      "failure_mode": "The send settles or the restore ends mid-staging. The pending file then goes through the existing path that keeps it for the next draft (test at optimistic.test.tsx:109-134).",
+      "evidence_checked": true
+    },
+    {
+      "action": "A message held during a send records a key of the next draft's files and is dropped if the key differs when the send settles",
+      "location": "frontend/src/renderer/components/chat/ChatComposer.tsx:1786",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:727-731",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:937-941",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:1786",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:2287-2298"
+      ],
+      "equivalent_path": "The existing text check (`textRef.current !== heldSubmit.text`) at line 2291 does the same for text.",
+      "before_after": "`nextFilesKey()` uses `unsentAttachments(...)` with its default `delivery`, which is the persisted delivery. Files of the message being sent are therefore excluded both when the message is held and when the effect compares. `pendingAttachments` comes from the render closure, and the effect re-runs with a fresh closure when `heldSubmitReady` changes.",
+      "visible_effect": "A held message whose files changed after its Enter stays in the box and waits for a new Enter. It is not sent silently.",
+      "failure_mode": "No silent loss: the draft remains in the box.",
+      "evidence_checked": true
+    },
+    {
+      "action": "`useRestoreSession` registers only the first in-flight restore per key",
+      "location": "frontend/src/renderer/hooks/useRestoreSession.ts:143",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useRestoreSession.ts:50-54",
+        "frontend/src/renderer/hooks/useRestoreSession.ts:141-147",
+        "frontend/src/renderer/hooks/useConversation.test.tsx:1744-1770"
+      ],
+      "equivalent_path": "`restoreInFlight(sessionId, hostId)` (line 52) is read by the staging path to wait for a restore started outside the chat.",
+      "before_after": "Before, each call overwrote the map entry, so an early-finishing second call deleted the entry while the first restore was still running. Now the second call does not register itself and the first call's `finally` deletes the key.",
+      "visible_effect": "Staging waits for the real restore. The updated test (`useConversation.test.tsx:1744-1770`) checks that staging happens only after the first restore resolves.",
+      "failure_mode": "The second call's result is its own error from the daemon (`OPERATION_IN_PROGRESS`); see the finding on line 143.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change gates \\\"take files during a send\\\" on a new `restoring` prop. It also keeps held sends from firing when the next draft's files changed, and keeps the first in-flight restore registered. I found no blocking defect after reading the call sites, `unsentAttachments`' default `delivery`, and the effect closure. Two minor points remain. The new `useFileAttachments.ts:582` branch has no test and skips the error reset. A second restore call still issues its own POST and returns an error result.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 145,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 17,
+      "costUsd": 0.35406170000000003
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "dc51ca766761ed7205137cadbc2ee01c640ef7da"
+  },
+  "execution": {
+    "costUsdEstimate": 0.35406170000000003,
+    "usage": {
+      "input": 22,
+      "output": 9833,
+      "cacheRead": 426557,
+      "cacheWrite": 53258
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 17,
+    "durationMs": 89641,
+    "stop": "complete",
+    "notices": []
+  }
+}

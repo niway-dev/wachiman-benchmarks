@@ -1,0 +1,79 @@
+evidence: 28 symbol(s) found, 25 call site(s), 16058 bytes, 4052 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":23,"cost_usd":0.5084539000000001,"duration_ms":129177}
+evidence: 5 symbol(s) found, 12 call site(s), 9339 bytes, 1403 ms, complete
+{"is_error":false,"terminal_reason":"success","turns":4,"cost_usd":0.09120320000000001,"duration_ms":13332}
+--- review at 6faac3c ---
+👮 **Wachiman** · review of the whole pull request, at `6faac3c`: all 17 files reviewed.
+
+4 finding(s): 2 to fix, 2 to consider; 4 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+**Batch 1 of 2.** I found two defects in the resume-route logic and one stale comment. The rest of this part (state machine, update policy, mascot choreography and its tests, wiring and test mocks) reads correctly. I only read the code and ran nothing.
+
+- **Wrong page saved (`updateResume.ts:30`):** `/conversation-actions` is a form sheet backed by an in-memory registry, but it isn't in `TRANSIENT`. If the user taps Restart while the ⋯ sheet is open, that sheet's URL is saved. After the reload the sheet finds no registry entry and dismisses itself, so the user lands on the board instead of in their chat.
+- **Restore can fire late (`UpdateRouteKeeper.tsx:43`):** the restore waits for `config !== null`, which stays null while a paired machine is unreachable or on a 426. The store has a `configResolved` flag for "first resolution finished". With `config` stuck null, the saved page is pushed whenever the machine comes back, possibly minutes later. The 2-minute age check only runs at launch.
+- **Comment (`updateMascotPose.ts:15`):** it calls 8400 the shortest common loop, but 4200 is.
+
+The sheet-route finding is high confidence. The late-restore finding is medium, because I did not read `resolveActiveConfig`.
+
+**Batch 2 of 2.** The test file is mostly sound and matches `updateScreenState.ts`. The restarting hold, the failure path and the late offer and dismiss guards are tested correctly, and `afterEach` resets the module state between tests. One test is vacuous: \"never reloads on its own\" asserts on a mock that nothing can call, so it cannot fail. I raised it as a `consider` finding.
+
+<details><summary>What the change connects to (4 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- User taps "Restart to update" (or the Settings row's restart action) (`packages/mobile/lib/UpdateScreen.tsx:92`) — The Modal switches from the buttons to the 'Restarting…' progress line, the app reloads, and UpdateRouteKeeper reopens the saved page. See the findings on which pages get saved and when the reopen fires. If it fails: If `reloadAsync` rejects, `reloadIntoUpdate` removes the saved key and rethrows, `applyUpdate` hides the screen, and the caller only console.warns. The user sees the screen vanish with no message. Th… Evidence: `packages/mobile/lib/UpdateScreen.tsx:92-97`, `packages/mobile/lib/updateScreenState.ts:61-70`, `packages/mobile/lib/updateResumeStore.ts:22-35`, `packages/mobile/app/settings/index.tsx:463-464`, `packages/mobile/lib/UpdatesManager.tsx:35-40`.
+- Reopen the saved page on launch after an OTA restart (`packages/mobile/lib/UpdateRouteKeeper.tsx:31`) — The saved page is pushed over the board, or replaces a stale deep-linked page. If it fails: If config never resolves to non-null, the saved page stays pending for the whole session and fires whenever config later becomes non-null. A saved sheet route with a dead registry key dismisses itsel… Evidence: `packages/mobile/lib/UpdateRouteKeeper.tsx:36-48`, `packages/mobile/lib/OnboardingGate.tsx:25-37`, `packages/mobile/lib/store.tsx:119`, `packages/mobile/lib/store.tsx:946-949`, `packages/mobile/lib/store.tsx:147-149`, `packages/mobile/app/conversation-actions.tsx:16-22`, `packages/mobile/lib/chat/useSheetEntryPresent.ts:15-21`.
+- Raise the update screen when a download finishes, and again after a long absence (`packages/mobile/lib/UpdatesManager.tsx:20`) — A full-screen Modal appears at an arbitrary moment, including over a sheet. This is why the sheet-route finding matters. If it fails: 'Not now' sets state to hidden. The same update is not re-offered until a 15-minute background resume or the Settings row. Evidence: `packages/mobile/lib/UpdatesManager.tsx:20-25`, `packages/mobile/lib/UpdatesManager.tsx:35-40`, `packages/mobile/lib/updates.ts:91-93`, `packages/mobile/lib/updateScreenState.ts:41-50`.
+- applyUpdate: show the restarting screen, hold, then reload; on failure hide the screen and rethrow (`packages/mobile/lib/updateScreenState.ts:61`) — Full-screen mascot Modal appears for 900ms, then the app reloads. A failed reload dismisses the modal and the app stays usable. If it fails: A reload that rejects is logged and the screen comes down, so nothing is lost for the session. A reload that never settles would leave the restarting screen up with no way out, since dismiss is block… Evidence: `packages/mobile/lib/updateScreenState.ts:61-70`, `packages/mobile/lib/updateScreenState.test.ts:60-66`, `packages/mobile/lib/updateScreenState.test.ts:49-58`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 2 | 16 | 945 | 4 | reviewed | 23 | $0.51 |
+| Batch 2 of 2 | 1 | 67 | 2 | reviewed | 4 | $0.09 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · 2 batches · $0.60</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=6faac3c37b020d21738c6af6ae018724866d3a8d -->
+--- packages/mobile/lib/updateResume.ts:30 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Sheet route /conversation-actions is not classified transient, so Restart from the ⋯ sheet loses the chat (confidence high)**
+
+`TRANSIENT` only covers `/sheets/*`, `/onboarding` and `/pair`. `/conversation-actions` is also a `formSheet` (app/_layout.tsx:233-245) and is opened through the in-memory chat sheet registry, not by URL: `app/conversation-actions.tsx:16-22` reads `readChatSheet(sheetKey)` and, if the entry is gone, `useSheetEntryPresent` calls `router.back()` (lib/chat/useSheetEntryPresent.ts:15-21).
+
+The update screen is raised automatically when a download finishes (UpdatesManager.tsx effect), so it can appear while the ⋯ sheet is open. If the user taps Restart then, `classifyRoute` returns `{kind:"page", href:"/conversation-actions?sheetKey=…"}` and that is what gets saved. After the reload, `UpdateRouteKeeper` pushes that href over the board. The registry is empty after the reload, so the sheet dismisses itself and the user is on the board, not in the chat they were in. That is the case the resume feature exists for.
+
+Add `/conversation-actions` to `TRANSIENT`, so the page underneath (the session) stays the saved page, and add a case to `updateResume.test.ts`. `/connect` is the same kind of route: it takes a `resultKey` into the in-memory `sheetResult` registry (app/connect.tsx:19, lib/sheetResult.ts:73-75). I did not check what it does with a dead key, so decide separately whether it belongs in the list too.
+
+<!-- wachi:finding -->
+--- packages/mobile/lib/UpdateRouteKeeper.tsx:43 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Restore waits on `config !== null`, not on the store having resolved, and can fire long after launch (confidence medium)**
+
+The comment says "wait for the store's first load", but `config === null` is not that signal. `store.tsx:119` documents `config` as null "in the background and while endpoints are raced". It is also set to null on a 426 (store.tsx:946-949) and when a stored machine's endpoints all fail to answer (store.tsx:587-590). The store has a real `configResolved` flag (store.tsx:147-149) for "first resolution has finished".
+
+With a paired machine that is offline or incompatible after the reload, `config` stays null, `restored.current` stays false and `saved` stays in state. When the machine later becomes reachable, possibly minutes later, the effect runs and `router.push`es the saved page over whatever the user is doing. The 2-minute `RESUME_MAX_AGE_MS` check happens only in `decodeResumeRoute` at launch, so it does not stop this.
+
+Gate on `configResolved` (the page itself shows its own offline state, as it would for any deep link), or drop the saved page if the wait outlasts the max age.
+
+<!-- wachi:finding -->
+--- packages/mobile/lib/updateMascotPose.ts:15 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: LOOP_MS comment says "shortest loop" but 4200 is shorter (confidence high)**
+
+`HOP_MS` is 1400 and `BLINK_MS` is 4200 (= 3 × 1400), so the shortest loop holding whole periods of both is 4200, not 8400. 8400 still wraps seamlessly, which is all the test (`LOOP_MS % …`) checks. Either set `LOOP_MS = BLINK_MS` or change the comment to "a common multiple". The doc comment on `BLINK_MS` (line 13) also says the eyes blink once per period, but `eyesAt` blinks twice (bumps at 0.02 and 0.62), as the test at updateMascotPose.test.ts:47 asserts.
+
+<!-- wachi:finding -->
+--- packages/mobile/lib/updateScreenState.test.ts:32 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: "never reloads on its own" test cannot fail (confidence high)**
+
+`reloadAsync` is a local `vi.fn` that is never handed to `showUpdateReady`, `dismissUpdateScreen` or anything else. Those two functions take no reload API (`updateScreenState.ts:41,47`), so `expect(reloadAsync).not.toHaveBeenCalled()` passes whatever the code does. The test checks nothing about the guarantee in its name. Only `applyUpdate` reaches `reloadAsync` (`updateScreenState.ts:61-70`), so the property that matters is that offering or dismissing never calls `applyUpdate`. If you want coverage, assert against a real reload hook, for example by spying on the reload that `UpdatesManager` passes in. Otherwise delete the test; the "starts hidden, offers an update…" test already covers the offer and dismiss transitions.
+
+<!-- wachi:finding -->

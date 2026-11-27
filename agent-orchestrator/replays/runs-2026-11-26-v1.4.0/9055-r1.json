@@ -1,0 +1,30 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.39,
+ "findings": [
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "A file removed while it waits for the restore is still uploaded; large files upload before the wait",
+   "path": "frontend/src/renderer/hooks/useConversation.ts",
+   "line": "2438",
+   "body": "The PR body says \"A file removed while it waits is never uploaded\" and \"nothing is uploaded before the worktree is back\". The code does neither. `useStageAttachments` runs `toWireAttachments(attachments, hostId, signal)` first (line 2437), which uploads any file too large to inline (`attachment-uploads.ts:72-74`). It then awaits `restoresInFlight` (line 2438) and POSTs to `/attachments` (2439). The POST is not given `signal`, and `signal.aborted` is not checked after the await. `useFileAttachments` aborts the signal when the person removes the pending file (`useFileAttachments.ts:103-107`). That abort does nothing here after `toWireAttachments`. So a file the user removes during a 7\u201328 s restore is still written into the restored worktree, and its result is dropped by the caller. A large file also reaches the daemon before the restore finishes, and still does if the restore fails.\n\nFix: await `restoresInFlight` first. Then `signal?.throwIfAborted()`, then `toWireAttachments`. Pass `signal` to the POST. Add the removed-while-waiting test the PR body lists."
+  },
+  {
+   "severity": "consider",
+   "kind": "tests",
+   "title": "Tests the PR body lists are missing from the diff",
+   "path": "frontend/src/renderer/hooks/useConversation.test.tsx",
+   "line": "1743",
+   "body": "The PR body lists tests for a file removed during the restore (stages nothing), a file-only Enter being held, a failed restore showing its reason, and no file being taken during an ordinary send or a restore whose message has files of its own. The diff adds only these tests: stage-after-restore, stage-nothing-on-restore-failure, one composer test where the next file lands after the send, and the surface gating test. The removed-file test would have caught the abort gap on `useConversation.ts:2438`. Nothing covers the sent-message-has-own-files case, which the new `acceptsFiles` and `stripAttachments` code handles."
+  },
+  {
+   "severity": "consider",
+   "kind": "question",
+   "title": "Is attaching meant to stay closed when the message being sent has its own files?",
+   "path": "frontend/src/renderer/components/chat/ChatComposer.tsx",
+   "line": "2444",
+   "body": "The PR body says the composer takes next-message files \"only when the message being sent has no files of its own\" and that attaching stays closed otherwise, as on `main`. `acceptsFiles()` and `attachBlocked` (line 956) never check `durableDelivery?.draft?.attachments`. They open on `optimisticSend` alone. Lines 929-931 instead filter the sent ids out of the strip, so the code appears to allow sent and next files in the box together. After acceptance, `clearAcceptedChatComposer` keeps `composer.attachments` unfiltered when `delivery.draft` is set (`chat-drafts.ts:1665-1667`). Can a file added during a send that has its own files be dropped or sent twice? If the body is right, add the guard. If the mix is intended, update the body and add a test."
+  }
+ ]
+}

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Replay local Wachiman over agent-orchestrator/replays/manifest.tsv, one PR at a time. No scoring.
 #
-# usage: run-set.sh [-n|--dry-run] <clone-dir> <out-dir> [-- <extra wachiman local args>...]
+# usage: run-set.sh [-n|--dry-run] [--manifest <tsv>] <clone-dir> <out-dir> [-- <extra wachiman local args>...]
+#   --manifest replays/manifest.tsv by default; replays/events.tsv runs every CodeRabbit review event
+#              (one row per review, its exact range). Rows are named by the `id` column, else `pr`.
 #   clone-dir  a FULL clone of OrchestratorInc/agent-orchestrator (or a fork) that holds the
 #              reviewed heads; fetch them first with `fetch-heads.sh <clone-dir>`
 #   out-dir    one <pr>.json and <pr>.log per row (an existing, non-empty json is kept)
@@ -16,15 +18,22 @@
 # other (the mac is shared); a failed row does not stop the rest. ANTHROPIC_API_KEY is never passed
 # on, so the run uses the signed-in Claude subscription (isolated:personal).
 set -u
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 DRY=0
-case "${1:-}" in -n|--dry-run) DRY=1; shift ;; -h|--help) usage 0 ;; esac
+HERE=$(cd "$(dirname "$0")" && pwd)
+MANIFEST=$HERE/../replays/manifest.tsv
+while :; do
+  case "${1:-}" in
+    -n|--dry-run) DRY=1; shift ;;
+    --manifest) MANIFEST=$2; shift 2 ;;
+    -h|--help) usage 0 ;;
+    *) break ;;
+  esac
+done
 [ "$#" -ge 2 ] || usage
 CLONE=$1; OUT=$2; shift 2
 EXTRA=()
 if [ "${1:-}" = "--" ]; then shift; EXTRA=("$@"); elif [ "$#" -gt 0 ]; then usage; fi
-HERE=$(cd "$(dirname "$0")" && pwd)
-MANIFEST=$HERE/../replays/manifest.tsv
 unset ANTHROPIC_API_KEY
 [ -f "$MANIFEST" ] || { echo "run-set: $MANIFEST not found" >&2; exit 2; }
 [ -n "${WACHIMAN_DIR:-}" ] || { echo "run-set: set WACHIMAN_DIR to the engine checkout" >&2; exit 2; }
@@ -36,7 +45,7 @@ if [ "$DRY" -eq 0 ]; then
 fi
 # Columns are found by header name. US (0x1f) keeps empty fields through `read`.
 LIST=$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
-  { printf "%s\037%s\037%s\n", $col["pr"], $col["base"], $col["head"] }' "$MANIFEST")
+  { id = ("id" in col) ? $col["id"] : $col["pr"]; printf "%s\037%s\037%s\n", id, $col["base"], $col["head"] }' "$MANIFEST")
 TOTAL=$(printf '%s\n' "$LIST" | wc -l | tr -d ' ')
 FAILED=(); N=0
 while IFS=$'\037' read -r pr base head; do

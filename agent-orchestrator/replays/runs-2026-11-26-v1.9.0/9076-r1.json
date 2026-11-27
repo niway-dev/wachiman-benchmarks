@@ -1,0 +1,186 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9076-r1` of ao-replay-9076-r1 against f10c84ce6b2c3ed2b0e49913f58998063a6a600e (merge-base f10c84c)",
+    "repository": {
+      "name": "ao-replay-9076-r1"
+    },
+    "base": {
+      "sha": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e",
+      "ref": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e"
+    },
+    "head": {
+      "sha": "9fadf374fc63d8b5808759cdfdb6bd249ed8bc24",
+      "ref": "ao-replay/9076-r1"
+    },
+    "title": "ao-replay/9076-r1",
+    "description": "fix(devices): restart the device hub when a simulator boots outside AO\nfix(devices): catch outside reboots nobody was watching",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/ports/device.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/ports/device.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 710,
+      "severity": "consider",
+      "topic": "question",
+      "confidence": "low",
+      "title": "Is `lastUsedAt` the simctl field that changes on every boot?",
+      "body": "The whole feature keys on `simctl list devices -j` entries carrying `lastUsedAt` and that value moving on every boot. I recall the key simctl prints for a device's last boot being `lastBootedAt`, but I could not check that here. The tests only feed hand-written JSON containing `lastUsedAt` (`toolchain_test.go:933`, `:1053`), so they cannot catch a wrong key. If the key is absent, `BootID` stays empty, `NoteBooted` returns early at `provider.go:1094`, and the fix does nothing without any error or log. If the field also moves for reasons other than a boot, the hub is replaced spuriously and every viewer drops. Which Xcode version did you confirm this against? A one-line comment or a captured sample of real output in the test would pin it.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 1171,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Hub replacement kills the hub under unrelated in-flight work",
+      "body": "`restartHub` cancels the one shared hub and leaves `p.hub` nil until `EnsureReady` finishes, which can take up to 5s plus the 2-minute context. Everything else that uses the hub in that window fails. That includes another session's `Boot` of a different simulator. If `Boot` fails at the grid-start step (`provider.go:1019-1030`) and `startedHere` is true, it shuts that second simulator down and returns an error, so an unrelated user action fails because of someone else's outside boot. The window is bounded, so I rate it a judgement call. The restart could wait for in-flight `Boot` calls to finish, for example by tracking a count of boots in progress, or at least be logged and documented as disruptive.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 1035,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "If `recordBoots` fails after AO's own boot, the next look replaces the hub",
+      "body": "`Boot` clears `ownBoots` in its defer whether or not `recordBoots` stored the new boot. `recordBoots` returns silently on a `simctl` error, a timeout or an empty result (`provider.go:1122-1125`). In that case `bootIDs` still holds the previous boot, so the next `NoteBooted` sees a change with no mark and restarts the hub, which drops all viewers. That happens right after AO's own successful boot, and the log says 'booted outside AO'. This is rare, but when it hits the effect is a silent, disruptive restart. A fix is to have `Boot` keep the mark, or fall back to `NoteBooted` with the `BootID` it can read, when recording fails.\n\nSeparately, the deferred cleanup at `provider.go:972` and the `recordBoots` call at `:1038` both read `device.ID` after `device.ID = res.ID` (`:1008`). Capturing the ID once next to `expectBoot` would keep the mark and the cleanup on the same key.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/toolchain_test.go",
+      "line": 974,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The hub-start recording and the real restart path are not tested",
+      "body": "`TestHubStartRecordsEverySimulatorsBoot` calls `p.recordBoots` directly. It never goes through `EnsureReady`, so deleting the goroutine at `provider.go:254-258` would not fail any test. Every `NoteBooted` test also replaces `replaceHub` with a fake, so `restartHub` itself is never exercised. Nothing covers cancelling the hub, clearing `p.hub`, re-running `EnsureReady`, or the `replacingHub` reset in its defer. A stuck `replacingHub = true` would disable the fix for the rest of the session. A test with a fake hub that checks `replacingHub` is reset after both a successful and a failed restart would cover it. Also, `TestBootThatFailsExpectsNoBoot` passes whether or not the mark was ever set, because it only checks that the mark is absent afterwards.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "LiveLease tells the provider the device's boot on every look at a running leased device",
+      "location": "backend/internal/devices/service.go:901",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:901-908",
+        "backend/internal/devices/service.go:920-946",
+        "backend/internal/adapters/device/local/provider.go:1093-1115"
+      ],
+      "equivalent_path": "The existing `l.Device.Booted = listed.Booted` sync in the same block. It uses the same cached list (liveListTTL 3s) and no extra provider call.",
+      "before_after": "Before: LiveLease read the cached or refreshed list and copied Booted. After: it also calls NoteBooted on providers implementing DeviceBootWatcher when the device is booted. It does not hold s.mu, and the provider guards its own state. s.booting is checked after the call, but the provider's ownBoots mark covers AO's own boot.",
+      "visible_effect": "A simulator rebooted outside AO makes the provider restart the hub, so viewers reconnect and touch works again. Otherwise nothing changes.",
+      "failure_mode": "NoteBooted does not return an error. A wrong or empty BootID makes it silently do nothing. A spurious change makes it restart the hub.",
+      "evidence_checked": true
+    },
+    {
+      "action": "restartHub replaces the hub after an outside boot (stop, wait, EnsureReady, reviveHub on failure)",
+      "location": "backend/internal/adapters/device/local/provider.go:1148",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:1148-1180",
+        "backend/internal/adapters/device/local/provider.go:528-568",
+        "backend/internal/adapters/device/local/provider.go:576-590"
+      ],
+      "equivalent_path": "reviveHub restarts a hub that exited on its own. restartHub cancels deliberately, so the exit watcher does not revive it.",
+      "before_after": "The whole wait is bounded: hub.done wait is 5s and EnsureReady runs under a 2-minute context derived from p.life. On failure it hands off to reviveHub, which retries with backoff until closed. replacingHub is reset in a defer, so the guard is not left stuck. While it runs, p.hub is nil, so Hub() returns 'device support is not running' and other hub calls fail.",
+      "visible_effect": "Every viewer stream drops and reconnects. In-flight Boot or Install calls through the hub fail for up to about 2 minutes in the worst case.",
+      "failure_mode": "If EnsureReady fails, the retry loop is the existing revive path and the failure is logged. The feature recovers once a hub starts. While the hub is down, devices are unusable.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Boot marks an expected boot and records the new boot id when it finishes",
+      "location": "backend/internal/adapters/device/local/provider.go:965",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:955-990",
+        "backend/internal/adapters/device/local/provider.go:1032-1041",
+        "backend/internal/adapters/device/local/provider.go:1121-1144"
+      ],
+      "equivalent_path": "resetSimulatorHelper already refreshes the helper for boots that go through Boot. The new mark keeps NoteBooted from treating that boot as an outside one.",
+      "before_after": "The mark is set before the hub boot and cleared in a defer on every exit. recordBoots runs only on success, with its own 15s context from WithoutCancel(ctx). If it fails or finds nothing, the stored boot id stays stale. Boots that skip the mark (a simulator found already running) are caught by NoteBooted on the next look.",
+      "visible_effect": "AO's own boot does not restart the hub. A failed recordBoots can cause a spurious restart.",
+      "failure_mode": "Silent. See the finding on provider.go:1035.",
+      "evidence_checked": true
+    },
+    {
+      "action": "EnsureReady starts a goroutine that records every simulator's boot after each hub start",
+      "location": "backend/internal/adapters/device/local/provider.go:253",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:245-271",
+        "backend/internal/adapters/device/local/provider.go:696-701",
+        "backend/internal/adapters/device/local/provider.go:1121-1125"
+      ],
+      "equivalent_path": "The existing `go p.retune(restore)` right below it, which is also started on each hub start.",
+      "before_after": "The goroutine is bounded by a 30s timeout derived from p.life, so Close cancels it. It runs `xcrun simctl list` and then takes p.mu, which waits until EnsureReady has released it. On non-darwin, unlistedSimulators returns no boots, so it is a no-op.",
+      "visible_effect": "None directly. It sets the baseline that later outside-boot detection compares against.",
+      "failure_mode": "On a simctl error or timeout it records nothing. The first later sighting then only records, so a reboot is missed until the next one. This is silent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is carefully guarded. The hub replacement is bounded (5s wait plus a 2-minute EnsureReady), `replacingHub` resets in a defer, and the expected-boot mark is cleared on every exit from Boot. I found no blocking defect. There are four points for the author. First, whether `lastUsedAt` is really the simctl field that changes on boot. I recall `lastBootedAt`, and the tests use hand-written JSON, so a wrong key would make the whole fix silently do nothing. Second, a hub restart can kill unrelated in-flight work. Third, a failed `recordBoots` after AO's own boot can trigger a spurious restart. Fourth, the hub-start wiring and `restartHub` itself have no test.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 467,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 11,
+      "costUsd": 0.40984699999999996
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.40984699999999996,
+    "usage": {
+      "input": 10,
+      "output": 14393,
+      "cacheRead": 201930,
+      "cacheWrite": 61426
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 11,
+    "durationMs": 115396,
+    "stop": "complete",
+    "notices": []
+  }
+}

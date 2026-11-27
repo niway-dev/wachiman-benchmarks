@@ -1,0 +1,56 @@
+evidence: 17 symbol(s) found, 21 call site(s), 14688 bytes, 2662 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":27,"cost_usd":0.698083,"duration_ms":168538}
+--- review at dc51ca7 ---
+👮 **Wachiman** · review of the whole pull request, at `dc51ca7`: all 7 files reviewed.
+
+3 finding(s): 3 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Outside the diff
+
+- 🟡🐛 **Consider · bug: holdOwnDraft still ignores a file-only draft, so Enter can be dropped in the receipt-pending window (confidence low)** (`frontend/src/renderer/components/chat/ChatComposer.tsx:1831`): This PR makes Enter on a file-only box count as a new message when a send is in flight (line 1775, `textRef.current.trim() || nextDraftHasFiles()`). The sibling path `holdOwnDraft` (line 1831) still returns false unless there is text. `performSubmit` calls it at line 1850 when the previous send was accepted but its receipt has not been applied yet (`beginChatComposerMutation` returned no token and nothing is pending). A file-only Enter pressed in that one-commit window is silently dropped. The same Enter with text would be held and sent. Is the asymmetry intended? If not, `holdOwnDraft` could use the same `textRef.current.trim() || nextDraftHasFiles()` test. The user can press Enter again, so the cost is small.
+
+### Summary
+
+I found three minor issues, none blocking. I only read the code and did not run the tests. The core logic holds up. Staging waits for any tracked restore and applies the same `assertRestored` as the send path. Sent files are dropped from the box on accept and on park, while next-message files are kept. The new tests match what the code does. The three issues:
+- `holdOwnDraft` still ignores a file-only draft, so a file-only Enter can be dropped in the one-commit window after a send is accepted.
+- In `useStageAttachments` the restore wait now runs before `toWireAttachments`, so a restore that starts during that step is not awaited.
+- The comment explaining the archived-session stager gate in `SessionChatSurface.tsx` was deleted, and this diff contains no code change to that gate.
+
+The PR body also says the composer takes next files "only when the message being sent has no files of its own". The code and tests allow next files while the sent message has files, so the body is out of date.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Stage a file pasted while an archived chat restores: wait for the tracked restore, then POST the attachment (`frontend/src/renderer/hooks/useConversation.ts:2428`) — The chip shows 'Attaching' until the restore finishes. The file is then staged, or the restore reason is shown through attachmentError (ChatComposer.tsx:2518). If it fails: If the restore fails, assertRestored throws and the composer shows the restore message. The wait does not observe the abort signal, but the POST now receives `signal`. A file cancelled during the wai… Evidence: `frontend/src/renderer/hooks/useConversation.ts:2428-2438`, `frontend/src/renderer/hooks/useConversation.ts:973-979`, `frontend/src/renderer/hooks/useRestoreSession.ts:50-54`, `frontend/src/renderer/hooks/useRestoreSession.ts:141-148`, `frontend/src/renderer/hooks/useFileAttachments.ts:129-139`, `frontend/src/renderer/hooks/useFileAttachments.ts:579-586`, `frontend/src/renderer/components/chat/ChatComposer.tsx:2518`.
+- Accepting a sent message drops its files from the box's in-memory list (dropSent) while keeping next-message files (`frontend/src/renderer/components/chat/ChatComposer.tsx:1251`) — Next-message files survive the send landing, including after a hidden Activity or a remount, and sent files do not come back. If it fails: The sent-vs-unsent split reads the persisted delivery at call time. After the delivery is cleared, any copy that has not run dropSent would count sent files again. The accept and park paths both call… Evidence: `frontend/src/renderer/components/chat/ChatComposer.tsx:723-727`, `frontend/src/renderer/components/chat/ChatComposer.tsx:1251-1253`, `frontend/src/renderer/components/chat/ChatComposer.tsx:1415`, `frontend/src/renderer/hooks/useFileAttachments.ts:677-686`, `frontend/src/renderer/lib/chat-drafts.ts:1647-1680`.
+- Enter on a box holding only a file during an in-flight send is held and sent next (`frontend/src/renderer/components/chat/ChatComposer.tsx:1775`) — A file-only next message is sent after the current send settles, as the test at ChatComposer.optimistic.test.tsx:237 checks. If it fails: holdOwnDraft returns false for a file-only draft in the accepted-receipt-pending window, so that Enter does nothing (reported as a finding). Evidence: `frontend/src/renderer/components/chat/ChatComposer.tsx:1772-1782`, `frontend/src/renderer/components/chat/ChatComposer.tsx:1830-1851`, `frontend/src/renderer/components/chat/ChatComposer.tsx:2280-2290`, `frontend/src/renderer/components/chat/ChatComposer.optimistic.test.tsx:237-256`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 7 | 300 | 4 | reviewed | 27 | $0.70 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.70</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=dc51ca766761ed7205137cadbc2ee01c640ef7da -->
+--- frontend/src/renderer/hooks/useConversation.ts:2428 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Restore wait now runs before the wire conversion, so a restore that starts during it is not awaited (confidence low)**
+
+The old code awaited the in-flight restore after `toWireAttachments`, right before the POST. The new code awaits it once, before `toWireAttachments` (lines 2428-2432). The wait is skipped when no restore is tracked at call time. If a restore starts while `toWireAttachments` is reading or uploading a large file, for example from the Restore button or another window, the POST at line 2433 goes to the archived session before its worktree is back. That is the case the old order covered. Moving the wait before the wire step does keep a large upload from starting early. Awaiting `restoreInFlight` a second time just before the POST would cover both orders.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/components/chat/SessionChatSurface.tsx:953 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: Comment explaining the archived-session stager gate was deleted (confidence medium)**
+
+The only change in this file is deleting the two-line comment above `onStageAttachments`. The condition on line 953 is unchanged. The comment said why the stager is offered only while the session is active or `commands.resumingAgent` is true: the worktree is gone until the restore runs. Nothing in the PR makes that explanation untrue, and the gate is easy to misread without it. The PR body also lists a gate change in this file as part of the fix, but this diff has none. Please keep the comment, or say in the PR which commit changed the gate.
+
+<!-- wachi:finding -->

@@ -1,0 +1,158 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9076` of ao-replay-9076 against f10c84ce6b2c3ed2b0e49913f58998063a6a600e (merge-base f10c84c)",
+    "repository": {
+      "name": "ao-replay-9076"
+    },
+    "base": {
+      "sha": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e",
+      "ref": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e"
+    },
+    "head": {
+      "sha": "9fadf374fc63d8b5808759cdfdb6bd249ed8bc24",
+      "ref": "ao-replay/9076"
+    },
+    "title": "ao-replay/9076",
+    "description": "fix(devices): restart the device hub when a simulator boots outside AO\nfix(devices): catch outside reboots nobody was watching",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/ports/device.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go",
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go",
+      "backend/internal/ports/device.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 1161,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Hub replacement does not wait for in-flight hub work, and takes down every device's stream",
+      "body": "`restartHub` cancels the hub (line 1161) and sets `p.hub = nil` (1167-1169) with no regard for other calls using it. `Hub()` then answers \"device support is not running\" (line 581) until `EnsureReady` finishes, which can take up to the 2 minute context at 1171. A `Boot` for a different simulator or session that is mid-flight (`/api/devices/boot`, grid start, `resetSimulatorHelper`, lines 986-1015) then fails. On that failure `Boot` tries `p.Shutdown` through the same dead hub (1024), so a simulator it powered on can be left running with no lease. The user sees an error, not silent corruption. One outside boot of simulator X also drops the streams of every other simulator and emulator. Consider skipping the replacement while any `Boot` is running (`ownBoots` is non-empty), or retrying the replacement afterwards. Also say in the NoteBooted doc that every viewer reconnects, not just the rebooted device's.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 110,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "No compile-time assertion that Provider implements DeviceBootWatcher",
+      "body": "`devices.Service.LiveLease` finds the watcher with a runtime type assertion (`service.go:905`). If `NoteBooted`'s signature drifts, the assertion fails silently and outside-boot detection stops, with no compile error. Add `var _ ports.DeviceBootWatcher = (*Provider)(nil)` next to the existing `var _ ports.DeviceProvider` at line 110.",
+      "anchor": "outside"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/toolchain_test.go",
+      "line": 845,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "The real restartHub is never exercised",
+      "body": "Every new test replaces `p.replaceHub` with a fake that only clears `replacingHub`. `restartHub` (provider.go:1148-1180) has the riskiest logic in the change: cancel without revive, the 5 s wait on `done`, clearing `p.hub`, `EnsureReady`, and `reviveHub` when `EnsureReady` fails. None of it has a test. A test could use a `hubProcess` whose `cancel` closes `done`, and a failing `lookPath` so `EnsureReady` errors. It would assert that `replacingHub` is reset and that `reviveHub` runs on failure but not on `errProviderClosed`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 253,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "low",
+      "title": "Asynchronous recordBoots at hub start can overwrite a newer boot id",
+      "body": "The goroutine at lines 254-258 runs simctl and then writes `p.bootIDs` for every simulator unconditionally (lines 1131-1136). It runs concurrently with `Boot`. If its simctl read happens before a boot that `Boot` then records via `recordBoots(..., device.ID)` (line 1038), and its write lands after that, `bootIDs` ends up holding the older id. The next `NoteBooted` then sees a changed boot with `ownBoots` already cleared, and restarts the hub for a boot AO made itself. The window is small. Is it worth recording synchronously, or only writing ids for simulators not yet in the map?",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "LiveLease tells the provider which boot a running leased simulator is on (NoteBooted)",
+      "location": "backend/internal/devices/service.go:905",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:901-908",
+        "backend/internal/adapters/device/local/provider.go:1093-1115",
+        "backend/internal/adapters/device/local/provider.go:1148-1180",
+        "backend/internal/adapters/device/local/provider.go:576-590"
+      ],
+      "equivalent_path": "Boot (provider.go:955) / resetSimulatorHelper, which already replaces the stream helper for boots that go through AO",
+      "before_after": "Before: only AO-initiated boots got a fresh stream helper. After: LiveLease, which viewers poll, passes the listed device (with BootID from simctl lastUsedAt) to NoteBooted. A change on a boot with no `ownBoots` mark replaces the hub in a goroutine. It runs only for a running device and a provider that implements DeviceBootWatcher.",
+      "visible_effect": "After an outside reboot, viewers lose their streams, reconnect to the new hub, and touch input works. The log gets an Info line.",
+      "failure_mode": "If simctl is unavailable, BootID is empty and NoteBooted returns early, which leaves the old behaviour. If EnsureReady fails during the replacement, restartHub logs a Warn and starts reviveHub, which retries with backoff. In-flight Boots for other devices fail loudly during the replacement window.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bounds on the new waits: the recordBoots goroutine after hub start, the recordBoots call at the end of Boot, and restartHub",
+      "location": "backend/internal/adapters/device/local/provider.go:1035",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:254-258",
+        "backend/internal/adapters/device/local/provider.go:1035-1040",
+        "backend/internal/adapters/device/local/provider.go:1160-1172",
+        "backend/internal/adapters/device/local/provider.go:1101-1103"
+      ],
+      "equivalent_path": "The existing deadline-bounded stream wait in Boot (awaitLiveStream) and the 2 min EnsureReady context in reviveHub (provider.go:559)",
+      "before_after": "Each wait has its own limit. The recordBoots goroutine in EnsureReady is limited to 30 s from p.life. The recordBoots in Boot is limited to 15 s on a context detached from the boot's cancellation, so it adds at most 15 s after bootTimeout. restartHub waits 5 s for hub.done, then runs EnsureReady with a 2 min context from p.life. All of these use process.CommandContext, so simctl is killed at the limit. LiveLease and viewers never block on the replacement because it runs in a goroutine.",
+      "visible_effect": "Worst case, `ao device open` returns up to 15 s later than before if simctl hangs after the stream is up. Otherwise nothing waits on the replacement.",
+      "failure_mode": "A recordBoots failure leaves bootIDs stale. NoteBooted updates bootIDs on every look, including during a boot, so a spurious restart happens only if no viewer looked during the boot.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change detects a simulator that rebooted outside AO by comparing simctl's `lastUsedAt` between looks, and restarts the device hub when that happens. I read the code paths and found no blockers. The new tests mostly assert what they claim. One test group fakes `replaceHub`, so the real `restartHub` is untested. I also flag three smaller points. A hub replacement disrupts in-flight Boots and every device's stream. There is no compile-time check that `Provider` implements `DeviceBootWatcher`. The hub-start `recordBoots` goroutine can race with `Boot`'s own recording.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 5,
+      "lines": 467,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 14,
+      "costUsd": 0.5372665
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f10c84ce6b2c3ed2b0e49913f58998063a6a600e"
+  },
+  "execution": {
+    "costUsdEstimate": 0.5372665,
+    "usage": {
+      "input": 18,
+      "output": 17784,
+      "cacheRead": 458065,
+      "cacheWrite": 78396
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 14,
+    "durationMs": 138757,
+    "stop": "complete",
+    "notices": []
+  }
+}

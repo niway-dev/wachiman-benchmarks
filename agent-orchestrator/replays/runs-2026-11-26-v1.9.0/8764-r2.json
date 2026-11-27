@@ -1,0 +1,142 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8764-r2` of ao-replay-8764-r2 against 6faac3c37b020d21738c6af6ae018724866d3a8d (merge-base 6faac3c)",
+    "repository": {
+      "name": "ao-replay-8764-r2"
+    },
+    "base": {
+      "sha": "6faac3c37b020d21738c6af6ae018724866d3a8d",
+      "ref": "6faac3c37b020d21738c6af6ae018724866d3a8d"
+    },
+    "head": {
+      "sha": "3b6f51b691fe5fd964b4c4357e34beafa9ad4215",
+      "ref": "ao-replay/8764-r2"
+    },
+    "title": "ao-replay/8764-r2",
+    "description": "fix(mobile): never restore a page over one the user moved to\nfix(mobile): hold the update screen during onboarding and pairing\nfix(mobile): keep root-level sheets out of the page restored after an update\nfix(mobile): compare whole routes when restoring; hide the update screen's hidden half from VoiceOver",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "packages/mobile/lib/UpdateScreen.a11y.source.test.ts",
+      "packages/mobile/lib/UpdateScreen.tsx",
+      "packages/mobile/lib/UpdatesManager.tsx",
+      "packages/mobile/lib/updateResume.test.ts",
+      "packages/mobile/lib/updateResume.ts",
+      "packages/mobile/lib/updates.test.ts",
+      "packages/mobile/lib/updates.ts"
+    ],
+    "reviewed": [
+      "packages/mobile/lib/updateResume.ts",
+      "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "packages/mobile/lib/updates.ts",
+      "packages/mobile/lib/UpdateScreen.tsx",
+      "packages/mobile/lib/UpdatesManager.tsx",
+      "packages/mobile/lib/updateResume.test.ts",
+      "packages/mobile/lib/updates.test.ts",
+      "packages/mobile/lib/UpdateScreen.a11y.source.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/mobile/lib/updates.ts",
+      "line": 91,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "isSetupRoute misses /connect, the manual-pairing page",
+      "body": "The doc comment and PR intent say the update screen must wait during \"onboarding and pairing\". `app/_layout.tsx:267-270` describes pairing as two pages: the scanner (`/pair`) and the manual form pushed over it (`/connect`). `sheetResult.ts:73` pushes `/connect`. `isSetupRoute` only matches `/onboarding` and `/pair`, so an update that lands (or a foreground prompt) while the user fills in the manual connect form still raises the update screen over it. A Restart there throws away the half-typed host and credentials. `updateResume.ts` already treats `/connect` as setup (in `TRANSIENT`), so the two lists disagree. Add `connect` to the regex and to the test in `updates.test.ts`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/lib/UpdateRouteKeeper.tsx",
+      "line": 44,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "low",
+      "title": "New restore-timing logic has no test",
+      "body": "The behavior that changed most is in this hook: the restore no longer waits for `config`, `landing` is captured on the first ready render, and a later route change drops the restore. Only the pure `restoreAction` is tested. The scenario where `saved` resolves after the user has already navigated away (expected: no navigation) is not covered. A hook test would pin it. This also depends on `usePathname` already reporting the real landing route when `navState.key` first appears. If it first reports `/` and then the deep link, the restore is silently dropped. I could not confirm that ordering from the repo code.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Restore the saved page after an OTA restart without waiting for the store's config",
+      "location": "packages/mobile/lib/UpdateRouteKeeper.tsx:40",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/UpdateRouteKeeper.tsx:36-51",
+        "packages/mobile/lib/updateResume.ts:96-100"
+      ],
+      "equivalent_path": "Previous version of the same effect, gated on `config !== null`. A cold-start notification tap also opens a page before the machine has answered.",
+      "before_after": "Before: waited for config, then compared only path with saved path. After: runs once navigation has a key and storage is read, compares full hrefs against the landing route captured at first ready render, and drops the restore if the user has moved. `restored` is set before acting, so it fires once.",
+      "visible_effect": "Reopens the saved page (push over the board, or replace a stale deep-linked page) as soon as navigation is ready. If the user has already moved, nothing happens.",
+      "failure_mode": "If `takeResumeRoute` rejects, `saved` stays undefined and nothing is restored, with no error shown (the user just lands on the board). The effect never sets `restored`, but there is no retry either. Whether `usePathname` is final when `navState.key` first appears is not confirmed.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Hold the update screen while on onboarding or pairing, and offer it when the user leaves",
+      "location": "packages/mobile/lib/UpdatesManager.tsx:27",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/UpdatesManager.tsx:21-32",
+        "packages/mobile/lib/UpdatesManager.tsx:45-46",
+        "packages/mobile/lib/updates.ts:90-108",
+        "packages/mobile/app/_layout.tsx:267-270"
+      ],
+      "equivalent_path": "The previous effect offered as soon as an update was pending. The foreground 'prompt' path now has the same guard.",
+      "before_after": "Before: offered regardless of route. After: `shouldOfferUpdate` also checks `pathname`, and the effect depends on `pathname`, so leaving a setup route re-runs it. `lastOffered` is only set when the screen is actually shown. The foreground prompt skips on a setup route but does not re-offer afterwards.",
+      "visible_effect": "The update screen appears only outside onboarding and `/pair`. It still appears over `/connect`, the manual-pairing page.",
+      "failure_mode": "Silent miss: an update that was already offered and put off, then prompted on foreground during a setup route, is not re-offered after leaving. This is acceptable because the next long absence offers it again. `/connect` is not covered (see finding).",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Small, coherent change. One real gap: `isSetupRoute` doesn't cover `/connect`, the manual-pairing page, so the update screen can still appear over it even though the intent is to hold it back during pairing. The new restore-timing logic in `UpdateRouteKeeper` is covered only through the pure `restoreAction` tests, which I raised as a low-confidence test gap. The a11y changes and the transient-route list match the layout's sheet declarations.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 8,
+      "lines": 195,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.20544479999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "6faac3c37b020d21738c6af6ae018724866d3a8d"
+  },
+  "execution": {
+    "costUsdEstimate": 0.20544479999999998,
+    "usage": {
+      "input": 6,
+      "output": 4701,
+      "cacheRead": 71828,
+      "cacheWrite": 37810
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 39924,
+    "stop": "complete",
+    "notices": []
+  }
+}

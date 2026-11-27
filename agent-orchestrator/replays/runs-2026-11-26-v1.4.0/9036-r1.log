@@ -1,0 +1,51 @@
+evidence: 32 symbol(s) found, 27 call site(s), 14394 bytes, 1893 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":23,"cost_usd":0.576066,"duration_ms":127717}
+--- review at c502ed6 ---
+👮 **Wachiman** · review of the whole pull request, at `c502ed6`: all 20 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+I found nothing that blocks the merge, only two low-severity points, both about the new long-frame names. I read all 20 files and traced the new paths, but ran none of the code or tests. The `telemetry:launchSteps` handler checks the sender the same way as the sibling telemetry handlers, and its failures end in an event sent without steps. The first-run check reads `ao.db` before the daemon can create it, in the same data dir the daemon receives. The Go step payload keys match the PostHog allowlist and its int64 handling. I hand-checked the phase split in `recordLongFrame` against the new unit tests and the arithmetic holds. The two findings are that `invokerName` probably drops `TimerHandler:setTimeout`-style entry points, and that the 40-name cap quietly biases the reported top invoker and bundle without the docs saying so.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- New IPC handler telemetry:launchSteps returns main's launch marks to the renderer for ao.launches.timed (`frontend/src/main.ts:3734`) — No UI change. Cold and first launches gain to_app_ready_ms, to_window_shown_ms, to_server_spawn_ms, to_server_ready_ms and server_reused on ao.launches.timed. Warm launches send none. If it fails: If the IPC rejects, readLaunchSteps catches it and returns {}, so the event goes out without steps. An untrusted sender gets null. A daemon that never became ready leaves serverReadyMs and serverReus… Evidence: `frontend/src/main.ts:3734-3746`, `frontend/src/main.ts:3747-3749`, `frontend/src/main.ts:917`, `frontend/src/main.ts:1409`, `frontend/src/main.ts:2700`, `frontend/src/renderer/lib/launch-telemetry.ts:61-76`, `frontend/src/renderer/lib/launch-telemetry.ts:133-135`, `frontend/src/preload.ts:668`.
+- Cold launch now reads whether ao.db exists in the data dir before the daemon starts, and reports launch_kind 'first' (`frontend/src/main.ts:382`) — Only the telemetry launch_kind changes: a first run reports 'first' instead of 'cold'. If it fails: If ao.db was created some other way before the app's first launch, such as by the CLI, that launch reads as cold. Telemetry only, nothing user-visible. Evidence: `frontend/src/main.ts:382`, `frontend/src/main.ts:1158-1160`, `frontend/src/main.ts:1879`, `frontend/src/renderer/lib/launch-telemetry.ts:48-58`, `backend/internal/cli/doctor.go:278`.
+- Daemon emits ao.daemon.ready from the listener-ready callback and ao.daemon.startup_reconciled from the background restore goroutine (`backend/internal/daemon/daemon.go:1516`) — No product UI change. Two new telemetry events are sent. If it fails: If the daemon fails before the listener is up, no ready event is sent. The steps are timestamp-only, so control flow is unchanged. Evidence: `backend/internal/daemon/daemon.go:1515-1518`, `backend/internal/daemon/daemon.go:1537-1564`, `backend/internal/daemon/startup_timing.go:81-89`, `backend/internal/adapters/telemetry/posthog.go:224-244`, `backend/internal/adapters/telemetry/posthog.go:927-961`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 20 | 773 | 5 | reviewed | 23 | $0.58 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.58</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=c502ed61f57ebb0d8e64e0a5469b200211562e6e -->
+--- frontend/src/renderer/lib/performance-telemetry-properties.ts:55 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: invokerName drops timer entry points, so long_frame_top_invoker skips them (confidence low)**
+
+The check at line 55 returns undefined when the character after the leading identifier is not `.`, `#` or `[`. As I remember Chrome's Long Animation Frame output, a timer callback's invoker is `TimerHandler:setTimeout` (or `TimerHandler:setInterval`). That has a `:` after `TimerHandler`, so it would be dropped. I did not verify this against Chrome.
+
+If that is right, `user-callback` time from timers is counted in `long_frame_user_callback_ms` but never named. `long_frame_top_invoker` then reports the top entry point among the non-timer ones. A page dominated by timers would look like it was blocked by something else, which is the kind of question this PR is meant to answer.
+
+Script-URL invokers are already skipped by type in `recordLongFrame` (`URL_INVOKER_TYPES`, performance-telemetry.ts:50 and :314). The colon restriction is therefore defence in depth. Could the check allow a bare `Identifier:identifier` form such as `TimerHandler:setTimeout` and still reject `https:`? Alternatively, `docs/telemetry.md` could say timers are not named.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/lib/performance-telemetry.ts:51 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: Cap of 40 names per window biases the reported top entry point and bundle, and the docs don't say so (confidence medium)**
+
+`addName` (performance-telemetry.ts:291-295) ignores any new name once 40 are held. `long_frame_top_invoker` and `long_frame_top_bundle` are then the top among the first 40 names seen in the window, not among all of them. A late heavy bundle can be missed. The code comment mentions the cap, but `docs/telemetry.md` describes both properties as the name whose listed scripts took longest. That wording overstates what the data means once a window has more than 40 distinct bundles. Either say in the docs that the name is the top of the first 40 seen, or evict the smallest entry when the cap is reached.
+
+<!-- wachi:finding -->

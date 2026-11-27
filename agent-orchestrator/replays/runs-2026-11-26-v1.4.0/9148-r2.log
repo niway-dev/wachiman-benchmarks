@@ -1,0 +1,46 @@
+evidence: 8 symbol(s) found, 32 call site(s), 15568 bytes, 1276 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":10,"cost_usd":0.22698909999999997,"duration_ms":42392}
+--- review at 3b55164 ---
+👮 **Wachiman** · review of the whole pull request, at `3b55164`: all 4 files reviewed.
+
+2 finding(s): 1 to fix, 1 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The `rememberedSkills` change (a project's list is kept only under that project) is correct and tested. The skills reset at an agent switch in `useConversation.ts` has a gap. The reset runs in an effect, so for one render `ChatSessionScreen.tsx:380-382` still sees the outgoing agent's skills with the new harness. It remembers them under the new agent's key, which is the contamination this PR aims to stop. The new tests cover only `conversation.skills`, not the remembered list. One minor, low-confidence note on a redundant cache delete in the stale-load branch.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Remember a chat's "/" list per project only, and stop writing project chats' lists to the machine-wide key (`packages/mobile/lib/chat/rememberedSkills.ts:26`) — The New task skill menu no longer shows another project's skills. It can show fewer built-in commands. If it fails: The in-memory map is lost on restart and falls back to the disk scan. Nothing fails. Evidence: `packages/mobile/lib/chat/rememberedSkills.ts:24-35`, `packages/mobile/lib/spawnSkills.ts:20`, `packages/mobile/lib/chat/ChatSessionScreen.tsx:380-382`.
+- Clear the skills list and its cache when the chat's agent changes, and drop a skills load that started for the previous agent (`packages/mobile/lib/chat/useConversation.ts:235`) — `conversation.skills` is empty after a switch. The New task page can still receive the outgoing agent's list under the new agent's key, because of the one-render lag (see the finding). If it fails: If the reload after the switch fails, `loadSkills` returns the closed-over `skills` (stale at that render) and the list stays empty. That is the intended outcome. The remembered-skills pollution is t… Evidence: `packages/mobile/lib/chat/useConversation.ts:216-238`, `packages/mobile/lib/chat/useConversation.ts:394-409`, `packages/mobile/lib/chat/ChatSessionScreen.tsx:379-382`, `packages/mobile/lib/chat/asyncValueCache.ts:64-76`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 4 | 65 | 4 | reviewed | 10 | $0.23 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.23</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=3b55164c155f14a32052dfa209381f2b5d7c4c63 -->
+--- packages/mobile/lib/chat/useConversation.ts:237 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Clearing skills at a switch comes one render too late: the outgoing agent's list is still remembered under the new agent (confidence high)**
+
+The reset at lines 235-237 runs in an effect, so `setSkills([])` only takes effect on the next render. The remembering effect in `ChatSessionScreen.tsx:380-382` depends on `[conversation.skills, ..., skillsHarness]`. `skillsHarness` comes from `conversation.snapshot?.harness` (line 379), which changes in the same render that reveals the switch. In that commit the effect runs with the outgoing agent's `conversation.skills` and the new `skillsHarness`. It calls `rememberChatSkills(host, newHarness, projectId, oldSkills)`, which stores the old agent's list under the new agent's key. The following render has `skills = []`, and `rememberChatSkills` ignores empty lists (`rememberedSkills.ts:25`), so nothing overwrites it. The New task page then offers the outgoing agent's skills for the new agent, until a later `loadSkills` for the new agent replaces them. That is the problem this PR's comment at line 235 says it fixes. The new test only checks `conversation.skills` and never goes through `ChatSessionScreen` or `rememberedChatSkills`, so it misses this. Fix: pair the skills with the harness they were read for (e.g. `{ harness, list }` state), and have the screen remember only when that harness equals `skillsHarness`. Add a test that asserts `rememberedChatSkills(host, newHarness)` is empty after a switch.
+
+<!-- wachi:finding -->
+--- packages/mobile/lib/chat/useConversation.ts:401 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Stale-load branch deletes the cache entry that may now belong to the new agent (confidence low)**
+
+When the stale check at line 400 fires, `skillsCache.delete(cacheKey)` drops whatever entry sits under the key. The switch effect (line 236) already deleted the outgoing agent's entry. By the time the old request resolves, a `loadSkills` for the new agent may have created a pending or cached entry under the same key. The delete removes that entry too, so the next `/` open fetches again. This is harmless but redundant. `asyncValueCache.ts:66` already stops a superseded request from writing its result back, so the delete could go.
+
+<!-- wachi:finding -->

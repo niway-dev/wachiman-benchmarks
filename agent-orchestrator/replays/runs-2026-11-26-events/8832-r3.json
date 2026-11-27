@@ -1,0 +1,142 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8832-r3` of ao-replay-8832-r3 against bcf05194acd0b462a62de99536e592eba6ae3f43 (merge-base bcf0519)",
+    "repository": {
+      "name": "ao-replay-8832-r3"
+    },
+    "base": {
+      "sha": "bcf05194acd0b462a62de99536e592eba6ae3f43",
+      "ref": "bcf05194acd0b462a62de99536e592eba6ae3f43"
+    },
+    "head": {
+      "sha": "a235f63ffdf2042b26d45188460d263fdb9efaf8",
+      "ref": "ao-replay/8832-r3"
+    },
+    "title": "ao-replay/8832-r3",
+    "description": "fix(chat): load the \"@\" path list when the chat shows, from the cheap route",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.file-paths.test.ts",
+      "frontend/src/renderer/hooks/useConversation.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useConversation.file-paths.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.ts",
+      "line": 2216,
+      "severity": "fix",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "\"No paths route\" is remembered for the whole renderer lifetime and never cleared",
+      "body": "`hostsWithoutPathsRoute` is a module-level Set. Once a host answers ROUTE_NOT_FOUND (line 2222) it is added at line 2223 and nothing removes it. `disconnectHost`/`connectHost` in `lib/host-clients.ts` do not touch it. A remote daemon that is upgraded to one with the cheap `/workspace/paths` route, then reconnected under the same hostId, keeps using the expensive `/workspace/files` fallback until the app reloads. That is the path this PR is meant to avoid, and with this change it now runs for every shown chat, polled every 30s on remote hosts. The key `hostId ?? \"\"` also shares one entry for the local daemon. Nothing shows the user why it stays slow. Clear the entry when the host disconnects or reconnects, e.g. export a reset called from `connectHost`/`disconnectHost`, or key it by the connection instance rather than hostId alone.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.file-paths.test.ts",
+      "line": 49,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Test depends on module-level cache state and run order",
+      "body": "`hostsWithoutPathsRoute` persists across tests in this file because the module is never reset, and `afterEach` does not clear it. The test at line 39 passes only because it runs before the test at line 49, which adds `box-a` to the set. Reordering them, or adding a later test that expects the paths route on `box-a`, would silently fall back to `/workspace/files`. Reset the module (`vi.resetModules` with dynamic import) or export a reset helper and call it in `afterEach`. No test covers the cache being cleared on disconnect or reconnect.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "line": 435,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Path list is now fetched for every mounted chat, not only after the user types \"@\"",
+      "body": "The `fileMenuAsked` gate is removed, so `useWorkspaceFilePaths` runs as soon as a snapshot exists. That also starts the 30s `refetchInterval` for remote hosts (`useConversation.ts:2256`) and the local workspace-change subscription (`useConversation.ts:2267-2270`) for every chat shown, whether or not \"@\" is ever used. This matches the PR title. The cost is that every remote chat polls the workspace listing, and on a daemon without the paths route that listing is the expensive `/workspace/files` call. The fix above matters more because of this.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Load the \"@\" workspace path list as soon as a chat has a snapshot, instead of after the first \"@\" query",
+      "location": "frontend/src/renderer/components/chat/SessionChatSurface.tsx:435",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/chat/SessionChatSurface.tsx:435",
+        "frontend/src/renderer/hooks/useConversation.ts:2245-2276",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:868"
+      ],
+      "equivalent_path": "The previous path in the same file, gated by `fileMenuAsked` and set by the composer's `onFileQuery`. NewChatPage.tsx:127 calls `fetchWorkspaceFilePaths` through its own query.",
+      "before_after": "Before: the fetch started on the first \"@\" query. After: it starts when `snapshot` exists and `!session.needsResume`. `ChatComposer` still accepts `onFileQuery` (ChatComposer.tsx:868) but SessionChatSurface no longer passes it. CloudSessionChatSurface still passes its own.",
+      "visible_effect": "The path menu has data at first \"@\"; `filePathsLoading` flows to the composer as before.",
+      "failure_mode": "A fetch error is thrown from the queryFn and `retry` is false, so the menu has no paths. Remote hosts refetch every 30s, so a transient error self-heals there. Local sessions rely on workspace events.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Remember per host that the paths route is missing and skip straight to the file-list fallback",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2216",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:2216-2224",
+        "frontend/src/renderer/lib/host-clients.ts:62-84",
+        "frontend/src/renderer/hooks/useConversation.file-paths.test.ts:49-58"
+      ],
+      "equivalent_path": "The prior code probed the paths route on every call and fell back on ROUTE_NOT_FOUND.",
+      "before_after": "Before: each fetch retried the paths route first. After: one probe per hostId per renderer lifetime. The Set is not cleared on `disconnectHost`/`connectHost` (host-clients.ts:66,84).",
+      "visible_effect": "Fewer 404s. A host upgraded to have the route stays on the expensive file-list fallback until reload.",
+      "failure_mode": "The cache is silently stale after a daemon upgrade or reconnect. It does not recover and nothing is shown to the user.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change removes the \\\"@\\\" gate so the path list loads when the chat shows, and it caches which hosts lack the paths route. The main problem is that the cache is never cleared, so a host that later gains the route keeps using the expensive file-list fallback until the app reloads. The new test also relies on module state and on running second in the file.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 18,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.13638419999999998
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bcf05194acd0b462a62de99536e592eba6ae3f43"
+  },
+  "execution": {
+    "costUsdEstimate": 0.13638419999999998,
+    "usage": {
+      "input": 6,
+      "output": 3674,
+      "cacheRead": 53082,
+      "cacheWrite": 23581
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 29309,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9086-r2` of ao-replay-9086-r2 against a4542d6c630184148510fd43d2a3a83eb7d32b87 (merge-base a4542d6)",
+    "repository": {
+      "name": "ao-replay-9086-r2"
+    },
+    "base": {
+      "sha": "a4542d6c630184148510fd43d2a3a83eb7d32b87",
+      "ref": "a4542d6c630184148510fd43d2a3a83eb7d32b87"
+    },
+    "head": {
+      "sha": "01b7071fadd7b636d5272ac9c667516abbedd2c9",
+      "ref": "ao-replay/9086-r2"
+    },
+    "title": "ao-replay/9086-r2",
+    "description": "fix(devices): keep parked records crash-safe and listing-accurate",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go"
+    ],
+    "reviewed": [
+      "backend/internal/devices/service.go",
+      "backend/internal/devices/service_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/devices/service_test.go",
+      "line": 1811,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Stale-listing test calls forgetStoppedLocked directly, not the Open path that captures bootGen",
+      "body": "The comment says \"Open must not drop ownership on it\", but the test reads `svc.bootGen` itself (1817) and calls `forgetStoppedLocked` with that value. The fix in `Open` is where `listGen` is read: before `Provider.List`, at service.go:717-720. If a later edit moved that read after the List call, the window would reopen and this test would still pass. Drive it through `Open`. For example, give the fake provider a List hook that finishes a boot of A during the listing, then check that `owned`/`parked` for A survive. Alternatively, reword the test as a unit test of the helper.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Park an owned device in the same save as the lease removal (endLeaseLocked → parkLocked), including Open's replaced-lease path",
+      "location": "backend/internal/devices/service.go:217",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:196-220",
+        "backend/internal/devices/service.go:225-234",
+        "backend/internal/devices/service.go:263-273",
+        "backend/internal/devices/service.go:804-817",
+        "backend/internal/devices/service.go:975-976",
+        "backend/internal/devices/leasestore.go:89-95",
+        "backend/internal/devices/leasestore.go:101-123"
+      ],
+      "equivalent_path": "finishRelease previously parked the device after releaseControl and Shutdown, in a later save (service.go:268-269). It still parks there, now through parkLocked.",
+      "before_after": "Before: lease removal was saved first and the parked record only after finishRelease. A daemon stopping in between left an owned, running device with no lease and no parked record. After: parked is written under s.mu in the same saveLocked as the lease deletion (service.go:196-220). Open's replaced path (service.go:807) does the same before its save at service.go:817.",
+      "visible_effect": "A simulator or emulator AO booted is powered off by retireParked after a restart, even if the daemon stopped mid-release.",
+      "failure_mode": "If saveLocked fails, it is only logged (leasestore.go:120-122) and the record is lost as before. Close with shutdown=true that succeeds still deletes owned and parked (service.go:264-267). A device that is not owned is never parked (service.go:227). releaseIfGone deletes owned before endLeaseLocked (service.go:975-976), so a deleted device is not parked.",
+      "evidence_checked": true
+    },
+    {
+      "action": "retireParked keeps the parked/owned records saved until Shutdown succeeds, and lists per platform",
+      "location": "backend/internal/devices/service.go:349",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:349-413",
+        "backend/internal/devices/service.go:416-433",
+        "backend/internal/devices/service.go:435-443",
+        "backend/internal/devices/service.go:956-960",
+        "backend/internal/adapters/device/local/provider.go:601-604",
+        "backend/internal/ports/device.go:109-114"
+      ],
+      "equivalent_path": "releaseIfGone already uses ports.DevicePlatformLister, with the same fallback to List (service.go:956-960). The new listPlatform helper duplicates that logic but also filters the fallback's results by platform. The real provider's ListPlatform fails when that platform's listing failed (backend/internal/adapters/device/local/provider.go:601-604).",
+      "before_after": "Before: one List call, and parked/owned were deleted and saved before Shutdown, then restored on failure. After: one listing per platform. A platform whose list failed is skipped and stays parked. Records are removed only after Shutdown returns nil. `releasing` blocks Open, pick and idle checks during the shutdown (service.go:393-397, 435-443, 787-790).",
+      "visible_effect": "A running device is no longer forgotten, and so never powered off, when its platform listing failed while another platform's succeeded.",
+      "failure_mode": "A failed Shutdown leaves the records in place and is retried on the next pass (logged at Warn). A failed per-platform list is logged at Debug and retried. The `!running` branch (service.go:382-390) is reached only after a clean list of that platform.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Skip forgetStoppedLocked when a boot finished since Open's listing began (bootGen)",
+      "location": "backend/internal/devices/service.go:717",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/devices/service.go:717-727",
+        "backend/internal/devices/service.go:839-862",
+        "backend/internal/devices/service.go:1071-1091",
+        "backend/internal/devices/service.go:435-443"
+      ],
+      "equivalent_path": "Open's pre-existing sequence of List, then forgetStoppedLocked, then pickLocked. forgetStoppedLocked's only caller is Open (service.go:727).",
+      "before_after": "Before: a listing taken before a boot finished could show a just-booted owned device as off, and Open dropped ownership and the parked record. After: bootGen is read before List and incremented in boot()'s defer (service.go:1087). A mismatch skips the drop for that Open.",
+      "visible_effect": "A just-booted simulator stays AO's, so it is powered off when its session ends, and is not left running unowned.",
+      "failure_mode": "A boot that starts before the listing and finishes after changes bootGen, so the drop is skipped. A boot finished before listGen was read means the listing already shows the device running. A boot still in flight at drop time is excluded by idleLocked via s.booting. The cost of skipping is that cleanup of a user-stopped device is deferred to a later Open.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found nothing that breaks in `service.go`. I reviewed the whole file plus `leasestore.go`. The three changes hold up against the code I read:\n\n- **Park at lease removal:** `endLeaseLocked` now parks the device in the same save as the lease deletion.\n- **`retireParked`:** it lists per platform and keeps the saved records until the shutdown succeeds, with `releasing` held meanwhile.\n- **`bootGen`:** it stops a stale \"off\" listing from dropping ownership of a device that just booted.\n\nI found one test gap: `TestAListingFromBeforeABootDropsNothing` calls `forgetStoppedLocked` directly, so it would not catch a regression in where `Open` reads `bootGen`. I could not run the tests.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 287,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 12,
+      "costUsd": 0.3617606
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a4542d6c630184148510fd43d2a3a83eb7d32b87"
+  },
+  "execution": {
+    "costUsdEstimate": 0.3617606,
+    "usage": {
+      "input": 12,
+      "output": 8963,
+      "cacheRead": 235946,
+      "cacheWrite": 62128
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 12,
+    "durationMs": 76655,
+    "stop": "complete",
+    "notices": []
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9148` of ao-replay-9148 against f45b8691536cc9c1afcc64c6f02b9098b2ba2dab (merge-base f45b869)",
+    "repository": {
+      "name": "ao-replay-9148"
+    },
+    "base": {
+      "sha": "f45b8691536cc9c1afcc64c6f02b9098b2ba2dab",
+      "ref": "f45b8691536cc9c1afcc64c6f02b9098b2ba2dab"
+    },
+    "head": {
+      "sha": "b1b1070021914d6265e6ada4af11c09e229497a6",
+      "ref": "ao-replay/9148"
+    },
+    "title": "ao-replay/9148",
+    "description": "feat(mobile): list skills in the New task page's / menu",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.17.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "packages/mobile/app/spawn.tsx",
+      "packages/mobile/lib/api.ts",
+      "packages/mobile/lib/chat/ChatSessionScreen.tsx",
+      "packages/mobile/lib/chat/rememberedSkills.test.ts",
+      "packages/mobile/lib/chat/rememberedSkills.ts",
+      "packages/mobile/lib/disconnect.ts",
+      "packages/mobile/lib/spawn-composer-controls.android.tsx",
+      "packages/mobile/lib/spawn-composer-controls.ios.tsx",
+      "packages/mobile/lib/spawn-composer-controls.types.ts",
+      "packages/mobile/lib/spawn-composer.test.tsx",
+      "packages/mobile/lib/spawn-composer.tsx",
+      "packages/mobile/lib/spawn.source.test.ts",
+      "packages/mobile/lib/spawnSkills.test.ts",
+      "packages/mobile/lib/spawnSkills.ts"
+    ],
+    "reviewed": [
+      "packages/mobile/app/spawn.tsx",
+      "packages/mobile/lib/api.ts",
+      "packages/mobile/lib/chat/ChatSessionScreen.tsx",
+      "packages/mobile/lib/chat/rememberedSkills.ts",
+      "packages/mobile/lib/disconnect.ts",
+      "packages/mobile/lib/spawn-composer-controls.android.tsx",
+      "packages/mobile/lib/spawn-composer-controls.ios.tsx",
+      "packages/mobile/lib/spawn-composer-controls.types.ts",
+      "packages/mobile/lib/spawn-composer.tsx",
+      "packages/mobile/lib/spawnSkills.ts",
+      "packages/mobile/lib/chat/rememberedSkills.test.ts",
+      "packages/mobile/lib/spawn-composer.test.tsx",
+      "packages/mobile/lib/spawn.source.test.ts",
+      "packages/mobile/lib/spawnSkills.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "packages/mobile/lib/spawn-composer.tsx",
+      "line": 242,
+      "severity": "blocker",
+      "topic": "bug",
+      "confidence": "high",
+      "title": "Opening the \"/\" list re-renders the New task page forever",
+      "body": "The panel element is memoized on `[items, select, show]`, and `select` (line 228-239) depends on `onChangePrompt`. The page passes `onChangePrompt={edited(setPrompt)}` (app/spawn.tsx:1094), and `edited` (spawn.tsx:728) returns a new function on every `SpawnPage` render. The controls files forward it unchanged (spawn-composer-controls.ios.tsx:176), so there is no memo to stop it.\n\nWhile the list is shown, the loop runs like this:\n1. `SpawnPage` renders and hands the composer a new `onChangePrompt`.\n2. `select` changes, so `skills.panel` is a new element.\n3. The effect at line 100 calls `overlayHost({ panel, composerHeight })` with a new object.\n4. That is `setSuggestionOverlay` in the page (spawn.tsx:705), which re-renders `SpawnPage` and returns to step 1.\n\nThe comment at line 240-241 says a new element each render \"would loop\". It does loop here, because the memo is defeated by the unstable callback. The composer tests don't catch it: they use a stable `onChangePrompt` and a stable `host`.\n\nFix: keep the latest `onChangePrompt` in the `latest` ref and make `select` stable (`useCallback(..., [])`). Alternatively wrap `edited(setPrompt)` in `useCallback` in spawn.tsx. Prefer the first, since the hook then no longer depends on how the caller builds its handlers.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/lib/spawn-composer.test.tsx",
+      "line": 261,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "Host test uses a stable onChangePrompt, so it misses the render loop",
+      "body": "The test `hands the list to the page's host...` gives `baseProps` a single `onChangePrompt` and a stable `host`, and re-renders with the same function. The real page passes a new `onChangePrompt` on every render (spawn.tsx:1094). The test should re-render with a fresh `onChangePrompt` each time and assert that `host` isn't called again when nothing changed. That is the failure described in the finding on spawn-composer.tsx:242.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/lib/chat/rememberedSkills.ts",
+      "line": 25,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "A project's own skills are also stored as the agent-wide fallback",
+      "body": "The header comment says a project's own skills \"belong to that project's tasks only\". But `rememberChatSkills` also writes the list under the host+agent key on every call (line 25). `rememberedChatSkills` falls back to that key for any project with no list of its own (line 31). So project A's chat skills can show up in project B's New task \"/\" list, and in a standalone task's. Picking one there inserts a command that agent can't resolve. Consider storing the agent-wide key only when `projectId` is undefined, or filtering the fallback to non-project skills. If the leak is intended (so built-ins like `/compact` carry over), say so in the comment and note the trade-off.",
+      "anchor": "diff"
+    },
+    {
+      "path": "packages/mobile/app/spawn.tsx",
+      "line": 701,
+      "severity": "consider",
+      "topic": "cleanup",
+      "confidence": "high",
+      "title": "Comment for loadSkills is split from it by the overlay state",
+      "body": "The comment at lines 701-703 describes the skills loader and the Cloud exclusion. It is followed by an unrelated comment and the `suggestionOverlay` state (lines 704-705), and `loadSkills` comes after that. Move the first comment down to sit above `loadSkills`.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Open the \"/\" list on the New task page; the composer publishes its panel to the page through SpawnSuggestionHost",
+      "location": "packages/mobile/lib/spawn-composer.tsx:100",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/spawn-composer.tsx:100",
+        "packages/mobile/lib/spawn-composer.tsx:228-242",
+        "packages/mobile/app/spawn.tsx:728-731",
+        "packages/mobile/app/spawn.tsx:1094",
+        "packages/mobile/lib/spawn-composer-controls.ios.tsx:176"
+      ],
+      "equivalent_path": "ChatComposer's in-column suggestion panel (chat composer); the page-level overlay is new",
+      "before_after": "The effect pushes `{panel, composerHeight}` to the page's `setSuggestionOverlay` whenever `skills.panel` changes. The panel is memoized on `select`, which depends on the unstable `onChangePrompt` from `edited(setPrompt)`.",
+      "visible_effect": "The overlay should appear above the composer. With the unstable callback the page re-renders continuously while the list is open.",
+      "failure_mode": "Infinite update loop (setState in an effect, re-render builds a new handler, new panel, effect again) while the list is shown.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Load skills for the \"/\" list: getAgentSkills over HTTP, cached 30s, merged with the remembered chat list",
+      "location": "packages/mobile/lib/spawnSkills.ts:19",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/spawnSkills.ts:19-28",
+        "packages/mobile/lib/chat/asyncValueCache.ts:64-76",
+        "packages/mobile/lib/api.ts:1120-1130",
+        "packages/mobile/lib/spawn-composer.tsx:215-221"
+      ],
+      "equivalent_path": "getAgentModels / createAsyncValueCache use in spawnLoads",
+      "before_after": "Reads the remembered list, then `cache.load`; a rejection is not cached (asyncValueCache.ts:72-74). On failure it returns the remembered list if non-empty, otherwise rethrows. A 404 maps to an empty list in api.ts:1127.",
+      "visible_effect": "A failed load shows an empty list, via the composer's catch at spawn-composer.tsx:220. An unreachable machine with nothing remembered looks the same as a machine with no skills.",
+      "failure_mode": "Silent: the error becomes `[]` and the bare \"/\" shows the empty panel. A retry happens on the next open, since the failure is not cached.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Remember each chat's skills in a module-level Map and clear it when a machine is forgotten",
+      "location": "packages/mobile/lib/chat/ChatSessionScreen.tsx:380",
+      "status": "closed",
+      "evidence": [
+        "packages/mobile/lib/chat/ChatSessionScreen.tsx:377-382",
+        "packages/mobile/lib/chat/rememberedSkills.ts:23-37",
+        "packages/mobile/lib/disconnect.ts:24-25",
+        "packages/mobile/lib/disconnect.ts:68-69"
+      ],
+      "equivalent_path": "forgetRememberedTurnOptions in disconnect.ts, the existing per-session memory",
+      "before_after": "The effect writes on every change of `conversation.skills`. `forgetPairedHost` and `forgetServer` call `forgetRememberedChatSkills()` next to `forgetRememberedTurnOptions()`. Both clear all hosts, as the turn-options path does.",
+      "visible_effect": "A new task lists what the last chat of that agent on that machine reported, until the app restarts or a machine is forgotten.",
+      "failure_mode": "The Map is in memory only, so the list is lost on restart. See the finding on rememberedSkills.ts:25 for the cross-project fallback.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The new \\\"/\\\" skills list on the New task page has one blocker. Opening the list sends the page into an endless re-render, because the memoized panel depends on `onChangePrompt`, and the page builds a new `onChangePrompt` on every render. The composer tests don't catch it because they pass a stable callback. Two smaller points: a project's skills are also stored as the agent-wide fallback, so they can appear in other projects' lists, and one comment in `spawn.tsx` sits away from the code it describes. The API loader, cache, forget-on-disconnect wiring and the other tests look correct.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 14,
+      "lines": 480,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.28758059999999996
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "f45b8691536cc9c1afcc64c6f02b9098b2ba2dab"
+  },
+  "execution": {
+    "costUsdEstimate": 0.28758059999999996,
+    "usage": {
+      "input": 10,
+      "output": 7065,
+      "cacheRead": 201106,
+      "cacheWrite": 49200
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 59549,
+    "stop": "complete",
+    "notices": []
+  }
+}
