@@ -4,7 +4,8 @@ Every measurement of Wachiman against Pullfrog and CodeRabbit, in one place, wit
 and the runs behind each number. Newest first. Each line links to the full report; this page makes
 no claim the reports do not.
 
-- **Last updated:** 2026-11-26, v1.22.0 on Sonnet: the same Medium+ known bugs as v1.21.0, about 21% cheaper per review on the replay, and inside v1.9.0's spread on Martian.
+- **Last updated:** 2026-11-26, agent-orchestrator (React + Go): three versions on the same 24 CodeRabbit review events find about half of CodeRabbit's real defects, level with each other, so no regression; the gap is in small defects, not serious bugs.
+- **Earlier on 2026-11-26:** v1.22.0 on Sonnet: the same Medium+ known bugs as v1.21.0, about 21% cheaper per review on the replay, and inside v1.9.0's spread on Martian.
 - **Earlier on 2026-11-26:** why the older versions look better on known bugs: v1.3.0's share comes from Low items; on Medium bugs it catches the fewest.
 - **Earlier on 2026-11-26:** credential probe: a plain Claude Code call at Wachiman's $0.75 batch cap makes about 16 turns on an API key and about 11 on a subscription token.
 - **Previous update:** 2026-11-26, release bisect: the turns per batch call follow the credential (API key or subscription token); no release up to v1.15.0 cut them.
@@ -15,6 +16,42 @@ no claim the reports do not.
   reviewer, with the author's later fix where one exists
   ([list](2026-11-01/README.md#the-real-bugs-severity-medium-or-high)).
 - **t3code cases (2026-11-12):** escaped and replayed bugs of pingdotgg/t3code as a second unit next to Martian, one row per run set in [t3code/history.md](t3code/history.md); the key is [t3code/cases.tsv](t3code/cases.tsv).
+
+## Three versions against CodeRabbit on agent-orchestrator (2026-11-26, 24 review events)
+
+**Short version: v1.4.0, v1.9.0 and v1.17.0 each find about half of the real defects CodeRabbit
+finds on the same review events. The three are level, so the gap is not a regression: it has been
+there since the first versions. It sits in the volume of small defects. On serious bugs Wachiman is
+close to CodeRabbit, which matches Martian.**
+
+- **Unit:** 11 merged PRs of OrchestratorInc/agent-orchestrator (React + Go), split into the 24
+  CodeRabbit review events they received. Each event is the commit and the exact range CodeRabbit
+  reviewed; every Wachiman version reviewed the same range. All findings of all tools were judged
+  blind, with one brief, in one pass
+  ([report](agent-orchestrator/README.md#three-wachiman-versions-on-the-same-events-2026-11-26)).
+  One run per version.
+
+  | Tool | Findings | Real | Style | False | Medium or high | Shared with CodeRabbit | Only this tool | Cost |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | CodeRabbit | 62 | 56 | 2 | 4 | 18 | | 32 vs all three versions | |
+  | v1.4.0 | 65 | 25 | 37 | 2 | 10 | 14 | 11 | $8.54 |
+  | v1.9.0 | 60 | 27 | 28 | 3 | 11 | 16 | 11 | $8.41 |
+  | v1.17.0 | 64 | 23 | 40 | 0 | 8 | 12 | 11 | $8.78 |
+
+- **What it means:** every version also finds about 11 real defects CodeRabbit missed, and the
+  only high-severity defect (PR #9148) was found by CodeRabbit, v1.4.0 and v1.17.0. Only 9
+  defects were found by all three versions; the union of the three runs reaches 45, so one run is
+  a sample. Between 47% (v1.9.0) and 63% (v1.17.0) of Wachiman's findings are style suggestions,
+  the first noise to cut.
+- **Why CodeRabbit finds more** ([analysis](agent-orchestrator/why-coderabbit-found-more.md)):
+  defects outside the changed lines, async interleaving, and rules from its project memory
+  (4 of its 62 comments). The gap is about 2x in both Go and TypeScript, so Go support is not the
+  main cause.
+- **Why Martian looked closer:** Martian scores only its curated High/Critical bugs. On its Cal.com
+  PRs, v1.9.0 on Sonnet high found 18, 17 and 16 of the 19 in three runs (15–18 across all nine
+  v1.9.0 runs, `martian/runs/*v1.9.0*/data/evaluations/wachiman.json`) and CodeRabbit 18 of 19, with
+  the same judge ([Martian reference](martian/reference/README.md)). This unit counts every real
+  defect, so the small ones show the gap.
 
 ## v1.22.0 on Sonnet (2026-11-26, kaipu-record five PRs and Martian)
 
