@@ -1,0 +1,30 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.37,
+ "findings": [
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "retireParked forgets a running simulator, without shutting it down, when its platform failed to list",
+   "path": "backend/internal/devices/service.go",
+   "line": "341",
+   "body": "`retireParked` calls `Provider.List` (service.go:331). The local provider's `List` still succeeds when one platform's listing fails: it returns the other platform's devices and only records the failure in `listReport`'s `failed` map (provider.go:596-599, 640-644). A parked iOS simulator is then missing from `devices`, so `running` stays false (service.go:341-347). The code then deletes `s.parked[key]` and `s.owned[key]`, saves, and skips the shutdown (service.go:353-366). The simulator keeps running and AO no longer tracks it, which is the leak this PR is meant to fix. It happens silently, and no later pass retries it. A transient `simctl` error while the Android listing succeeds is enough to trigger it.\n\n`releaseIfGone` already handles this case. It uses `DevicePlatformLister.ListPlatform` so that only a clean listing of the device's own platform counts as proof the device is gone (service.go:894-909, ports/device.go:111-114). `retireParked` should do the same: group the ended devices by platform, call `ListPlatform` where the provider supports it, and keep the record (retry next pass) when that call errors. The PR body says this is done (\"decided per platform (`ListPlatform`)\", `TestRetiringKeepsADeviceWhosePlatformFailedToList`), but neither the code nor that test is in the head commit. No test in this diff covers a partial listing failure."
+  },
+  {
+   "severity": "consider",
+   "kind": "bug",
+   "title": "Parked record is persisted too late and dropped too early, so a daemon stop can lose the power-off",
+   "path": "backend/internal/devices/service.go",
+   "line": "353",
+   "body": "There are two windows where the persisted record is wrong:\n\n1. `endLeaseLocked` saves `leases.json` with the lease removed and `owned` still set, but no `parked` entry (service.go:207-211). `finishRelease` writes the parked entry only after `releaseControl` (a hub call) and the optional `Shutdown` return (service.go:235-255). If the daemon stops inside that window, the restart loads an owned device with no lease and no parked record. Nothing will ever retire it.\n2. `retireParked` deletes the parked and owned entries and saves them before calling `Shutdown` (service.go:353-367). It re-adds them only if `Shutdown` returns an error. A daemon stop during that call (up to `retireTimeout`, 2 min) loses the record.\n\nThe PR body says the follow-ups address both: \"the parked record is saved with the lease removal, kept until the power-off succeeds\", with tests `TestTheLeaseRemovalSavesTheParkedDevice` and `TestRetiringKeepsTheRecordUntilTheShutdownSucceeds`. Neither the code nor the tests are in this head, and a repo-wide search for those test names finds nothing. Either push the follow-up commits or correct the description. As written, `TestParkedDevicesSurviveADaemonRestart` only covers the case where `finishRelease` completed before the restart."
+  },
+  {
+   "severity": "consider",
+   "kind": "bug",
+   "title": "forgetStoppedLocked acts on a device list taken before the lock",
+   "path": "backend/internal/devices/service.go",
+   "line": "676",
+   "body": "`devices` comes from `Provider.List` at line 669, outside `s.mu`. `forgetStoppedLocked` then drops `owned` and `parked` for any device listed as off that is `idleLocked` at line 676. If a boot, lease and release of that device all complete between the list and the lock, the device is running and parked but the stale list says off. Its ownership is dropped and it is never powered off. The window is narrow. The PR body lists this guard (`TestAListingFromBeforeABootDropsNothing`) as done, but it is not in the head. Is it going to be added?"
+  }
+ ]
+}

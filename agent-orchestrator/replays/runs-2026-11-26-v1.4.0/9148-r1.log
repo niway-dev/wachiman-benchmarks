@@ -1,0 +1,55 @@
+evidence: 25 symbol(s) found, 24 call site(s), 15170 bytes, 2418 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":12,"cost_usd":0.2787014,"duration_ms":52707}
+--- review at b1b1070 ---
+👮 **Wachiman** · review of the whole pull request, at `b1b1070`: all 14 files reviewed.
+
+2 finding(s): 1 blocker(s), 1 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+Typing \"/\" in the New task field will put the page in a render loop. `edited(setPrompt)` is a new function on every `SpawnPage` render, so `select` and `panel` in `useSkillSuggestions` are new each time. The effect that pushes `panel` into `SpawnPage` state then fires every render. The tests miss this because they pass stable props. I also flagged one garbled comment in `app/spawn.tsx`. The rest looks sound: the backend route exists, a 404 maps to an empty list, and the remembered-skills cleanup matches the sibling turn-options path.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Composer hands its "/" panel to the page through SpawnSuggestionHost (page state) and clears it on unmount (`packages/mobile/lib/spawn-composer.tsx:100`) — The list floats above the composer. Because `panel` is rebuilt on each page render (select depends on edited(setPrompt)), the push repeats every render and the page loops once "/" opens it. If it fails: Render loop or max-update-depth error while the list is open (see finding). Evidence: `packages/mobile/app/spawn.tsx:728-731`, `packages/mobile/app/spawn.tsx:1094`, `packages/mobile/lib/spawn-composer.tsx:100-101`, `packages/mobile/lib/spawn-composer.tsx:228-242`.
+- loadSpawnSkills reads GET /agents/{agent}/skills, merges with the last list a chat reported, and caches the scan for 30s (`packages/mobile/lib/spawnSkills.ts:19`) — The "/" list shows remembered chat skills first, then skills found on disk. When the scan fails and a chat list exists, the chat list is shown. When neither exists the composer treats the failure as an empty list. If it fails: A rejection is caught in the composer and shown as an empty list, with no error message. The failure is quiet but not lost for the rest of the session: it is retried each time the list opens (unless… Evidence: `packages/mobile/lib/chat/useConversation.ts:62`, `packages/mobile/lib/chat/useConversation.ts:394`, `backend/internal/httpd/controllers/agents.go:49-55`, `packages/mobile/lib/api.ts:1120-1130`, `packages/mobile/lib/spawn-composer.tsx:215-221`.
+- Remembered chat skill lists are written from ChatSessionScreen and cleared on forget (`packages/mobile/lib/chat/ChatSessionScreen.tsx:380`) — A new task lists the same skills as the last chat of that agent on that machine. If it fails: The in-memory map is lost on app restart, which just falls back to the disk scan. Evidence: `packages/mobile/lib/disconnect.ts:24-25`, `packages/mobile/lib/disconnect.ts:68-69`, `packages/mobile/lib/chat/rememberedSkills.ts:23-37`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 14 | 480 | 4 | reviewed | 12 | $0.28 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.28</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=b1b1070021914d6265e6ada4af11c09e229497a6 -->
+--- packages/mobile/lib/spawn-composer.tsx:242 ---
+👮 **Wachiman** · 🔴🐛 **Blocker · bug: Opening the "/" list on the New task page loops: the panel element changes on every page render and each change re-renders the page (confidence high)**
+
+The comment at 240-241 says the panel must be the same element while nothing changes, because the page holds it in state, "so a new one each render would loop". It does not hold on the real page.
+
+`app/spawn.tsx:1094` passes `onChangePrompt={edited(setPrompt)}`. `edited` (spawn.tsx:728) returns a new function on every render of `SpawnPage`. That new function reaches `useSkillSuggestions`, so `select` (the `useCallback` at 228-239, deps `[onChangePrompt]`) is new every render. The `panel` `useMemo` at 242 lists `select` as a dep, so while `show` is true it also returns a new element every render. The effect at spawn-composer.tsx:100 then calls `overlayHost(...)`, which is `setSuggestionOverlay` (spawn.tsx:705). That stores a new object, so `SpawnPage` re-renders, `edited(setPrompt)` is new again, and the cycle repeats.
+
+Once the user types `/` with focus in the field, the page re-renders in a loop. React either aborts with a "Maximum update depth exceeded" error or the app spins on the JS thread.
+
+The tests miss it. They pass a stable `onChangePrompt` (a `vi.fn()` or the `baseProps` default) and a stub host that does not set state, so nothing re-renders.
+
+Fix: read `onChangePrompt` through a ref inside `select`, for example `const latestChange = useRef(onChangePrompt); latestChange.current = onChangePrompt;`, and give `select` empty deps. `latest.current` is already read the same way. Add a test that mounts the composer under a host that sets state in a parent whose `onChangePrompt` is a new function each render.
+
+<!-- wachi:finding -->
+--- packages/mobile/app/spawn.tsx:704 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: Two comments run together above the overlay state (confidence high)**
+
+The block at 701-704 starts as a description of `loadSkills` ("The \"/\" list's skills, read from the machine when it opens ... A Cloud task's agent runs in its sandbox"). Its last line, "The open \"/\" list, drawn over the page above the composer", describes `suggestionOverlay`. The result reads as one comment about the wrong declaration. Split it: put the overlay line above `useState`, and the skills/Cloud explanation above `loadSkills` at line 709.
+
+<!-- wachi:finding -->

@@ -1,0 +1,57 @@
+evidence: 12 symbol(s) found, 22 call site(s), 14637 bytes, 2412 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":21,"cost_usd":0.38678680000000004,"duration_ms":91639}
+--- review at fb22a43 ---
+👮 **Wachiman** · review of the whole pull request, at `fb22a43`: all 6 files reviewed.
+
+3 finding(s): 1 to fix, 2 to consider; 3 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The restore-wait design holds together: the map key matches the surface's host and session key, and a failed restore uploads nothing for inline files. One bug: a file removed during the restore wait is still uploaded, and large files upload before the wait, which contradicts the PR body. The body also lists tests that are not in the diff. I could not establish whether the claimed own-files guard exists in `ChatComposer`, so that is a question.
+
+<details><summary>What the change connects to (2 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- Composer accepts paste, drop and picker files during an optimistic send (`frontend/src/renderer/components/chat/ChatComposer.tsx:2444`) — Does a file added during an optimistic send whose draft has its own attachments survive acceptance exactly once? Files that would answer it: `frontend/src/renderer/lib/chat-drafts.ts`, `frontend/src/renderer/hooks/useFileAttachments.ts`.
+
+**Closed, with the lines they rest on**
+- Stage attachments for an archived chat while its restore runs (`frontend/src/renderer/hooks/useConversation.ts:2438`) — A pasted or dropped file shows as attaching during 'Restoring session', then as staged. If it fails: If the restore fails, the stage call rejects with `SESSION_RESTORE_FAILED` and uploads nothing. If the file is removed during the wait, the abort signal is ignored after the await, so the file is upl… Evidence: `frontend/src/renderer/hooks/useConversation.ts:1243-1269`, `frontend/src/renderer/hooks/useConversation.ts:2437-2439`, `frontend/src/renderer/lib/attachment-uploads.ts:72-74`, `frontend/src/renderer/hooks/useFileAttachments.ts:103-107`.
+- Offer onStageAttachments while commands.resumingAgent is true (`frontend/src/renderer/components/chat/SessionChatSurface.tsx:955`) — The Attach button and paste/drop are enabled during the restore. If it fails: When the restore fails, `resumingAgent` goes false and the stager is withdrawn again. Files already waiting reject with the restore error. Evidence: `frontend/src/renderer/components/chat/SessionChatSurface.tsx:219`, `frontend/src/renderer/components/chat/SessionChatSurface.tsx:446`, `frontend/src/renderer/components/chat/SessionChatSurface.tsx:903`, `frontend/src/renderer/components/chat/SessionChatSurface.tsx:955`, `frontend/src/renderer/hooks/useConversation.ts:1243`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 6 | 153 | 4 | reviewed | 21 | $0.39 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.39</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=fb22a438eafe7cc3e1dba99681e052223caacee3 -->
+--- frontend/src/renderer/hooks/useConversation.ts:2438 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: A file removed while it waits for the restore is still uploaded; large files upload before the wait (confidence high)**
+
+The PR body says "A file removed while it waits is never uploaded" and "nothing is uploaded before the worktree is back". The code does neither. `useStageAttachments` runs `toWireAttachments(attachments, hostId, signal)` first (line 2437), which uploads any file too large to inline (`attachment-uploads.ts:72-74`). It then awaits `restoresInFlight` (line 2438) and POSTs to `/attachments` (2439). The POST is not given `signal`, and `signal.aborted` is not checked after the await. `useFileAttachments` aborts the signal when the person removes the pending file (`useFileAttachments.ts:103-107`). That abort does nothing here after `toWireAttachments`. So a file the user removes during a 7–28 s restore is still written into the restored worktree, and its result is dropped by the caller. A large file also reaches the daemon before the restore finishes, and still does if the restore fails.
+
+Fix: await `restoresInFlight` first. Then `signal?.throwIfAborted()`, then `toWireAttachments`. Pass `signal` to the POST. Add the removed-while-waiting test the PR body lists.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/hooks/useConversation.test.tsx:1743 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: Tests the PR body lists are missing from the diff (confidence high)**
+
+The PR body lists tests for a file removed during the restore (stages nothing), a file-only Enter being held, a failed restore showing its reason, and no file being taken during an ordinary send or a restore whose message has files of its own. The diff adds only these tests: stage-after-restore, stage-nothing-on-restore-failure, one composer test where the next file lands after the send, and the surface gating test. The removed-file test would have caught the abort gap on `useConversation.ts:2438`. Nothing covers the sent-message-has-own-files case, which the new `acceptsFiles` and `stripAttachments` code handles.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/components/chat/ChatComposer.tsx:2444 ---
+👮 **Wachiman** · 🟡❓ **Consider · question: Is attaching meant to stay closed when the message being sent has its own files? (confidence low)**
+
+The PR body says the composer takes next-message files "only when the message being sent has no files of its own" and that attaching stays closed otherwise, as on `main`. `acceptsFiles()` and `attachBlocked` (line 956) never check `durableDelivery?.draft?.attachments`. They open on `optimisticSend` alone. Lines 929-931 instead filter the sent ids out of the strip, so the code appears to allow sent and next files in the box together. After acceptance, `clearAcceptedChatComposer` keeps `composer.attachments` unfiltered when `delivery.draft` is set (`chat-drafts.ts:1665-1667`). Can a file added during a send that has its own files be dropped or sent twice? If the body is right, add the guard. If the mix is intended, update the body and add a test.
+
+<!-- wachi:finding -->

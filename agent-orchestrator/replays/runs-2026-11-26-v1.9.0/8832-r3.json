@@ -1,0 +1,130 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8832-r3` of ao-replay-8832-r3 against bcf05194acd0b462a62de99536e592eba6ae3f43 (merge-base bcf0519)",
+    "repository": {
+      "name": "ao-replay-8832-r3"
+    },
+    "base": {
+      "sha": "bcf05194acd0b462a62de99536e592eba6ae3f43",
+      "ref": "bcf05194acd0b462a62de99536e592eba6ae3f43"
+    },
+    "head": {
+      "sha": "a235f63ffdf2042b26d45188460d263fdb9efaf8",
+      "ref": "ao-replay/8832-r3"
+    },
+    "title": "ao-replay/8832-r3",
+    "description": "fix(chat): load the \"@\" path list when the chat shows, from the cheap route",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.file-paths.test.ts",
+      "frontend/src/renderer/hooks/useConversation.ts"
+    ],
+    "reviewed": [
+      "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "frontend/src/renderer/hooks/useConversation.ts",
+      "frontend/src/renderer/hooks/useConversation.file-paths.test.ts"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/hooks/useConversation.ts",
+      "line": 2216,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Module-level \"no paths route\" cache is never cleared, so an upgraded host stays on the slow fallback",
+      "body": "`hostsWithoutPathsRoute` (line 2216) is added to on the first ROUTE_NOT_FOUND (line 2223) and never removed. Nothing resets it when a host disconnects and reconnects (`disconnectHost` in `frontend/src/renderer/lib/host-clients.ts:84`) or when the remote daemon is upgraded. After the remote daemon gains the cheap `/workspace/paths` route, this renderer keeps using the heavier `/workspace/files` listing until the window reloads. Nothing shows the user this is happening. The same applies to the local key `\"\"` if the local daemon is swapped without a reload. Clear the entry in `disconnectHost`/`connectHost`, or expire it after a TTL. A later success on the paths route would also need to clear it, so the set cannot go stale. The test never resets the set either. It passes only because the first test never adds `box-a`, so reordering the tests would make the 'reads paths from the paths route' test hit the fallback.",
+      "anchor": "diff"
+    },
+    {
+      "path": "frontend/src/renderer/components/chat/SessionChatSurface.tsx",
+      "line": 435,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Path list now loads, and for remote hosts polls, for every open session chat",
+      "body": "The `fileMenuAsked` gate is gone, so `useWorkspaceFilePaths` runs for every mounted session chat whether or not the user types `@`. For a remote host (`hostId` set), `refetchInterval` in `useConversation.ts:2256` is 30 s, so each viewed remote chat now polls the full workspace path list every 30 s, even when the menu is never opened. The comment at `useConversation.ts:2250` still says this is refetched \"on demand rather than polled\", which is now untrue for remote sessions. If the eager load is intended, consider not polling remote sessions until the menu has been asked for. Otherwise update the comment.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Chat surface loads workspace file paths on mount instead of on first \"@\" query",
+      "location": "frontend/src/renderer/components/chat/SessionChatSurface.tsx:435",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:2245-2276",
+        "frontend/src/renderer/components/chat/ChatComposer.tsx:868-869"
+      ],
+      "equivalent_path": "CloudSessionChatSurface still passes onFileQuery (CloudSessionChatSurface.tsx:2492); ChatComposer calls onFileQuery when fileQuery changes (ChatComposer.tsx:868)",
+      "before_after": "Before: the query was enabled only after the composer reported a file query. After: it is enabled once a snapshot exists and the session does not need resume. ChatWorkspace/ChatComposer keep the optional prop, which is now unused by this surface.",
+      "visible_effect": "The \"@\" menu has data ready on first use. Remote sessions poll every 30 s from mount.",
+      "failure_mode": "The query has retry:false. An error is recorded through recordWorkspaceResult and the menu is empty, so there is no new silent loss.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Cache hosts whose daemon returned ROUTE_NOT_FOUND for the paths route and skip it afterwards",
+      "location": "frontend/src/renderer/hooks/useConversation.ts:2216-2225",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/hooks/useConversation.ts:2216-2225",
+        "frontend/src/renderer/lib/host-clients.ts:84"
+      ],
+      "equivalent_path": "Single other caller NewChatPage.tsx:127 passes the same (sessionId, hostId) and also benefits",
+      "before_after": "Before: each call tried /workspace/paths and then fell back on 404. After: the first 404 for a hostId sets a sticky flag, so later calls go straight to /workspace/files.",
+      "visible_effect": "One fewer wasted request per refetch on old daemons.",
+      "failure_mode": "The flag is never invalidated on reconnect or upgrade, so a host stays on the heavier route until reload. The error is silent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "Small, mostly sound change with two comment-level concerns. The ROUTE_NOT_FOUND cache is never invalidated, so an upgraded host stays on the slow `/workspace/files` fallback until reload. The eager path load also makes every viewed remote chat poll every 30 s, and a comment still says the list is not polled.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 3,
+      "lines": 18,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 7,
+      "costUsd": 0.1238747
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "bcf05194acd0b462a62de99536e592eba6ae3f43"
+  },
+  "execution": {
+    "costUsdEstimate": 0.1238747,
+    "usage": {
+      "input": 6,
+      "output": 3252,
+      "cacheRead": 48827,
+      "cacheWrite": 21615
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 7,
+    "durationMs": 27202,
+    "stop": "complete",
+    "notices": []
+  }
+}

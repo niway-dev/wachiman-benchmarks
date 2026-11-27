@@ -1,0 +1,166 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8720-r1` of ao-replay-8720-r1 against fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8 (merge-base fc15acf)",
+    "repository": {
+      "name": "ao-replay-8720-r1"
+    },
+    "base": {
+      "sha": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8",
+      "ref": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8"
+    },
+    "head": {
+      "sha": "06f399b87ed0bd9bfb0d68708c3dc8b882516316",
+      "ref": "ao-replay/8720-r1"
+    },
+    "title": "ao-replay/8720-r1",
+    "description": "perf(spawn): stop new chats waiting on repeat git downloads",
+    "author": "ronish"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+      "backend/internal/gitdefault/resolver.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager.go",
+      "backend/internal/session_manager/manager_test.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+      "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "backend/internal/gitdefault/resolver.go",
+      "backend/internal/ports/outbound.go",
+      "backend/internal/session_manager/manager_test.go",
+      "backend/internal/session_manager/manager.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/auto_default_test.go",
+      "line": 143,
+      "severity": "fix",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "TestWorktreeRefsReuseTheRefreshLookup passes an unresolved repo path, so its liveDefaultAt key will not match on macOS",
+      "body": "`ResolveDefaultBranch` runs `physicalAbs(repoPath)` (workspace.go:192) and records `liveDefaultAt` under the symlink-resolved path (workspace.go:2114). The test then calls `resolveWorktreeRefsWithBudget(ctx, repo, ...)` with the raw `t.TempDir()` path. Production callers of `resolveWorktreeRefs` pass a physical path (`repoPathForConfig` at workspace.go:2246, and 447/472), so this only affects the test.\n\nOn macOS `t.TempDir()` sits under `/var/folders/...`, which resolves to `/private/var/...`. The keys then differ and `liveDefaultCurrent` returns false. With `background=false` the call falls through to `Resolve`. That runs a second `ls-remote` and a `fetch`, so the assertion `lsRemote == 1 && fetches == 0` at line 151 fails. It passes on Linux, where the temp dir is not a symlink. I did not run it. Resolve the path first, for example `filepath.EvalSymlinks(repo)` or `physicalAbs(repo)`, before building the workspace and calling the function.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/session_manager/manager.go",
+      "line": 2237,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Resolution loop now does network work outside the shared refresh deadline, so spawn latency can multiply by child-repo count",
+      "body": "The comment at manager.go:2253 says one deadline covers the whole refresh so a slow or offline repository cannot multiply spawn latency by the number of child repos. `ResolveDefaultBranch` used to be local-only. For an automatic default with no usable cached HEAD, it now runs `Resolve`, a live `ls-remote` plus `fetch`, with its own fresh 5s `defaultBranchResolutionBudget` (workspace.go:198). That loop runs sequentially for the root and every child repo, before `fetchCtx` is created at line 2255.\n\nA workspace project with N child repos that have no `refs/remotes/origin/HEAD` and an unreachable or slow remote can therefore block a start for up to roughly N×5s in the resolution loop alone. The updated comment at 2234-2235 says the adapter bounds this, but only per repo. Options are to pass a shared deadline into the resolution loop, or to resolve cheaply first (`Inspect`) and defer live lookups to the bounded fetch phase.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "line": 2072,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "medium",
+      "title": "\"concurrent starts launch one lookup\" is not guaranteed: the window check and the record are not atomic",
+      "body": "`resolveAutomaticDefault` reads `liveDefaultCurrent` (line 2053), then runs `Inspect`, which is several git subprocesses. Only after that does `refreshRemoteHeadInBackground` call `recordLiveDefault` (line 2075). Two concurrent starts of the same repo past the window can both see `current == false`, so both launch a lookup. The cost is only a duplicate `ls-remote`. A single check-and-set under `liveDefaultMu` that returns whether the caller won would make the comment true. Otherwise soften the comment.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "Automatic default branch resolution answers from cached refs/remotes/origin/HEAD and re-asks the remote in a background goroutine once per 10-minute window",
+      "location": "backend/internal/adapters/workspace/gitworktree/workspace.go:2051",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2051-2070",
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:2074-2086",
+        "backend/internal/gitdefault/resolver.go:94-111",
+        "backend/internal/gitdefault/resolver.go:201-225"
+      ],
+      "equivalent_path": "Previously `gitdefault.Resolver.Resolve` ran a live ls-remote plus fetch on every ResolveDefaultBranch and every worktree creation (workspace.go:1997 before the change).",
+      "before_after": "Before: two live lookups and fetches per spawn. After: within the window or on a cached HEAD, `Inspect` answers locally (resolver.go:94). The second resolution in a spawn (worktree creation) is current because the first recorded the attempt, so it also skips the network. Without a cached HEAD the caller still waits on `Resolve`, bounded by a 5s remoteCtx.",
+      "visible_effect": "Faster session start. Default-branch renames are picked up one start late. Worktree creation no longer fetches when the window is current; it depends on the manager's fetch.",
+      "failure_mode": "A background lookup failure (offline, lock contention) is logged only, and the attempt is already recorded, so there is no retry for up to 10 minutes. The goroutine uses context.Background with a 5s timeout and is not awaited in production.",
+      "evidence_checked": true
+    },
+    {
+      "action": "Manager skips the foreground fetch when resolution already fetched, and refreshes a recently fetched base in the background with a 1-minute limit",
+      "location": "backend/internal/session_manager/manager.go:2261",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/session_manager/manager.go:2257-2283",
+        "backend/internal/session_manager/manager.go:2289-2299",
+        "backend/internal/session_manager/chat_spawn_async.go:640-651",
+        "backend/internal/gitdefault/resolver.go:157-172"
+      ],
+      "equivalent_path": "The existing `defaultBranchFetchedRecently` 30s skip at manager.go:2269, followed by a foreground fetch under fetchCtx.",
+      "before_after": "Before: a fetch within fetchCtx on every start outside the 30s window. After: if Fetched, record fetch and fresh and skip. If fresh within 10 minutes, start with the local base and fetch via runInBackground under backgroundContext. Otherwise fetch in the foreground as before and record fresh only on success.",
+      "visible_effect": "The session may be created from a base up to 10 minutes old while the fetch completes afterwards. A failed background fetch is logged and not retried until a later start.",
+      "failure_mode": "A background fetch error only logs a warning (manager.go:2301). `runInBackground` is tracked by backgroundWorkers (chat_spawn_async.go:640) and uses backgroundContext, defaulting to context.Background (manager.go:1076). Fetched is true only for SourceLiveRemoteHead, so an offline cached fallback is not treated as a fetch (resolver.go:171).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Bounds on the whole wait: resolution budget and foreground waits",
+      "location": "backend/internal/adapters/workspace/gitworktree/workspace.go:198",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/workspace/gitworktree/workspace.go:198-200",
+        "backend/internal/session_manager/manager.go:2236-2256"
+      ],
+      "equivalent_path": "The shared `fetchCtx` deadline in manager.go:2255 bounds the fetch loop. Worktree creation uses `resolveWorktreeRefsWithBudget` (workspace.go:2117).",
+      "before_after": "ResolveDefaultBranch's remoteCtx (5s) covers ls-remote and fetch together within one call. The manager's resolution loop is sequential per repo and sits outside fetchCtx, so the worst case is N×5s when repos have no cached HEAD and the remote is slow. Local git probes use the caller's ctx with no extra bound, as before.",
+      "visible_effect": "A spawn of a workspace project with several uncached child repos and a slow or offline remote can wait several multiples of 5s before the fetch phase.",
+      "failure_mode": "Resolution error is logged, then the target is skipped with an adapter fallback (manager.go:2239). It is not silent.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is coherent: it avoids a duplicate live lookup and fetch per spawn, and the fakes in the new tests line up with the resolver's git calls. I found three things, none a blocker. (1) `TestWorktreeRefsReuseTheRefreshLookup` passes an unresolved temp path while `liveDefaultAt` is keyed by the resolved path. It will most likely fail on macOS, where `t.TempDir()` is under a symlink. I did not run it. (2) The manager's resolution loop now performs per-repo network lookups, up to 5s each, before the shared fetch deadline starts. A workspace with many uncached child repos on a slow remote could multiply the wait. (3) The comment that concurrent starts launch only one lookup is not guaranteed, because the window check and the record are separate steps.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 7,
+      "lines": 517,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 13,
+      "costUsd": 0.45993639999999997
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "fc15acf55a68d530a4b71b5ee357ffd8a6ad36a8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.45993639999999997,
+    "usage": {
+      "input": 16,
+      "output": 14330,
+      "cacheRead": 422404,
+      "cacheWrite": 68591
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 13,
+    "durationMs": 118437,
+    "stop": "complete",
+    "notices": []
+  }
+}

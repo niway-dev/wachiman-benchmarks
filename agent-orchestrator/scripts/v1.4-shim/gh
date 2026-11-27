@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+# Offline stand-in for `gh`, for replaying Wachiman v1.4.0 on one review event.
+# Answers only the reads the engine makes, from the local clone at SHIM_BASE..SHIM_HEAD.
+# Every write is refused. Never touches the network.
+import base64, json, os, subprocess, sys
+A = sys.argv[1:]
+CLONE, BASE, HEAD, PR = os.environ["SHIM_CLONE"], os.environ["SHIM_BASE"], os.environ["SHIM_HEAD"], os.environ["SHIM_PR"]
+LOG = os.environ.get("SHIM_LOG", "/dev/null")
+with open(LOG, "a") as f: f.write(json.dumps(A)[:300] + "\n")
+def git(*a, check=True):
+    return subprocess.run(["git", "-C", CLONE, *a], capture_output=True, text=True, check=check).stdout
+def out(obj, jq=None):
+    s = json.dumps(obj)
+    if jq:
+        r = subprocess.run(["jq", "-r", jq], input=s, capture_output=True, text=True)
+        if r.returncode: sys.stderr.write(r.stderr); sys.exit(1)
+        s = r.stdout
+    sys.stdout.write(s if s.endswith("\n") else s + "\n"); sys.exit(0)
+def fail(msg, status):
+    sys.stderr.write(f"gh: {msg} (HTTP {status})\n"); sys.stdout.write('{"message":"%s"}\n' % msg); sys.exit(1)
+def files():
+    res = []
+    for line in git("diff", "--numstat", "-z", "--no-renames", BASE, HEAD).split("\0"):
+        if not line.strip(): continue
+        add, dele, path = line.split("\t", 2)
+        patch = git("diff", "--no-renames", "--no-color", BASE, HEAD, "--", path)
+        i = patch.find("\n@@")
+        p = patch[i + 1:] if i >= 0 else None
+        sha = git("rev-parse", f"{HEAD}:{path}", check=False).strip() or None
+        res.append({"filename": path, "additions": int(add) if add != "-" else 0,
+                    "deletions": int(dele) if dele != "-" else 0, "patch": p.rstrip("\n") if p else None, "sha": sha})
+    return res
+jq = A[A.index("--jq") + 1] if "--jq" in A else None
+if A[:1] == ["api"]:
+    if "-X" in A or "--method" in A or "--input" in A: fail("shim refuses writes", 403)
+    path = next(a for a in A[1:] if a.startswith("repos/") or a == "graphql")
+    if path == "graphql":
+        out({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}, jq)
+    rest = path.split("/", 3)[3]
+    if rest == f"pulls/{PR}": out({"base": {"sha": BASE}, "head": {"sha": HEAD}, "number": int(PR)}, jq)
+    if rest == f"pulls/{PR}/files": out(files(), jq)
+    if rest in (f"pulls/{PR}/reviews", f"pulls/{PR}/comments"): out([], jq)
+    if rest.startswith("contents/"):
+        p, _, ref = rest[len("contents/"):].partition("?ref=")
+        r = subprocess.run(["git", "-C", CLONE, "cat-file", "-p", f"{ref}:{p}"], capture_output=True)
+        if r.returncode: fail("Not Found", 404)
+        if git("cat-file", "-t", f"{ref}:{p}").strip() != "blob": out({"type": "dir"}, jq)
+        out({"type": "file", "encoding": "base64", "content": base64.b64encode(r.stdout).decode()}, jq)
+    fail(f"shim does not know {path}", 404)
+if A[:2] == ["pr", "view"]:
+    meta = json.load(open(os.environ["SHIM_META"]))
+    meta.update({"headRefOid": HEAD, "files": [{"path": f["filename"], "additions": f["additions"], "deletions": f["deletions"]} for f in files()]})
+    want = A[A.index("--json") + 1].split(",")
+    out({k: meta.get(k) for k in want}, jq)
+if A[:2] == ["pr", "diff"]:
+    sys.stdout.write(git("diff", "--no-renames", BASE, HEAD)); sys.exit(0)
+sys.stderr.write(f"shim refuses: {A[:3]}\n"); sys.exit(1)

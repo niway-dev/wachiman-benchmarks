@@ -139,6 +139,36 @@ Measured on this sample:
 
 **Reading: nothing here shows that Go is worse. The lack of a Go benchmark is real and worth fixing.**
 
+## Is it a regression? Three versions
+
+v1.4.0 and v1.9.0 were replayed on the same 24 events and judged in one blind pass with v1.17.0 and
+CodeRabbit ([results](README.md#three-wachiman-versions-on-the-same-events-2026-11-26)). Each version
+finds 23 to 27 distinct real defects against CodeRabbit's 54, so the gap is not a regression. Only 9
+defects were found by all three versions and 24 by exactly one. Together the three runs reach 45, so part
+of the gap is that one Wachiman run is a sample of what it could find.
+
+## Why Martian looked close and this does not
+
+On [Martian's bench](../martian/README.md), Wachiman v1.9.0 on Sonnet 5.5 high reached 68% to 78% recall on
+Cal.com's 10 PRs over three runs, with 35% to 43% precision. CodeRabbit, re-judged through the same route on
+the same 10 PRs, had 78% recall and 33% precision. The two measurements answer different questions:
+
+| | Martian | This unit |
+| --- | --- | --- |
+| Answer key | 173 human-curated goldens, 66 of them High or Critical | every real defect either tool raised |
+| A real defect that is not on the key | counts as a false positive | counts for the tool that raised it |
+| What wins | finding the serious bugs someone listed | breadth, including many low-severity defects |
+| Severity of what CodeRabbit adds | | 40 of its 47 unique defects in the first pass are low |
+
+Martian's key is selective, so CodeRabbit's extra minor findings cost it precision instead of earning
+recall. Here, every real finding counts, and CodeRabbit raises many more small real defects. On the
+serious end the two results agree: on Martian Wachiman finds most High and Critical goldens (44 to 54 of
+66 across Sonnet runs), and here the only high-severity defect was found by CodeRabbit and by two of the
+three versions.
+
+Reading: Wachiman is close to CodeRabbit on the serious bugs a curator lists, and well behind it on the
+volume of small real defects in a busy repository. Both are true; which one matters is a product choice.
+
 ## What is known and what is not
 
 | Claim | Status |
@@ -150,6 +180,8 @@ Measured on this sample:
 | 3 CodeRabbit-only defects came from its learnings | Measured from the label |
 | Learnings explain more than those 3 | Unknown |
 | Go is not worse than TypeScript for Wachiman | Consistent with this sample, too small to settle |
+| The gap is not a regression | Measured: v1.4.0, v1.9.0 and v1.17.0 are level, one run each |
+| Martian and this unit disagree because their answer keys differ | Reasoned from the two methods, not tested |
 
 ## Next checks
 

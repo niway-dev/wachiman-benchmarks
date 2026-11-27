@@ -1,0 +1,69 @@
+evidence: 55 symbol(s) found, 30 call site(s), 16079 bytes, 2264 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":14,"cost_usd":0.3359229,"duration_ms":79333}
+--- review at dbf9107 ---
+👮 **Wachiman** · review of the whole pull request, at `dbf9107`: all 14 files reviewed.
+
+4 finding(s): 4 to consider; 4 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The change is sound: the new endpoint, scanner and tests agree with the existing skill code I read. I found no blockers or fixes, and all four findings are "consider".
+
+- **Telemetry docs:** `docs/telemetry.md` and the comment in `api-client.ts` say an old remote host "stays quiet". Only Sentry is skipped for its 404. The `ao.requests.failed` analytics event still goes out.
+- **Controller cost:** the handler calls the full `Projects.Get`, which can wait up to 2 s on GitHub when its cache is cold, and swallows every error from it. The spec also declares a 500 that the handler never returns.
+- **Dead field:** frontmatter `name` is parsed but never used.
+- **Metadata lookup:** it ignores `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, so skills in a relocated folder lose their display metadata.
+
+I did not run any code or tests; this is a read-only review.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- New GET /api/v1/agents/{agent}/skills reads skill folders on the host without a session (`backend/internal/httpd/controllers/agents.go:55`) — The new-chat "/" menu lists skills before any session exists. The list merges behind the list a previous session reported. If it fails: An unresolvable project, a missing folder or a malformed file is skipped silently and the user's own skills are still returned. A Projects.Get error, including a DB failure, is also swallowed with no… Evidence: `backend/internal/httpd/controllers/agents.go:55-71`, `backend/internal/httpd/controllers/conversations_skills.go:22-62`, `backend/internal/service/project/service.go:195-217`, `backend/internal/service/chat/skill_scan.go:51-64`.
+- useAgentSkillsQuery fetches the scan on the new chat page and merges it with the last session-reported list (`frontend/src/renderer/hooks/useAgentSkillsQuery.ts:14`) — The "/" menu is populated on a first chat. The query is disabled for Cloud projects, which keep an empty list. If it fails: Rejection or a 404 from an older remote host leaves query.data undefined, so the hook returns an empty list and the page keeps the reported list. retry is false, so a transient failure is not retried… Evidence: `frontend/src/renderer/hooks/useAgentSkillsQuery.ts:14-32`, `frontend/src/renderer/hooks/useAgentSkillsQuery.ts:39-45`, `frontend/src/renderer/components/NewChatPage.tsx:172-178`, `frontend/src/renderer/lib/api-client.ts:288-295`, `frontend/src/renderer/lib/api-client.ts:311-319`, `frontend/src/renderer/lib/api-client.ts:336-343`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 14 | 747 | 4 | reviewed | 14 | $0.34 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.34</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=dbf9107df4b9b7ee26ea0603599273f6383f2a7f -->
+--- docs/telemetry.md:1354 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: A 404 from an old host still sends an ao.requests.failed analytics event; the doc says it "stays quiet" (confidence medium)**
+
+The sentence at 1349-1355 puts `GET /api/v1/agents/:id/skills` in the list "HTTP 409 responses are dropped only for", then adds that a too-old remote host "stays quiet". The old-host case is a 404, not a 409. `expectedProbeConflict` (`frontend/src/renderer/lib/api-client.ts:293-295`) matches only `status === 409`, so `reportResponseError` (line 336) still calls `reportApiError`. That function sends `ao.requests.failed` unconditionally (line 311). Only the Sentry capture is skipped for a 4xx on a route in `EXPECTED_PROBE_CONFLICTS` (line 317). The analytics event is therefore still emitted, once per 30 s window, for every new chat page opened against an older host. Say that only Sentry is skipped for the 404. The route's own 409 can't occur, because the handler never returns one. The comment in `api-client.ts:288-289` uses the same wording and has the same gap.
+
+<!-- wachi:finding -->
+--- backend/internal/httpd/controllers/agents.go:65 ---
+👮 **Wachiman** · 🟡⚡ **Consider · perf: Skills read goes through the full Projects.Get and swallows its errors (confidence medium)**
+
+The handler needs only the project's path, but calls `Projects.Get`. That runs `projectFromRow`, lists workspace repos for workspace projects, and calls `canonicalGitHubRepo` (`backend/internal/service/project/service.go:206-215`). On a cold cache that last step can wait up to `canonicalRepoWait` = 2 s for GitHub (service.go:242). The new chat page fires this request on mount, so the "/" menu can sit empty for that long on the first visit.
+
+Every error from `Get`, including `PROJECT_LOAD_FAILED` (a DB failure), is also dropped without a log. The result is a user-only list indistinguishable from "project has no skills". The 404 case is intended; other errors would be worth a debug log.
+
+Separately, the spec and the TS schema declare a 500 response (`openapi.yaml:869`), but this handler never writes one.
+
+<!-- wachi:finding -->
+--- backend/internal/service/chat/skill_scan.go:23 ---
+👮 **Wachiman** · 🟡🧹 **Consider · cleanup: Frontmatter `name` is parsed but never used (confidence low)**
+
+`skillFrontmatter.Name` is read from the YAML (line 24), but `scanSkillRoots` always uses the folder or file name (lines 244-247). The test writes `name: review` to a skill whose folder is `review`, so the field is never exercised. If Claude lets `name` override the folder, a skill with a different frontmatter name is listed under the wrong slash name. If it does not, drop the field. I could not confirm Claude's behaviour from the repo.
+
+<!-- wachi:finding -->
+--- backend/internal/service/chat/skill_scan.go:63 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Metadata lookup ignores CLAUDE_CONFIG_DIR and CODEX_HOME (confidence medium)**
+
+`ScanSkills` honours `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when choosing roots (lines 67-69, 108-111). It then passes `skillRoots(workspace, home)` to `withSkillMetadata`. That list is fixed to `~/.claude`, `~/.codex` and `~/.agents` (`skill_metadata.go:32-48`). With either variable set, a skill in the relocated folder never gets its `agents/openai.yaml` display name or description. If a same-named skill sits in the default folder, its metadata is applied to the wrong skill. The metadata roots could be derived from the same root list, or at least include the overridden directories.
+
+<!-- wachi:finding -->

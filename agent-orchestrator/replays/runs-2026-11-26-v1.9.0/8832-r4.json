@@ -1,0 +1,164 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/8832-r4` of ao-replay-8832-r4 against a235f63ffdf2042b26d45188460d263fdb9efaf8 (merge-base a235f63)",
+    "repository": {
+      "name": "ao-replay-8832-r4"
+    },
+    "base": {
+      "sha": "a235f63ffdf2042b26d45188460d263fdb9efaf8",
+      "ref": "a235f63ffdf2042b26d45188460d263fdb9efaf8"
+    },
+    "head": {
+      "sha": "910836ce94b3a339bc7dcdc294cede0c75ef10c6",
+      "ref": "ao-replay/8832-r4"
+    },
+    "title": "ao-replay/8832-r4",
+    "description": "fix(chat): search every file, map nested repos, and retry cancelled opens\nfix(chat): satisfy lint and update workspace read test expectations",
+    "author": "Dhruv Sharma"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/service/session/workspace_file_paths.go",
+      "backend/internal/service/session/workspace_file_paths_test.go",
+      "backend/internal/service/session/workspace_review.go",
+      "frontend/src/renderer/components/SessionInspector.test.tsx",
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/hooks/useFilesReviewSelection.test.tsx"
+    ],
+    "reviewed": [
+      "backend/internal/service/session/workspace_file_paths.go",
+      "backend/internal/service/session/workspace_file_paths_test.go",
+      "backend/internal/service/session/workspace_review.go",
+      "frontend/src/renderer/components/SessionView.tsx",
+      "frontend/src/renderer/components/SessionInspector.test.tsx",
+      "frontend/src/renderer/hooks/useFilesReviewSelection.test.tsx"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "frontend/src/renderer/components/SessionView.tsx",
+      "line": 2448,
+      "severity": "consider",
+      "topic": "bug",
+      "confidence": "medium",
+      "title": "Cancelled-fetch retry loop has no bound and no unmount/session check",
+      "body": "`fetchWorkspaceFiles` now loops with `for (;;)` and retries on every `CancelledError`. Nothing stops it after the component unmounts or `sessionId`/`hostId` change. The callers (`resolvePaneFile` at 2286, `revealResolvedWorkspaceFile` at 2560, the latter fired with `void` from `handleOpenReviewFile`) have no cancellation either. If something keeps cancelling the `session-workspace-files` query (for example a `cancelQueries` or an observer unmount that aborts the fetch, now that `queryFn` passes `signal`), the loop re-issues the manifest request indefinitely. The old code retried once and then surfaced the error. Cap the attempts (for example 3) and rethrow the last `CancelledError`.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/service/session/workspace_file_paths_test.go",
+      "line": 69,
+      "severity": "consider",
+      "topic": "tests",
+      "confidence": "medium",
+      "title": "No test covers a search past the 20000-path cap, which is what the change fixes",
+      "body": "`TestListWorkspaceFilePathsListsPastTheFileBrowserCap` writes `maxWorkspaceFiles+20` files (`maxWorkspaceFiles` is 5000 at workspace_files.go:34). That is below `maxWorkspaceFilePaths` (20000), so the search would pass with the old `maxWorkspaceFilePaths` limit too. `SearchWorkspaceFiles` now passes `math.MaxInt` (workspace_review.go:668), and nothing exercises more than 20000 files. A test could call `workspaceSourcePaths` with a small limit and `includeDeleted=true` and assert that the search does not truncate. That would pin the limit-bypass contract cheaply.",
+      "anchor": "outside"
+    },
+    {
+      "path": "backend/internal/service/session/workspace_review.go",
+      "line": 629,
+      "severity": "consider",
+      "topic": "docs",
+      "confidence": "medium",
+      "title": "SearchWorkspaceFiles doc comment still says \"bounded\"",
+      "body": "The comment reads \"performs a bounded case-insensitive path search\". Only the result page (`maxWorkspaceSearchResults`) is bounded now. The non-scratch path is scanned with `math.MaxInt` (line 668), so `Truncated` is always false there and the file scan is unbounded. Update the comment to say that, so the next reader does not reintroduce a cap thinking it was dropped by mistake.",
+      "anchor": "outside"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "SearchWorkspaceFiles scans every workspace path (limit math.MaxInt) instead of the first 20000",
+      "location": "backend/internal/service/session/workspace_review.go:668",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/service/session/workspace_review.go:668",
+        "backend/internal/service/session/workspace_file_paths.go:130-172",
+        "backend/internal/service/session/workspace_review.go:671-699"
+      ],
+      "equivalent_path": "ListWorkspaceFilePaths calls the same workspaceSourcePaths with maxWorkspaceFilePaths and includeDeleted=false (workspace_file_paths.go:48)",
+      "before_after": "Before, search shared the 20000 cap and could miss files. Now the `total > limit` branch is never taken, but `includeDeleted=true` still makes `resolveWorkspaceChanges` run for every source (workspace_file_paths.go:134), so deleted files stay searchable. `truncated` is always false for non-scratch sessions.",
+      "visible_effect": "Search finds files past 20000 paths. Memory and time scale with repository size.",
+      "failure_mode": "Very large repositories make a per-keystroke search build and sort every path. The result page is still limited by maxWorkspaceSearchResults.",
+      "evidence_checked": true
+    },
+    {
+      "action": "workspacePathSourceFor skips a nested-repo prefix when the path is exactly prefix+\"/\"",
+      "location": "backend/internal/service/session/workspace_file_paths.go:178",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/service/session/workspace_file_paths.go:143",
+        "backend/internal/service/session/workspace_file_paths.go:175-193",
+        "backend/internal/service/session/workspace_file_paths_test.go:169-177"
+      ],
+      "equivalent_path": "Previously only the HasPrefix check applied, so `a/b/` matched source `a/b` with an empty rel",
+      "before_after": "An empty rel is no longer mapped to the child repo root. The path falls back to the parent source with rel `b/`. `workspaceSourcePaths` already drops empty rels (line 143), so search results never produce such a path.",
+      "visible_effect": "None reachable through search. Only the one caller, `workspaceSourceFileSummary`, is affected.",
+      "failure_mode": "None found.",
+      "evidence_checked": true
+    },
+    {
+      "action": "fetchWorkspaceFiles retries on CancelledError in an unbounded loop",
+      "location": "frontend/src/renderer/components/SessionView.tsx:2446",
+      "status": "closed",
+      "evidence": [
+        "frontend/src/renderer/components/SessionView.tsx:2446-2455",
+        "frontend/src/renderer/components/SessionView.tsx:2286",
+        "frontend/src/renderer/components/SessionView.tsx:2560",
+        "frontend/src/renderer/hooks/useSessionWorkspaceFiles.ts:815-821"
+      ],
+      "equivalent_path": "Old code retried once. `_shell.tsx:164` swallows CancelledError, and `_shell.tsx:1246` ignores it.",
+      "before_after": "Before: one retry, then the error was thrown. After: it retries until a non-cancel outcome.",
+      "visible_effect": "File open from chat or panes waits through the cancellations. If cancellation persists, the open never resolves and no error is shown.",
+      "failure_mode": "The loop continues after unmount or a session change, and nothing surfaces to the user.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "I found no blockers. The backend and test changes look correct, and three smaller points are worth raising.\n\n- **Retry loop:** The `fetchWorkspaceFiles` loop in `SessionView.tsx` retries on every cancellation with no cap and no unmount or session check. Cap the attempts.\n- **Missing test:** No test searches past the 20000-path cap, which is the behaviour the backend change introduces. The existing test stays at 5020 files.\n- **Stale comment:** The `SearchWorkspaceFiles` doc comment still says \"bounded\", though only the result page is bounded now.\n\nThe two test edits that add `signal: expect.any(AbortSignal)` match the query functions in `useSessionWorkspaceFiles.ts`, which already pass `signal`. I only read the code and ran nothing.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 6,
+      "lines": 36,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 16,
+      "costUsd": 0.2838898
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "a235f63ffdf2042b26d45188460d263fdb9efaf8"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2838898,
+    "usage": {
+      "input": 16,
+      "output": 7197,
+      "cacheRead": 269678,
+      "cacheWrite": 46230
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 16,
+    "durationMs": 62843,
+    "stop": "complete",
+    "notices": []
+  }
+}

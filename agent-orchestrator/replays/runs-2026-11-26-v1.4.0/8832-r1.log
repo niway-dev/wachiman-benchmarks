@@ -1,0 +1,74 @@
+evidence: 72 symbol(s) found, 22 call site(s), 14866 bytes, 2300 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":26,"cost_usd":0.5989696,"duration_ms":123364}
+--- review at e519f61 ---
+👮 **Wachiman** · review of the whole pull request, at `e519f61`: all 21 files reviewed.
+
+5 finding(s): 3 to fix, 2 to consider; 4 on their lines. Reply in a comment's thread to answer it.
+
+### Outside the diff
+
+- 🟡📝 **Consider · docs: Doc comment for useWorkspaceFilePaths now documents fetchWorkspaceFilePaths (confidence high)** (`frontend/src/renderer/hooks/useConversation.ts:2216`): `fetchWorkspaceFilePaths` was inserted between the JSDoc block ("Every path in the session worktree, for @-mention completion…") and `useWorkspaceFilePaths`, so the block now attaches to the fetch function and the hook has none. The text also still says the daemon "already serves this list" from the full file list, which is no longer true. Move the block back above the hook and add a one-line comment to the fetch function explaining the `ROUTE_NOT_FOUND` fallback.
+
+### Summary
+
+The new `/workspace/paths` endpoint can return files that no longer exist, and the frontend no longer drops them. `ListWorkspaceFilePaths` reads `ls-files -co`, which still lists a file removed with plain `rm`. When the workspace is over the limit, the changed-path set it merges in also includes deleted files. The old frontend filter on `status !== "deleted"` is gone, and the one test that mentions deletion only uses `git rm`. The route loader also prefetches the conversation on hover preload, although the PR body says it doesn't. The \"remembered per host\" old-daemon fallback isn't implemented, and the JSDoc for `useWorkspaceFilePaths` ended up on the new fetch function. I did not check the \"Loading files…\" note or whether wake changes reach the session list through change events.
+
+<details><summary>What the change connects to (4 closed, 1 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Open: the reviewer could not close these**
+- The "@" file list is fetched only after the first "@" query, and the workspaces list is no longer invalidated when a chat view activates (`frontend/src/renderer/components/chat/SessionChatSurface.tsx:435`) — Does every row field a wake changes (activity, launch id, provision state) really arrive through change events once the workspaces invalidation is removed? Files that would answer it: `backend/internal/storage/sqlite/ (change_log triggers for sessions)`, `frontend/src/renderer/lib/workspace-file-events.ts`, `frontend/src/renderer/hooks/useWorkspaceQuery.ts`.
+
+**Closed, with the lines they rest on**
+- New GET /api/v1/sessions/{sessionId}/workspace/paths returns names only; "@" menu, NewChatPage and file search consume it (`backend/internal/service/session/workspace_file_paths.go:30`) — Files deleted from the working tree (plain rm, or deleted relative to the base when over the limit) show up in the @ menu and transcript links. If it fails: Silent: no error, the stale entry is offered and the agent fails to resolve it. Evidence: `backend/internal/service/session/workspace_file_paths.go:121-146`, `backend/internal/service/session/workspace_files.go:1806`, `backend/internal/service/session/workspace_files.go:1857-1866`, `backend/internal/service/session/workspace_cache.go:196`, `frontend/src/renderer/hooks/useConversation.ts:2234`.
+- SearchWorkspaceFiles now lists paths first and fetches per-file details only for the returned page (`backend/internal/service/session/workspace_review.go:649`) — Same result shape. Search matches files past the 5000 cap, and deleted rows are still returned. If it fails: An error from resolveWorkspaceChanges for any returned row fails the whole search (500). The old path failed the same way through ListWorkspaceFiles. Evidence: `backend/internal/service/session/workspace_review.go:649-697`, `backend/internal/service/session/workspace_file_paths.go:172-197`, `backend/internal/service/session/workspace_files.go:1254-1288`.
+- fetchWorkspaceFilePaths falls back to /workspace/files when the daemon answers ROUTE_NOT_FOUND (`frontend/src/renderer/hooks/useConversation.ts:2225`) — Old remote daemons still get a working @ menu, at the cost of one extra 404 per refresh. If it fails: If the fallback request fails, the error from the files route is returned and surfaced through recordWorkspaceResult. It is not silent. An abort signal is passed to both requests. Evidence: `frontend/src/renderer/hooks/useConversation.ts:2225-2238`, `frontend/src/renderer/hooks/useConversation.ts:2251`, `backend/internal/httpd/api.go:464-467`.
+- Route loader prefetches the conversation for the session being navigated to (`frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx:24`) — The conversation can paint sooner after a click. Hovering a sidebar row also starts a read. If it fails: The prefetch is fire-and-forget (void), so a rejection leaves nothing cached and useConversation refetches on mount. This is silent but harmless. Evidence: `frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx:10-27`, `frontend/src/renderer/router.tsx:21`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 21 | 805 | 4 | reviewed | 26 | $0.60 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.60</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=e519f61c4b76be92bebee873190cd4e00b8ba536 -->
+--- backend/internal/service/session/workspace_file_paths.go:139 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Paths endpoint returns files that are deleted on disk, which the old "@" list filtered out (confidence high)**
+
+The old frontend dropped `status === "deleted"` rows (and the PR body says the new route is "minus files missing on disk"), but the new endpoint has no such filter. Two ways a missing file gets listed:
+
+1. `workspacePaths` is `git ls-files -z -co` (`workspace_files.go:1806`, used by `workspace_cache.go:196`). `-c` lists every index entry whether or not it exists in the working tree. A file removed with plain `rm` (unstaged) is still in the index, so it comes back from `ls-files`. The `changed` set is nil when `total <= limit` (line 132), so nothing removes it.
+2. When `total > limit`, `changes.changedPaths()` (`workspace_files.go:1857`) adds every key of `statuses`, which includes `deleted` entries. `mergeWorkspaceFilePaths` puts those first, so deleted files, including ones deleted in a commit relative to the base, are the ones kept at the cap.
+
+The user can then pick a deleted file in "@" or see it in transcript file links. This reintroduces the failure the removed comment described: "offering it would insert a reference the agent then fails to resolve." Nothing tells the user; the entry just appears.
+
+Fix: drop paths whose status is `deleted` using the cached change set (`resolveWorkspaceChanges` is already cached and cheap), or `Lstat` each path. Do it on the `ListWorkspaceFilePaths` path only. `SearchWorkspaceFiles` keeps deleted rows on purpose, per the PR body, and it also calls `workspaceSourcePaths`, so the filter needs a parameter or a separate wrapper.
+
+<!-- wachi:finding -->
+--- backend/internal/service/session/workspace_file_paths_test.go:36 ---
+👮 **Wachiman** · 🟠🧪 **Fix · tests: Deletion test only covers staged `git rm`, so the plain-`rm` case the PR claims to test is untested (confidence high)**
+
+`TestListWorkspaceFilePathsMatchesFullListWithoutDeletions` uses `runGit(t, repo, "rm", "-q", "src/app.go")`, which also removes the path from the index, so `ls-files` stops listing it. The PR body says tests cover "plain `rm` and staged `git rm`", but there is no plain-`rm` case, and that case is the one that fails (see the finding on `workspace_file_paths.go`). The test also builds `want` in `listedPaths` by filtering the full list's `deleted` rows, so it would compare against the right answer if a plain-`rm` case were added. Add a case that deletes a tracked file with `os.Remove` and asserts it is absent from `Paths`. Add one for the over-limit branch (`total > limit`) too, since `TestWorkspaceSourcePathsKeepsChangedFilesWhenCapped` only checks the modified file.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/hooks/useConversation.ts:2227 ---
+👮 **Wachiman** · 🟡⚡ **Consider · perf: The old-daemon fallback is not remembered per host, unlike the PR description (confidence medium)**
+
+The PR body says that on `ROUTE_NOT_FOUND` "the app then falls back to the full list and remembers that host", and lists a test for "the old-daemon fallback that's remembered per host". `fetchWorkspaceFilePaths` keeps no state: every call first requests `/workspace/paths` and, on a 404, issues `/workspace/files` as well. For a remote host on an older daemon, `useWorkspaceFilePaths` refetches every 30 s (line 2251) and also on each workspace file-change invalidation, so each refresh pays an extra failed request on top of the slow full-list read this PR is trying to avoid. The new test (`useConversation.file-paths.test.ts:49`) only checks that the fallback result is correct, not that it is remembered. Either cache the unsupported host (for example a `Set` keyed by `hostId`, cleared on reconnect) or correct the description.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx:24 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Loader prefetch also runs on hover preload, contrary to the PR description (confidence medium)**
+
+The PR body says the conversation read starts in the loader "on navigation (not on hover preload)". The loader ignores TanStack's `preload` flag, and the router sets `defaultPreload: "intent"` (`frontend/src/renderer/router.tsx:21`), so the loader runs when a sidebar row is hovered and `prefetchChat` fires `prefetchInfiniteQuery` for every hovered chat. Those requests compete for the same 6 per-host connections this PR is trying to free, and users sweeping the mouse down the sidebar start one conversation read per row. Take `preload` from the loader args and skip `prefetchChat` when it is true, or change the description if hover prefetch is intended.
+
+<!-- wachi:finding -->

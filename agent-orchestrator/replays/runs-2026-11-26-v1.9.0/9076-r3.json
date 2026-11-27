@@ -1,0 +1,133 @@
+{
+  "format": "wachiman.review-result/1",
+  "change": {
+    "kind": "branch",
+    "describe": "branch `ao-replay/9076-r3` of ao-replay-9076-r3 against 9fadf374fc63d8b5808759cdfdb6bd249ed8bc24 (merge-base 9fadf37)",
+    "repository": {
+      "name": "ao-replay-9076-r3"
+    },
+    "base": {
+      "sha": "9fadf374fc63d8b5808759cdfdb6bd249ed8bc24",
+      "ref": "9fadf374fc63d8b5808759cdfdb6bd249ed8bc24"
+    },
+    "head": {
+      "sha": "371e04dd49ec134916e80218e21ab431d7ac5060",
+      "ref": "ao-replay/9076-r3"
+    },
+    "title": "ao-replay/9076-r3",
+    "description": "fix(devices): record the boot a helper was made for, read before it",
+    "author": "Prasad-D-Ware"
+  },
+  "engine": {
+    "version": "1.9.0"
+  },
+  "provider": {
+    "label": "Claude Sonnet 5.5 via Claude Code 2.1.332",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "profile": "isolated"
+  },
+  "coverage": {
+    "expected": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go"
+    ],
+    "reviewed": [
+      "backend/internal/adapters/device/local/provider.go",
+      "backend/internal/adapters/device/local/toolchain_test.go"
+    ],
+    "skipped": [],
+    "excluded": 0,
+    "unreviewable": [],
+    "partial": false
+  },
+  "findings": [
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 241,
+      "severity": "consider",
+      "topic": "perf",
+      "confidence": "medium",
+      "title": "Boot read in EnsureReady is now synchronous and has no deadline of its own",
+      "body": "The old `recordBoots` ran in a goroutine with a 30s `context.WithTimeout(p.life, ...)`. `currentBoots(ctx)` now runs inline, under `p.startMu` (line 193), with the caller's ctx. That ctx is only wrapped in `WithCancel` (line 212), so it carries no deadline unless the caller set one. `p.run` (line 126) is a plain `CommandContext(...).CombinedOutput()` with no timeout of its own. If `xcrun simctl list` hangs, `EnsureReady` stalls before the hub starts, and every other caller queues on `startMu`. Previously a hung simctl cost only the boot bookkeeping. Bounding this call, for example with `context.WithTimeout(ctx, 15*time.Second)` around `currentBoots`, keeps the new ordering and restores the old bound.",
+      "anchor": "diff"
+    },
+    {
+      "path": "backend/internal/adapters/device/local/provider.go",
+      "line": 1014,
+      "severity": "info",
+      "topic": "docs",
+      "confidence": "medium",
+      "title": "Comment says the boot is read before the helper, but the helper is made at the grid start",
+      "body": "This only affects how the comment reads. The read at line 1014 happens before the `/vendor/serve-sim/grid/api/start` call at line 1020, which is what makes the helper. A reboot between the two is recorded as the old boot. The result is at most one extra hub restart and never a missed one, which matches the comment's stated trade-off. No change needed.",
+      "anchor": "diff"
+    }
+  ],
+  "contracts": [
+    {
+      "action": "EnsureReady reads simulator boots before starting the hub and stores them under p.mu after the hub is installed (replaces the async recordBoots goroutine)",
+      "location": "backend/internal/adapters/device/local/provider.go:241",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:192-215",
+        "backend/internal/adapters/device/local/provider.go:241-257",
+        "backend/internal/adapters/device/local/provider.go:695-735",
+        "backend/internal/adapters/device/local/provider.go:1121-1146"
+      ],
+      "equivalent_path": "Old path: a goroutine started after p.hub was set, which read simctl and then recorded the boots.",
+      "before_after": "Before, the boots were read after the hub started, so a reboot during hub start was recorded as the helpers' boot and missed. Now they are read before the hub starts and stored atomically with p.hub = hub under p.mu (lines 256-257), and a reboot after the read reads as a change. A NoteBooted that lands between the read and the store can be overwritten by the older value, which causes at most one extra restart.",
+      "visible_effect": "There is no direct UI. An outside reboot is now caught reliably, which restores touch input after the hub is replaced.",
+      "failure_mode": "If simctl fails, `currentBoots` returns nil and `storeBootsLocked` does nothing, which is the same as the old early return. A hung simctl now blocks EnsureReady under startMu, with no deadline of its own (see the finding).",
+      "evidence_checked": true
+    },
+    {
+      "action": "Boot reads the simulator's boot before the grid start and stores it at the end of Boot, instead of reading it afterwards",
+      "location": "backend/internal/adapters/device/local/provider.go:1010",
+      "status": "closed",
+      "evidence": [
+        "backend/internal/adapters/device/local/provider.go:963-989",
+        "backend/internal/adapters/device/local/provider.go:1010-1015",
+        "backend/internal/adapters/device/local/provider.go:1037-1045",
+        "backend/internal/adapters/device/local/provider.go:1097-1119",
+        "backend/internal/adapters/device/local/toolchain_test.go:1077-1111"
+      ],
+      "equivalent_path": "Old path: `recordBoots(recordCtx, device.ID)` ran at the end of Boot with its own 15s deadline.",
+      "before_after": "Before, the boot was read after the helper existed, so a reboot between the helper and the end of Boot was taken as the helper's boot. Now the boot is read once the hub has booted the device and before the helper is created. It is stored after restoreQuality, and only for an AO-initiated boot (`expected`). The `ownBoots` mark is cleared by the defer after the store, so NoteBooted calls during Boot are still suppressed.",
+      "visible_effect": "A reboot outside AO while Boot is finishing now triggers a hub replacement on the next look.",
+      "failure_mode": "The error paths return before the store and record nothing, as before. A failed `currentBoots` leaves `helperBoot` empty, so nothing is recorded, as before. The read can be one reboot early, which costs an extra restart and nothing worse.",
+      "evidence_checked": true
+    }
+  ],
+  "summary": "The change is logically sound. Reading boots before the hub or helper is made, then storing them under `p.mu`, closes the race window. A reboot after the read now reads as a change, and the worst case is one extra hub restart. The new test covers the Boot path. The one real concern is that `EnsureReady` now calls simctl inline under `startMu`, without the 30s bound the old goroutine had.",
+  "batches": [
+    {
+      "label": "Batch 1 of 1",
+      "files": 2,
+      "lines": 106,
+      "maxRisk": 4,
+      "status": "reviewed",
+      "turns": 10,
+      "costUsd": 0.2534866
+    }
+  ],
+  "threadReplies": [],
+  "instructionChanges": {
+    "files": [],
+    "baseSha": "9fadf374fc63d8b5808759cdfdb6bd249ed8bc24"
+  },
+  "execution": {
+    "costUsdEstimate": 0.2534866,
+    "usage": {
+      "input": 14,
+      "output": 6833,
+      "cacheRead": 223246,
+      "cacheWrite": 40701
+    },
+    "calls": 1,
+    "callsWithOutput": 1,
+    "turns": 10,
+    "durationMs": 54325,
+    "stop": "complete",
+    "notices": []
+  }
+}

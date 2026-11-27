@@ -1,0 +1,59 @@
+evidence: 10 symbol(s) found, 24 call site(s), 15570 bytes, 1454 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":13,"cost_usd":0.2593062,"duration_ms":58746}
+--- review at a690448 ---
+👮 **Wachiman** · review of the whole pull request, at `a690448`: all 9 files reviewed.
+
+4 finding(s): 4 to consider; 4 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The change looks sound. The focus-return, remote-host URL resolution and repository-scoped issue lookup all trace through correctly. I left four low-severity points. One is that `hostId` reaches only one of the five `artifactContentUrl` callers, so the PR body's claim about remote previews overstates it. Another is the silent parenthesis stripping with no comment or collision handling. Another is that the new test covers only one of the two bridge fallbacks. The last is that the browser fallback for `findArtifactIssues` now rejects instead of returning an empty list.
+
+<details><summary>What the change connects to (3 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Add to GitHub issue opens the dialog with the filename button as the focus-return target (`frontend/src/renderer/components/ArtifactActionsMenu.tsx:390`) — Keyboard focus returns to the filename button after the dialog closes. The new test covers the Escape path. If it fails: If filenameButton.current were null, setIssueOpener(null) would leave the dialog closed. The ref is attached to the trigger rendered in the same branch as canAddToIssue (!iconOnly), so the menu item… Evidence: `frontend/src/renderer/components/ArtifactActionsMenu.tsx:285`, `frontend/src/renderer/components/ArtifactActionsMenu.tsx:361`, `frontend/src/renderer/components/ArtifactActionsMenu.tsx:367-371`, `frontend/src/renderer/components/ArtifactActionsMenu.tsx:390`, `frontend/src/renderer/components/GitHubIssueArtifactDialog.tsx:89-93`.
+- readIssueContent resolves the artifact URL against the session's own host (`frontend/src/renderer/components/ArtifactActionsMenu.tsx:254`) — For a remote-host session, the content to upload is read from that host's daemon. A disconnected host shows a load error in the dialog instead of silently reading from the wrong daemon. If it fails: The error is thrown inside the dialog's async read, so it is visible as an error state there. I did not read how GitHubIssueArtifactDialog renders it. Evidence: `frontend/src/renderer/lib/artifact-content-url.ts:11`, `frontend/src/renderer/lib/host-clients.ts:28-30`, `frontend/src/renderer/components/ArtifactActionsMenu.tsx:254-257`.
+- findArtifactIssues validates repository_url for number lookups as well as search results (`frontend/src/main/github-issue-artifact.ts:29`) — An issue number that resolves into a different repository is no longer offered as a destination. If it fails: A row with no repository_url is dropped. A gh failure rejects the IPC call as before. Evidence: `frontend/src/main/github-issue-artifact.ts:29-33`, `frontend/src/main/github-issue-artifact.ts:38`, `frontend/src/main/github-issue-artifact.test.ts:43-49`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 9 | 81 | 5 | reviewed | 13 | $0.26 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.26</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=a690448c7c6ccf5d54980c9503c3af2915df9cf3 -->
+--- frontend/src/renderer/lib/artifact-content-url.ts:5 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: hostId is threaded to only one of the artifactContentUrl callers (confidence medium)**
+
+The new optional `hostId` is passed only from `ArtifactActionsMenu.tsx:254`. The other callers still resolve preview URLs against the local `getApiBaseUrl()`: `ArtifactPreviewModal.tsx:137`, `ArtifactThumbnail.tsx:53`, `FileMediaPreview.tsx:32` and `useSessionWorkspaceFiles.ts:362`. I read `ArtifactPreviewModal.tsx` and `FileMediaPreview.tsx`, and both already have a `hostId` in scope (`artifact.hostId` and the `hostId` prop). The PR body says "Artifact previews from connected remote hosts now use the correct host connection", which is only true for the issue-upload read. A remote-host `ao-preview-artifact.*.localhost` rawUrl in those other views still points at the local daemon. Either pass `hostId` there, or narrow the claim and say that is out of scope. I did not read `ArtifactThumbnail.tsx` or `useSessionWorkspaceFiles.ts` to check whether `hostId` is available there.
+
+<!-- wachi:finding -->
+--- frontend/src/main/github-issue-artifact.ts:47 ---
+👮 **Wachiman** · 🟡🧹 **Consider · cleanup: Parentheses are stripped from the uploaded name silently and without a comment (confidence medium)**
+
+`input.name.replace(/[()]/g, "")` changes the filename GitHub receives, so `plan (1).md` becomes `plan 1.md`. The dialog still shows the original name (`GitHubIssueArtifactDialog.tsx:95`), and nothing explains why the characters are removed. Two different files, `a(1).md` and `a1.md`, end up with the same name. Add a comment giving the reason (presumably GitHub rejects parentheses in artifact names) so a later edit does not drop it. Consider showing the sanitized name in the dialog.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/lib/bridge.test.ts:80 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: Only one of the two refactored fallbacks is tested (confidence high)**
+
+`bridge.ts:41-42` now points both `findArtifactIssues` and `publishIssueArtifact` at the shared `desktopIssueArtifactRequired`. The new test checks only `findArtifactIssues`. Add a `publishIssueArtifact` assertion so the existing rejection behaviour stays pinned.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/lib/bridge.ts:41 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: Browser fallback for findArtifactIssues now rejects instead of returning an empty list (confidence medium)**
+
+Before this change, `findArtifactIssues` in the browser-preview bridge resolved to `[]`. It now rejects with "Open the desktop app to add an issue artifact.". That is a deliberate improvement, since the dialog can show the reason, but it changes the contract of a fallback that other tests or e2e fakes may rely on. `frontend/e2e/support/fake-bridge.ts:96` still returns `[]`. I did not read how `GitHubIssueArtifactDialog.tsx` renders a rejected search, so I can't confirm the message reaches the user.
+
+<!-- wachi:finding -->

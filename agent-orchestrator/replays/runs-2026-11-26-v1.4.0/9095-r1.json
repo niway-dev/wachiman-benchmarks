@@ -1,0 +1,38 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.34,
+ "findings": [
+  {
+   "severity": "consider",
+   "kind": "docs",
+   "title": "A 404 from an old host still sends an ao.requests.failed analytics event; the doc says it \"stays quiet\"",
+   "path": "docs/telemetry.md",
+   "line": "1354",
+   "body": "The sentence at 1349-1355 puts `GET /api/v1/agents/:id/skills` in the list \"HTTP 409 responses are dropped only for\", then adds that a too-old remote host \"stays quiet\". The old-host case is a 404, not a 409. `expectedProbeConflict` (`frontend/src/renderer/lib/api-client.ts:293-295`) matches only `status === 409`, so `reportResponseError` (line 336) still calls `reportApiError`. That function sends `ao.requests.failed` unconditionally (line 311). Only the Sentry capture is skipped for a 4xx on a route in `EXPECTED_PROBE_CONFLICTS` (line 317). The analytics event is therefore still emitted, once per 30 s window, for every new chat page opened against an older host. Say that only Sentry is skipped for the 404. The route's own 409 can't occur, because the handler never returns one. The comment in `api-client.ts:288-289` uses the same wording and has the same gap."
+  },
+  {
+   "severity": "consider",
+   "kind": "perf",
+   "title": "Skills read goes through the full Projects.Get and swallows its errors",
+   "path": "backend/internal/httpd/controllers/agents.go",
+   "line": "65",
+   "body": "The handler needs only the project's path, but calls `Projects.Get`. That runs `projectFromRow`, lists workspace repos for workspace projects, and calls `canonicalGitHubRepo` (`backend/internal/service/project/service.go:206-215`). On a cold cache that last step can wait up to `canonicalRepoWait` = 2 s for GitHub (service.go:242). The new chat page fires this request on mount, so the \"/\" menu can sit empty for that long on the first visit.\n\nEvery error from `Get`, including `PROJECT_LOAD_FAILED` (a DB failure), is also dropped without a log. The result is a user-only list indistinguishable from \"project has no skills\". The 404 case is intended; other errors would be worth a debug log.\n\nSeparately, the spec and the TS schema declare a 500 response (`openapi.yaml:869`), but this handler never writes one."
+  },
+  {
+   "severity": "consider",
+   "kind": "cleanup",
+   "title": "Frontmatter `name` is parsed but never used",
+   "path": "backend/internal/service/chat/skill_scan.go",
+   "line": "23",
+   "body": "`skillFrontmatter.Name` is read from the YAML (line 24), but `scanSkillRoots` always uses the folder or file name (lines 244-247). The test writes `name: review` to a skill whose folder is `review`, so the field is never exercised. If Claude lets `name` override the folder, a skill with a different frontmatter name is listed under the wrong slash name. If it does not, drop the field. I could not confirm Claude's behaviour from the repo."
+  },
+  {
+   "severity": "consider",
+   "kind": "bug",
+   "title": "Metadata lookup ignores CLAUDE_CONFIG_DIR and CODEX_HOME",
+   "path": "backend/internal/service/chat/skill_scan.go",
+   "line": "63",
+   "body": "`ScanSkills` honours `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when choosing roots (lines 67-69, 108-111). It then passes `skillRoots(workspace, home)` to `withSkillMetadata`. That list is fixed to `~/.claude`, `~/.codex` and `~/.agents` (`skill_metadata.go:32-48`). With either variable set, a skill in the relocated folder never gets its `agents/openai.yaml` display name or description. If a same-named skill sits in the default folder, its metadata is applied to the wrong skill. The metadata roots could be derived from the same root list, or at least include the overridden directories."
+  }
+ ]
+}

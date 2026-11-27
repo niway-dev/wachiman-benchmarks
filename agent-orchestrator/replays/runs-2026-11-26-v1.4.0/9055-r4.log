@@ -1,0 +1,66 @@
+evidence: 10 symbol(s) found, 27 call site(s), 15019 bytes, 2991 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":20,"cost_usd":0.45413859999999995,"duration_ms":120133}
+--- review at 859c3b7 ---
+👮 **Wachiman** · review of the whole pull request, at `859c3b7`: all 6 files reviewed.
+
+5 finding(s): 1 to fix, 4 to consider; 5 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The fix is mostly sound. `restoresInFlight` now keeps the first restore, staging waits on it, cancelled files no longer raise \"Files couldn't be saved\", and a held Enter respects file changes. Two things need attention. The first is a regression: `takesNextFiles = optimisticSend && restoring` stops ordinary optimistic sends from taking next files, which main allowed, while the PR body says ordinary sends are unchanged. The second is that the PR body's claim that next files are taken only when the sent message has no files contradicts both the code and the tests. I also flagged a duplicate restore POST that returns an error to the caller, a held Enter that is dropped with no notice when files change, and a restore-error precedence change that has no test. Nothing was built or run.
+
+<details><summary>What the change connects to (4 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Composer takes paste, drop and picker files while an archived chat restores (`takesNextFiles`) (`frontend/src/renderer/components/chat/ChatComposer.tsx:701`) — The Add button, picker and paste stay enabled during Restoring session. They are now disabled during ordinary sends that main allowed. If it fails: Paste or drop during an ordinary send is ignored with no message. Evidence: `frontend/src/renderer/components/chat/ChatComposer.tsx:700-701`, `frontend/src/renderer/components/chat/ChatComposer.tsx:968`, `frontend/src/renderer/components/chat/ChatComposer.tsx:2462`, `frontend/src/renderer/components/chat/ChatWorkspace.tsx:1077-1080`, `frontend/src/renderer/components/chat/ChatWorkspace.tsx:2545`.
+- `useRestoreSession` keeps the first in-flight promise when a second restore for the same key is asked (`frontend/src/renderer/hooks/useRestoreSession.ts:143`) — A file pasted during a restore uploads only after the restore. A second restore request returns an error result while the first continues. If it fails: If the first restore fails, `assertRestored` throws in staging and the composer shows the restore error. The map entry is deleted in `finally`, so there is no stale entry. Evidence: `frontend/src/renderer/hooks/useRestoreSession.ts:50-54`, `frontend/src/renderer/hooks/useRestoreSession.ts:141-147`, `frontend/src/renderer/hooks/useConversation.ts:2428-2429`, `backend/internal/service/session/service.go:2150`.
+- Staging rejection for cancelled files is silenced in `processFiles` (`frontend/src/renderer/hooks/useFileAttachments.ts:582`) — Removing a file that waits for a restore, or a failed restore, no longer shows a spurious error. If it fails: A partly cancelled batch still reports the error, which is right. `cancelled()` also treats a missing controller as cancelled, but controllers are deleted only after `processFiles` returns (line 629). Evidence: `frontend/src/renderer/hooks/useFileAttachments.ts:438`, `frontend/src/renderer/hooks/useFileAttachments.ts:554`, `frontend/src/renderer/hooks/useFileAttachments.ts:559`, `frontend/src/renderer/hooks/useFileAttachments.ts:582`, `frontend/src/renderer/hooks/useFileAttachments.ts:629`.
+- A held Enter records `nextFilesKey()` and compares it when the held send is released (`frontend/src/renderer/components/chat/ChatComposer.tsx:1786`) — A held send goes out only if neither text nor files changed after its Enter. If it fails: The held send is dropped quietly when the files changed (see the finding at line 2292). Evidence: `frontend/src/renderer/components/chat/ChatComposer.tsx:941`, `frontend/src/renderer/components/chat/ChatComposer.tsx:1786`, `frontend/src/renderer/components/chat/ChatComposer.tsx:2291-2292`, `frontend/src/renderer/hooks/useFileAttachments.ts:503-505`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 6 | 145 | 4 | reviewed | 20 | $0.45 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.45</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=859c3b7d0beb32234f88f4939b9948cdc21eedd4 -->
+--- frontend/src/renderer/components/chat/ChatComposer.tsx:701 ---
+👮 **Wachiman** · 🟠🐛 **Fix · bug: Ordinary optimistic sends no longer take files for the next message, contrary to "unchanged" (confidence medium)**
+
+`takesNextFiles = optimisticSend && restoring` now replaces bare `optimisticSend` in `attachBlocked`, `acceptsFiles`, `onDragOver`, the chip remove handler, the file input and the Add trigger. On main, any optimistic send (`durableDelivery.draft && composerMutation.pending`) accepted paste, drop and picker for the next message. The old tests in this file proved it: they rendered `<ChatComposer>` without `restoring` and asserted the attach button was enabled. This PR adds `restoring` to all of them. A new test (line 356) asserts that an ordinary send takes no file. `restoring` is only true for an archived chat's restore (`ChatWorkspace.tsx:1080`). So paste, drop and picker are now refused during every ordinary send, where main took them. The PR body says "Ordinary sends, New Chat and archived Cloud chats are unchanged". If narrowing is intended, say so in the body. Otherwise use `optimisticSend || restoring`-style gating that keeps the old behaviour for ordinary sends. Nothing is shown when a paste is refused, so the pasted file is dropped silently.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/components/chat/ChatComposer.tsx:701 ---
+👮 **Wachiman** · 🟡📝 **Consider · docs: PR body says next files are taken only when the sent message has no files; the code and tests do the opposite (confidence medium)**
+
+The body says the composer takes next files "only when the message being sent has no files of its own", and that when the restoring message has files "attaching stays closed until it lands, as on main". `takesNextFiles` (this line) never looks at `durableDelivery.draft.attachments`. The tests at `ChatComposer.optimistic.test.tsx:214-235` and `:258-280` send a message that has files (`sent.png`, or eight sent files) and still expect `next.png` to be accepted while `restoring` is set. Correct the body, or add the check the body describes. The "Coverage and risks" section is the part a reviewer relies on.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/hooks/useRestoreSession.ts:143 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: A second restore for the same session still POSTs to the daemon and hands the caller its refusal (confidence low)**
+
+The fix keeps the first promise in `restoresInFlight`, which is right. A second call still runs `restoreSession`, which POSTs `/restore` again (the test pins `[RESTORE, RESTORE]`). The daemon answers `SESSION_OPERATION_IN_PROGRESS` (`backend/internal/service/session/service.go:2150`) and the caller gets `{status:"error"}` for a restore that is actually progressing. The cloud branch's comment at line 77 says a second ask joins the one in flight. Returning the in-flight promise for the local path would do the same and avoid the spurious error. Check first what the other callers do with an `error` result. A related nit: the test mock (`useConversation.test.tsx:1751`) uses code `OPERATION_IN_PROGRESS`, but the daemon's code is `SESSION_OPERATION_IN_PROGRESS`.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/components/chat/ChatComposer.tsx:2292 ---
+👮 **Wachiman** · 🟡🐛 **Consider · bug: A held Enter is dropped without notice when the next draft's files change before the send lands (confidence medium)**
+
+A held message is now sent only if `heldSubmit.files === nextFilesKey()`. The key is the sorted ids of the staged and pending files. If the user holds Enter (text only, or with files) and then adds or removes a file during the restore, the held message is never sent. It is also not queued or flagged, and the text stays in the box. The new test at `ChatComposer.optimistic.test.tsx:331` covers removing a file and adding another. The other direction is not covered: Enter on text alone, then a paste to go with it. That drops the Enter too. If this is intended, consider a visible hint, or compare only the files that were present at Enter.
+
+<!-- wachi:finding -->
+--- frontend/src/renderer/components/chat/ChatComposer.tsx:2526 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: Restore-failure precedence over a draft-save error has no test (confidence medium)**
+
+The new `&& !draftPersistenceError` condition changes which notice wins when a restore fails and the draft cannot be saved. The new test at `ChatComposer.optimistic.test.tsx:282` only covers the case with no persistence error. Neither the PR body nor a test explains this condition. Add a test, or drop the condition.
+
+<!-- wachi:finding -->

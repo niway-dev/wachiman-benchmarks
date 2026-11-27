@@ -69,6 +69,40 @@ tools write differently (CodeRabbit leads with a bold title), so the blinding is
 favors CodeRabbit by construction: its comments were posted on the PR and the authors answered them.
 Wachiman ran weeks later (basis `rerun`) on v1.17.0, one run per event.
 
+## Three Wachiman versions on the same events (2026-11-26)
+
+The same 24 events were replayed on v1.4.0 and v1.9.0, then all four tools went through one blind
+judging pass together: CodeRabbit's 62 comments and the three versions' 189 findings, shuffled per
+event, Sonnet 5.5 high, eight workers ([`replays/judging-2026-11-26-versions/`](replays/judging-2026-11-26-versions/)).
+Every version ran on Sonnet 5.5, effort `high`. `python3 -I scripts/score-versions.py
+replays/judging-2026-11-26-versions` prints the tables.
+
+| Tool | Findings | Real | Style | False | Distinct real defects | Medium or high | Shared with CodeRabbit | Only this tool | Cost |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CodeRabbit | 62 | 56 | 2 | 4 | **54** | 18 | | 32 against all three versions | not published |
+| v1.4.0 | 65 | 25 | 37 | 2 | **25** | 10 | 14 | 11 | $8.54 |
+| v1.9.0 | 60 | 27 | 28 | 3 | **27** | 11 | 16 | 11 | $8.41 |
+| v1.17.0 | 64 | 23 | 40 | 0 | **23** | 8 | 12 | 11 | $8.78 |
+
+- **The versions are level.** Each finds 23 to 27 distinct real defects, about half of CodeRabbit's 54.
+  The gap did not open with a release; it was there in v1.4.0.
+- **v1.9.0 is the least noisy.** 28 `style` findings, against 37 (v1.4.0) and 40 (v1.17.0).
+- **Each run catches a different subset.** Only 9 defects were found by all three versions, and 24 by
+  exactly one. Together the three runs reach 45 distinct defects, 22 of them shared with CodeRabbit. So
+  part of the gap is that one run samples the possible findings, while CodeRabbit covers more of them in
+  one pass.
+- **The one high-severity defect** (#9148, the New task page re-renders forever) was found by CodeRabbit,
+  v1.4.0 and v1.17.0. v1.9.0 missed it in this run.
+
+How v1.4.0 was run: it has no `local` command and reviews a GitHub pull request. It ran `review <pr>` in
+dry-run, with an offline `gh` in front of it that answers its reads from the local clone at each event's
+base..head and refuses every write ([`scripts/v1.4-shim/`](scripts/v1.4-shim/)). A second wrapper restores
+`USER`, which v1.4.0 strips and the subscription login on macOS needs (v1.9.0 does the same itself). The
+engine was not changed. v1.4.0 read the PR's current title and body; the local command of v1.9.0 and v1.17.0 reads no PR text.
+
+The scores differ slightly from the first pass (v1.17.0: 26 defects there, 23 here), because this judge
+merged more duplicates. Within one pass the tools are comparable; across passes they are not.
+
 ## Recall of owner-accepted findings (first batch, 2026-11-26)
 
 > One-directional, kept for the gap analysis below. For the comparison between the tools, read

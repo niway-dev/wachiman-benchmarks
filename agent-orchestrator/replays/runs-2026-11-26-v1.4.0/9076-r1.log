@@ -1,0 +1,46 @@
+evidence: 44 symbol(s) found, 24 call site(s), 12700 bytes, 1930 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":12,"cost_usd":0.3347579,"duration_ms":88241}
+--- review at 9fadf37 ---
+👮 **Wachiman** · review of the whole pull request, at `9fadf37`: all 5 files reviewed.
+
+2 finding(s): 2 to consider; 2 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+I found no bugs; both findings are test-coverage gaps, at consider severity. Nothing was run; I read the code only. The logic checks out against the call sites. The cached listing is cleared after an AO boot finishes, `ownBoots` is cleared by the deferred function in `Boot`, and `restartHub` falls back to `reviveHub` if the hub fails to start. The test assertions match what the code does. The gaps: `restartHub` and the `recordBoots` call inside `EnsureReady` are never run under test, because every test swaps in a fake `replaceHub`. The tests that cover recording boots skip off macOS, because `unlistedSimulators` returns early on any other OS.
+
+<details><summary>What the change connects to (2 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- LiveLease tells the provider which boot each running leased device is on (NoteBooted); the provider restarts the device hub when a simulator is on a boot AO di… (`backend/internal/devices/service.go:905`) — Viewers poll LiveLease; after an agent's simctl boot or Xcode reboot, the hub is replaced within a few seconds and streams reconnect with working touch input. Booting through AO is unchanged apart from recording the boot. If it fails: If simctl lastUsedAt is empty, NoteBooted returns early and the old behaviour remains. If recordBoots fails after an AO boot, a stale recorded boot makes the next look treat AO's own boot as outside… Evidence: `backend/internal/devices/service.go:901-908`, `backend/internal/devices/service.go:851-870`, `backend/internal/devices/service.go:920-946`, `backend/internal/adapters/device/local/provider.go:1093-1115`, `backend/internal/adapters/device/local/provider.go:955-1042`, `backend/internal/adapters/device/local/provider.go:1148-1180`, `backend/internal/adapters/device/local/provider.go:528-551`.
+- EnsureReady starts a goroutine that records every simulator's boot after a hub starts; listReport attaches BootID to listed devices (`backend/internal/adapters/device/local/provider.go:254`) — No direct UI change. It sets up the baseline so a reboot while nobody was watching is caught on the next look. If it fails: If simctl list fails or times out, recordBoots returns silently and the baseline is the first-sighting record, so a reboot before that first look is missed. This does not break the feature. Evidence: `backend/internal/adapters/device/local/provider.go:245-271`, `backend/internal/adapters/device/local/provider.go:666-688`, `backend/internal/adapters/device/local/provider.go:1121-1144`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 5 | 467 | 4 | reviewed | 12 | $0.33 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.33</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=9fadf374fc63d8b5808759cdfdb6bd249ed8bc24 -->
+--- backend/internal/adapters/device/local/provider.go:1148 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: restartHub and the EnsureReady recordBoots wiring have no test (confidence medium)**
+
+Every new test replaces `p.replaceHub` with a fake, so `restartHub` never runs under test. It holds the real logic: `hub.cancel()`, the 5s wait on `hub.done`, clearing `p.hub`, `EnsureReady`, the `reviveHub` fallback on failure, and the `replacingHub` reset in the defer. A mistake there would leave `replacingHub` stuck at true, so no later outside boot would ever replace the hub, and no test would catch it. The goroutine in `EnsureReady` (line 254) that calls `recordBoots` is also untested: `TestHubStartRecordsEverySimulatorsBoot` calls `recordBoots` directly. A test with a stubbed `lookPath`/`startHub`, or one that drives `restartHub` with a fake hub whose `done` is closed, would cover both.
+
+<!-- wachi:finding -->
+--- backend/internal/adapters/device/local/toolchain_test.go:940 ---
+👮 **Wachiman** · 🟡🧪 **Consider · tests: Boot-recording tests are skipped off macOS because of the GOOS gate in unlistedSimulators (confidence medium)**
+
+`recordBoots` goes through `unlistedSimulators`, which returns early when `runtime.GOOS != "darwin"`. `TestOutsideBootAfterAnUnwatchedAOBootIsCaught`, `TestHubStartRecordsEverySimulatorsBoot` and `TestListCarriesSimulatorBoots` therefore skip on Linux CI, which is where most CI runs. The Boot-records-its-own-boot and hub-start-records-all-boots paths, which the PR is built around, are covered only on macOS runners. The tests could stay portable if the GOOS check were injectable. Alternatively, confirm that a macOS job runs this package.
+
+<!-- wachi:finding -->

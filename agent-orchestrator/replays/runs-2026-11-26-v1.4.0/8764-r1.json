@@ -1,0 +1,38 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.6,
+ "findings": [
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Sheet route /conversation-actions is not classified transient, so Restart from the \u22ef sheet loses the chat",
+   "path": "packages/mobile/lib/updateResume.ts",
+   "line": "30",
+   "body": "`TRANSIENT` only covers `/sheets/*`, `/onboarding` and `/pair`. `/conversation-actions` is also a `formSheet` (app/_layout.tsx:233-245) and is opened through the in-memory chat sheet registry, not by URL: `app/conversation-actions.tsx:16-22` reads `readChatSheet(sheetKey)` and, if the entry is gone, `useSheetEntryPresent` calls `router.back()` (lib/chat/useSheetEntryPresent.ts:15-21).\n\nThe update screen is raised automatically when a download finishes (UpdatesManager.tsx effect), so it can appear while the \u22ef sheet is open. If the user taps Restart then, `classifyRoute` returns `{kind:\"page\", href:\"/conversation-actions?sheetKey=\u2026\"}` and that is what gets saved. After the reload, `UpdateRouteKeeper` pushes that href over the board. The registry is empty after the reload, so the sheet dismisses itself and the user is on the board, not in the chat they were in. That is the case the resume feature exists for.\n\nAdd `/conversation-actions` to `TRANSIENT`, so the page underneath (the session) stays the saved page, and add a case to `updateResume.test.ts`. `/connect` is the same kind of route: it takes a `resultKey` into the in-memory `sheetResult` registry (app/connect.tsx:19, lib/sheetResult.ts:73-75). I did not check what it does with a dead key, so decide separately whether it belongs in the list too."
+  },
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Restore waits on `config !== null`, not on the store having resolved, and can fire long after launch",
+   "path": "packages/mobile/lib/UpdateRouteKeeper.tsx",
+   "line": "43",
+   "body": "The comment says \"wait for the store's first load\", but `config === null` is not that signal. `store.tsx:119` documents `config` as null \"in the background and while endpoints are raced\". It is also set to null on a 426 (store.tsx:946-949) and when a stored machine's endpoints all fail to answer (store.tsx:587-590). The store has a real `configResolved` flag (store.tsx:147-149) for \"first resolution has finished\".\n\nWith a paired machine that is offline or incompatible after the reload, `config` stays null, `restored.current` stays false and `saved` stays in state. When the machine later becomes reachable, possibly minutes later, the effect runs and `router.push`es the saved page over whatever the user is doing. The 2-minute `RESUME_MAX_AGE_MS` check happens only in `decodeResumeRoute` at launch, so it does not stop this.\n\nGate on `configResolved` (the page itself shows its own offline state, as it would for any deep link), or drop the saved page if the wait outlasts the max age."
+  },
+  {
+   "severity": "consider",
+   "kind": "docs",
+   "title": "LOOP_MS comment says \"shortest loop\" but 4200 is shorter",
+   "path": "packages/mobile/lib/updateMascotPose.ts",
+   "line": "15",
+   "body": "`HOP_MS` is 1400 and `BLINK_MS` is 4200 (= 3 \u00d7 1400), so the shortest loop holding whole periods of both is 4200, not 8400. 8400 still wraps seamlessly, which is all the test (`LOOP_MS % \u2026`) checks. Either set `LOOP_MS = BLINK_MS` or change the comment to \"a common multiple\". The doc comment on `BLINK_MS` (line 13) also says the eyes blink once per period, but `eyesAt` blinks twice (bumps at 0.02 and 0.62), as the test at updateMascotPose.test.ts:47 asserts."
+  },
+  {
+   "severity": "consider",
+   "kind": "tests",
+   "title": "\"never reloads on its own\" test cannot fail",
+   "path": "packages/mobile/lib/updateScreenState.test.ts",
+   "line": "32",
+   "body": "`reloadAsync` is a local `vi.fn` that is never handed to `showUpdateReady`, `dismissUpdateScreen` or anything else. Those two functions take no reload API (`updateScreenState.ts:41,47`), so `expect(reloadAsync).not.toHaveBeenCalled()` passes whatever the code does. The test checks nothing about the guarantee in its name. Only `applyUpdate` reaches `reloadAsync` (`updateScreenState.ts:61-70`), so the property that matters is that offering or dismissing never calls `applyUpdate`. If you want coverage, assert against a real reload hook, for example by spying on the reload that `UpdatesManager` passes in. Otherwise delete the test; the \"starts hidden, offers an update\u2026\" test already covers the offer and dismiss transitions."
+  }
+ ]
+}

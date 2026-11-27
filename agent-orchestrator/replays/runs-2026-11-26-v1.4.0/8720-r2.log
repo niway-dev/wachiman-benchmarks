@@ -1,0 +1,39 @@
+evidence: 17 symbol(s) found, 29 call site(s), 14746 bytes, 2083 ms, truncated
+{"is_error":false,"terminal_reason":"success","turns":10,"cost_usd":0.20100079999999998,"duration_ms":36725}
+--- review at 34b9a0d ---
+👮 **Wachiman** · review of the whole pull request, at `34b9a0d`: all 5 files reviewed.
+
+1 finding(s): 1 to fix; 1 on their lines. Reply in a comment's thread to answer it.
+
+### Summary
+
+The production change looks correct. The manager shares one deadline between resolution and fetch. `gitdefault.Resolve` keeps local reads on `ctx` after `remoteCtx` expires. The router and the manager both fall back to `ResolveDefaultBranch` when an adapter has no budgeted resolver. The one finding is in the new test: its 250ms threshold is above 4×25ms, so it would still pass if each repository got its own budget.
+
+<details><summary>What the change connects to (1 closed, 0 open)</summary>
+
+Questions the reviewer answered about what this change does to the running product. The engine checked that the cited lines exist, not that the answers are true.
+
+**Closed, with the lines they rest on**
+- Default-branch resolution during spawn now takes the shared fetchCtx deadline as its network budget, through the new ResolveDefaultBranchWithin. (`backend/internal/session_manager/manager.go:2235`) — Spawn latency for multi-repo workspaces is bounded by one 5s deadline instead of up to N×5s. Spawn still completes from local refs when the remote is slow. If it fails: A slow first live lookup or fetch can leave later repos with a stale base. That is logged as a warning, and the refresh is best effort by design. The explicit-branch path ignores remoteCtx because it… Evidence: `backend/internal/session_manager/manager.go:2235-2250`, `backend/internal/session_manager/manager.go:930`, `backend/internal/gitdefault/resolver.go:139-180`, `backend/internal/adapters/workspace/gitworktree/workspace.go:192-207`, `backend/internal/adapters/workspace/router/router.go:63-68`.
+
+</details>
+
+<details><summary>Coverage by batch</summary>
+
+| Batch | Files | Lines | Highest risk | Status | Turns | Cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| Batch 1 of 1 | 5 | 87 | 4 | reviewed | 10 | $0.20 |
+
+</details>
+
+<sub>Claude Sonnet 5.5 via Claude Code 2.1.332 · effort high · $0.20</sub>
+
+<!-- wachi:review -->
+
+<!-- agent-review sha=34b9a0d0e89d7fbae444d6aae6e8cd6ece8feda9 -->
+--- backend/internal/session_manager/manager_test.go:6122 ---
+👮 **Wachiman** · 🟠🧪 **Fix · tests: Shared-budget test also passes when every repository gets its own budget (confidence high)**
+
+The test sets a 25ms timeout and four repositories whose `resolveRemoteFunc` blocks until its `remoteCtx` is done. The assertion is `elapsed > 250ms`. If the manager gave each resolution its own 25ms deadline (the behaviour this PR removes), the total would be about 4×25ms = 100ms. That is under the 250ms threshold, so the test would still pass. It does not check what its name says, which is that one budget is shared across resolution. It would catch an unbounded hang, but not a loss of sharing. Make the two cases differ clearly. For example, use a longer per-call timeout (say 200ms) with a threshold below 2× that, or have the fake record the `remoteCtx.Deadline()` of each call and assert all four are equal. Asserting identical deadlines is deterministic and does not depend on timing.
+
+<!-- wachi:finding -->

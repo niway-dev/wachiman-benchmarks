@@ -1,0 +1,47 @@
+{
+ "engine": "1.4.0",
+ "cost_usd": 0.6,
+ "findings": [
+  {
+   "severity": "consider",
+   "kind": "docs",
+   "title": "Doc comment for useWorkspaceFilePaths now documents fetchWorkspaceFilePaths",
+   "path": "frontend/src/renderer/hooks/useConversation.ts",
+   "line": "2216",
+   "body": "`fetchWorkspaceFilePaths` was inserted between the JSDoc block (\"Every path in the session worktree, for @-mention completion\u2026\") and `useWorkspaceFilePaths`, so the block now attaches to the fetch function and the hook has none. The text also still says the daemon \"already serves this list\" from the full file list, which is no longer true. Move the block back above the hook and add a one-line comment to the fetch function explaining the `ROUTE_NOT_FOUND` fallback.",
+   "outside": true
+  },
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Paths endpoint returns files that are deleted on disk, which the old \"@\" list filtered out",
+   "path": "backend/internal/service/session/workspace_file_paths.go",
+   "line": "139",
+   "body": "The old frontend dropped `status === \"deleted\"` rows (and the PR body says the new route is \"minus files missing on disk\"), but the new endpoint has no such filter. Two ways a missing file gets listed:\n\n1. `workspacePaths` is `git ls-files -z -co` (`workspace_files.go:1806`, used by `workspace_cache.go:196`). `-c` lists every index entry whether or not it exists in the working tree. A file removed with plain `rm` (unstaged) is still in the index, so it comes back from `ls-files`. The `changed` set is nil when `total <= limit` (line 132), so nothing removes it.\n2. When `total > limit`, `changes.changedPaths()` (`workspace_files.go:1857`) adds every key of `statuses`, which includes `deleted` entries. `mergeWorkspaceFilePaths` puts those first, so deleted files, including ones deleted in a commit relative to the base, are the ones kept at the cap.\n\nThe user can then pick a deleted file in \"@\" or see it in transcript file links. This reintroduces the failure the removed comment described: \"offering it would insert a reference the agent then fails to resolve.\" Nothing tells the user; the entry just appears.\n\nFix: drop paths whose status is `deleted` using the cached change set (`resolveWorkspaceChanges` is already cached and cheap), or `Lstat` each path. Do it on the `ListWorkspaceFilePaths` path only. `SearchWorkspaceFiles` keeps deleted rows on purpose, per the PR body, and it also calls `workspaceSourcePaths`, so the filter needs a parameter or a separate wrapper."
+  },
+  {
+   "severity": "fix",
+   "kind": "tests",
+   "title": "Deletion test only covers staged `git rm`, so the plain-`rm` case the PR claims to test is untested",
+   "path": "backend/internal/service/session/workspace_file_paths_test.go",
+   "line": "36",
+   "body": "`TestListWorkspaceFilePathsMatchesFullListWithoutDeletions` uses `runGit(t, repo, \"rm\", \"-q\", \"src/app.go\")`, which also removes the path from the index, so `ls-files` stops listing it. The PR body says tests cover \"plain `rm` and staged `git rm`\", but there is no plain-`rm` case, and that case is the one that fails (see the finding on `workspace_file_paths.go`). The test also builds `want` in `listedPaths` by filtering the full list's `deleted` rows, so it would compare against the right answer if a plain-`rm` case were added. Add a case that deletes a tracked file with `os.Remove` and asserts it is absent from `Paths`. Add one for the over-limit branch (`total > limit`) too, since `TestWorkspaceSourcePathsKeepsChangedFilesWhenCapped` only checks the modified file."
+  },
+  {
+   "severity": "consider",
+   "kind": "perf",
+   "title": "The old-daemon fallback is not remembered per host, unlike the PR description",
+   "path": "frontend/src/renderer/hooks/useConversation.ts",
+   "line": "2227",
+   "body": "The PR body says that on `ROUTE_NOT_FOUND` \"the app then falls back to the full list and remembers that host\", and lists a test for \"the old-daemon fallback that's remembered per host\". `fetchWorkspaceFilePaths` keeps no state: every call first requests `/workspace/paths` and, on a 404, issues `/workspace/files` as well. For a remote host on an older daemon, `useWorkspaceFilePaths` refetches every 30 s (line 2251) and also on each workspace file-change invalidation, so each refresh pays an extra failed request on top of the slow full-list read this PR is trying to avoid. The new test (`useConversation.file-paths.test.ts:49`) only checks that the fallback result is correct, not that it is remembered. Either cache the unsupported host (for example a `Set` keyed by `hostId`, cleared on reconnect) or correct the description."
+  },
+  {
+   "severity": "fix",
+   "kind": "bug",
+   "title": "Loader prefetch also runs on hover preload, contrary to the PR description",
+   "path": "frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx",
+   "line": "24",
+   "body": "The PR body says the conversation read starts in the loader \"on navigation (not on hover preload)\". The loader ignores TanStack's `preload` flag, and the router sets `defaultPreload: \"intent\"` (`frontend/src/renderer/router.tsx:21`), so the loader runs when a sidebar row is hovered and `prefetchChat` fires `prefetchInfiniteQuery` for every hovered chat. Those requests compete for the same 6 per-host connections this PR is trying to free, and users sweeping the mouse down the sidebar start one conversation read per row. Take `preload` from the loader args and skip `prefetchChat` when it is true, or change the description if hover prefetch is intended."
+  }
+ ]
+}
